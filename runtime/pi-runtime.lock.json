@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/earendil-works/pi.git",
+    "commit": "2b3fda9921b5590f285165287bd442a25817f17b"
+  },
+  "package": {
+    "name": "@earendil-works/pi-coding-agent",
+    "version": "0.80.6",
+    "directory": "packages/coding-agent",
+    "executable": "dist/cli.js",
+    "oauth_helper": "packages/ai/dist/cli.js",
+    "npm_integrity": "sha512-vcfD6tOk402isLl3Cm/qbn2O10TvgroMp1+/fEGM24ZdvETFCdOYv5VZ7m59EI5fPsjfSJh+CpQ5bhBrhfOg7g=="
+  },
+  "runtime": {
+    "node_minimum": "22.19.0"
+  }
+}
