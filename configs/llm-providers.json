@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "descriptor_version": "2026-08-10.pi-0.80.6",
+  "default_provider": "openai",
+  "providers": {
+    "openai": {
+      "default_model": "gpt-5.5",
+      "base_url": "https://api.openai.com/v1",
+      "base_url_policy": "override_allowed",
+      "auth": {
+        "kind": "api_key_env",
+        "default_env": "OPENAI_API_KEY"
+      },
+      "pi_provider": "openai",
+      "compatibility_profile": "openai-responses",
+      "supports_tools": true
+    },
+    "openrouter": {
+      "default_model": "moonshotai/kimi-k2.6",
+      "base_url": "https://openrouter.ai/api/v1",
+      "base_url_policy": "override_allowed",
+      "auth": {
+        "kind": "api_key_env",
+        "default_env": "OPENROUTER_API_KEY"
+      },
+      "pi_provider": "openrouter",
+      "compatibility_profile": "pi-built-in",
+      "supports_tools": true
+    },
+    "deepseek": {
+      "default_model": "deepseek-v4-pro",
+      "base_url": "https://api.deepseek.com",
+      "base_url_policy": "override_allowed",
+      "auth": {
+        "kind": "api_key_env",
+        "default_env": "DEEPSEEK_API_KEY"
+      },
+      "pi_provider": "deepseek",
+      "compatibility_profile": "pi-built-in",
+      "supports_tools": true
+    },
+    "openai-codex": {
+      "default_model": "gpt-5.5",
+      "base_url": "https://chatgpt.com/backend-api",
+      "base_url_policy": "fixed",
+      "auth": {
+        "kind": "pi_oauth",
+        "profile": "openai-codex"
+      },
+      "pi_provider": "openai-codex",
+      "compatibility_profile": "openai-codex-responses",
+      "supports_tools": true
+    },
+    "minimax": {
+      "default_model": "MiniMax-M2.7",
+      "base_url": "https://api.minimax.io/anthropic",
+      "base_url_policy": "override_allowed",
+      "auth": {
+        "kind": "api_key_env",
+        "default_env": "MINIMAX_API_KEY"
+      },
+      "pi_provider": "minimax",
+      "compatibility_profile": "anthropic-messages",
+      "supports_tools": true
+    }
+  }
+}
