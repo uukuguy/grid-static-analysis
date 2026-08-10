@@ -48,7 +48,8 @@ The initial implementation will not:
 - require MLflow, Langfuse, OpenTelemetry Collector, a web UI, or another daemon;
 - use an LLM judge as the source of numerical correctness;
 - specialize the code for the small set of examples in `docs/TASK.md`;
-- automatically rewrite prompts or promote configurations without review.
+- automatically rewrite prompts or promote configurations without review;
+- silently fail over from one configured LLM provider to another.
 
 ## 4. Research Basis
 
@@ -113,6 +114,7 @@ All core operations work without a database or remote telemetry service.
 
 ```text
 grid-static-analysis/
+├── .env.example
 ├── packages/
 │   ├── grid-agent/
 │   │   └── src/grid_agent/
@@ -137,6 +139,7 @@ grid-static-analysis/
 │   ├── pi-runtime.lock.json
 │   └── licenses/
 ├── configs/
+│   ├── llm-providers.json
 │   ├── agents/
 │   ├── prompts/
 │   ├── policies/
@@ -232,6 +235,53 @@ Knowledge is separated into:
 
 Only model facts backed by current-session evidence may be presented as facts about the loaded network. A policy default is never presented as a universal electrical rule.
 
+### 7.6 LLM backend configuration
+
+`grid-agent` owns LLM configuration. Pi is an execution backend and may not independently select a provider, model, credential, or user-global configuration.
+
+Configuration resolves field by field from lowest to highest precedence:
+
+```text
+built-in defaults < .env < process environment < command-line options
+```
+
+The effective priority is therefore CLI, then process environment, then `.env`, then built-in defaults. `.env` loading never overwrites an existing process environment variable. If the winning value is invalid, resolution fails with the field and source identified; it never falls back to a lower layer.
+
+For example, if `.env` selects `deepseek`, the process environment selects `openrouter`, and the command supplies `--provider openai`, the resolved provider is `openai`. Removing the command option resolves `openrouter`. The resolver never infers a provider from whichever API key happens to exist: selecting `openai` while only `DEEPSEEK_API_KEY` is present is a configuration error.
+
+By default the CLI reads only `.env` in its current working directory. It does not walk parent directories. `--env-file PATH` selects another file, and `--no-env-file` disables dotenv loading. The selected file supplies the `.env` layer only; the selector does not raise its values above process-environment precedence. `.env.example` is committed, while `.env` and other secret-bearing variants are ignored by Git.
+
+The first-party `configs/llm-providers.json` file is a small versioned catalog, not a remote registry. It defines exactly the supported provider IDs and the Pi mapping tested by that project release:
+
+| Provider ID | Default base URL | Default credential variable | Pi provider |
+|---|---|---|---|
+| `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `openai` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `openrouter` |
+| `deepseek` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek` |
+
+Each catalog entry also pins one tested default model, its Pi catalog identity, API/compatibility profile, tool-use capability hints, optional public headers, and descriptor version. Exact model IDs are release data rather than architectural constants because provider model catalogs change. The built-in provider is `openai`; an omitted model resolves to the selected provider entry's tested default. Other built-in defaults are a 180-second timeout per model request and two retries for retryable, idempotent requests. There is no credential default.
+
+The portable environment contract is:
+
+- `GRID_AGENT_LLM_PROVIDER`;
+- `GRID_AGENT_LLM_MODEL`;
+- `GRID_AGENT_LLM_BASE_URL`;
+- `GRID_AGENT_LLM_API_KEY_ENV`, which names the variable holding the secret;
+- `GRID_AGENT_LLM_TIMEOUT_SECONDS`;
+- `GRID_AGENT_LLM_MAX_RETRIES`.
+
+Provider credentials use `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and `DEEPSEEK_API_KEY` by default. Optional metadata uses `GRID_AGENT_OPENAI_ORGANIZATION`, `GRID_AGENT_OPENAI_PROJECT`, `GRID_AGENT_OPENROUTER_HTTP_REFERER`, and `GRID_AGENT_OPENROUTER_APP_NAME`. These map to the corresponding OpenAI organization/project headers and the OpenRouter `HTTP-Referer`/`X-OpenRouter-Title` headers. A command may change the credential variable name with `--api-key-env NAME`, but there is deliberately no plaintext `--api-key` option.
+
+Resolution produces an immutable `ResolvedLLMConfig` with provider, model, normalized base URL, credential-variable name, public provider metadata, timeout, retries, compatibility profile, and a per-field source map. The secret value is held separately and is never serializable. A base-URL override must be an absolute HTTP(S) URL without user information, query, or fragment; plain HTTP is accepted only for a loopback address in the local-development profile.
+
+`PiRuntimeAdapter` translates `ResolvedLLMConfig` into Pi's `--provider` and `--model` arguments, an isolated session-local Pi configuration directory, and a minimal child environment. A generated Pi provider override may set the resolved base URL and non-secret headers, but never embeds an API key. The Pi directory does not inherit a user's global `auth.json`, `models.json`, or settings. Only required runtime variables, the selected provider credential, and an allowlist of operating-system variables enter the Pi process. No LLM credential or provider configuration enters the simulator process.
+
+Although OpenRouter and DeepSeek expose OpenAI-compatible interfaces, their product provider IDs remain `openrouter` and `deepseek` in configuration, traces, evaluation, and cost records. Provider-specific reasoning and tool-call compatibility comes from the pinned descriptor/Pi mapping rather than a generic compatibility assumption. The project performs no automatic cross-provider fallback. Any provider-native routing policy that can change the serving backend must be explicit and fingerprinted.
+
+Before Pi starts, the resolver validates the provider, model-to-Pi mapping, credential presence, URL, numeric bounds, and required tool-call capability. `grid-agent doctor` performs these checks without a billable generation by default and shows a redacted resolved configuration plus its source map. `grid-agent doctor --probe-llm` explicitly opts into a minimal live model/tool-call probe and warns that it may incur cost.
+
+Every attempt records a secret-free LLM configuration fingerprint: provider and model, provider-descriptor version, normalized official base URL or a hash of an override, public generation settings, timeout/retry policy, Pi mapping, provider routing policy, and source map. Provider request IDs are correlated with the project trace when exposed. API keys, authorization headers, and raw secret values are never written to arguments, logs, traces, artifacts, error messages, or simulator input.
+
 ## 8. Command-line Contract
 
 The command namespace is `grid-agent`.
@@ -239,14 +289,20 @@ The command namespace is `grid-agent`.
 ### 8.1 Initial commands
 
 ```text
-grid-agent doctor
+grid-agent doctor [--json] [--probe-llm]
 grid-agent runtime install
-grid-agent run
+grid-agent run [--provider ID] [--model ID] [--base-url URL]
+               [--api-key-env NAME] [--timeout-seconds N] [--max-retries N]
+               [--env-file PATH | --no-env-file]
 ```
+
+The LLM and dotenv options are shared by `doctor`, `run`, `chat`, `serve`, `eval`, and `experiment`; the compact synopsis above expands them only for `run`. All commands call the same resolver, so an evaluation cannot acquire different precedence or ambient Pi settings from an interactive run.
 
 `grid-agent run` accepts a question argument, a JSON object, or an input file. Its default stdout is exactly one JSON answer envelope. Progress and diagnostics go to stderr. A human-oriented final rendering is available only through an explicit `--format text` option.
 
 When the caller supplies `question_id`, the command preserves it. For plain-text interactive invocation without an ID, the CLI generates a unique ID and returns it in the envelope. Machine transports also generate an ID for malformed input that omitted one, then return an explicit protocol-error answer rather than emitting invalid output.
+
+After the `run` subcommand is recognized, an LLM configuration failure still produces an `execution_failed` answer envelope on stdout and exits non-zero. It fails before launching Pi. `doctor --json` instead emits a redacted machine-readable diagnostic document and never prints secret values.
 
 ### 8.2 Expanded commands
 
@@ -552,6 +608,7 @@ Each attempt records:
 - project Git commit and dirty state;
 - Pi runtime commit and build hash;
 - model, provider, and model parameters;
+- LLM provider-descriptor version, base-URL identity, configuration source map, Pi mapping, and provider routing policy;
 - system prompt and tool-schema hashes;
 - context and compaction policy;
 - turn, tool, token, time, scenario, and artifact budgets;
@@ -579,6 +636,8 @@ The first release stores experiment data locally. Automated prompt mutation and 
 - solver non-convergence;
 - simulator exception or process failure;
 - Pi/model failure;
+- invalid LLM configuration or missing credential;
+- provider authentication, permission, quota, rate-limit, or transient service failure;
 - budget exhaustion or cancellation;
 - trace/index/export failure.
 
@@ -588,6 +647,8 @@ The first release stores experiment data locally. Automated prompt mutation and 
 - Validation failures identify fields and accepted constraints.
 - Non-convergence preserves a failed receipt and may enable an explicit diagnostic capability; it does not silently change solver or physical assumptions.
 - Transient process operations have a small, bounded retry policy. Non-idempotent operations are not automatically retried.
+- Provider retries are bounded, honor server retry guidance where practical, and apply only to retryable idempotent model requests. Authentication, permission, invalid-request, and insufficient-credit errors are not retried.
+- No provider, model, base URL, or credential source silently changes after an error.
 - Budget exhaustion stops further work and summarizes completed evidence and remaining gaps.
 - Trace export and optional index errors do not affect the answer.
 - All process cleanup uses `finally`-equivalent lifecycle handling.
@@ -598,6 +659,9 @@ The first release stores experiment data locally. Automated prompt mutation and 
 
 - The simulator has no network requirement and receives only allowlisted paths and operations.
 - Agent and simulator access is limited to the session workspace and approved read-only assets.
+- LLM secrets are read from the resolved environment or an approved external secret manager, never from plaintext command-line arguments.
+- Pi receives an allowlisted child environment and an isolated project-generated configuration directory; it does not consume ambient user Pi credentials or settings.
+- `.env` is ignored by Git, and `doctor` warns when a secret file has unsafe permissions where the host exposes permission metadata.
 - Arbitrary Python evaluation is forbidden.
 - Simulator state mutations are typed and revisioned.
 - Initial Bash use is a feasibility mechanism and is clearly identified as a local-development profile.
@@ -626,7 +690,11 @@ The system records the effective budgets in every attempt fingerprint.
 - revision and state transitions;
 - evidence receipt construction;
 - answer fallback formatting;
-- deterministic scorers and ranking policy.
+- deterministic scorers and ranking policy;
+- complete LLM precedence matrix across defaults, `.env`, process environment, and CLI;
+- `.env` non-overwrite behavior and source-attributed invalid winning values;
+- provider catalog, URL validation, Pi mappings, and tool-capability validation;
+- secret redaction, absence of secret command-line arguments, and Pi child-environment allowlisting.
 
 ### 17.2 Simulator contract tests
 
@@ -645,6 +713,8 @@ The system records the effective budgets in every attempt fingerprint.
 - clean stdout and diagnostic stderr;
 - process crash and timeout degradation;
 - Pi/model failure fallback;
+- OpenAI, OpenRouter, and DeepSeek adapter contracts against mocked endpoints, with opt-in live probes;
+- non-billable default `doctor` behavior and explicit `--probe-llm` behavior;
 - session and turn correlation;
 - trace recovery after interruption;
 - no source, test, or build dependency on `3th-party/`.
@@ -670,7 +740,8 @@ Deliver first:
 
 - independent package skeletons and locks;
 - pinned Pi runtime acquisition and health check;
-- `grid-agent doctor` and `grid-agent run`;
+- the three-provider catalog, typed configuration resolver, `.env.example`, and redaction tests;
+- `grid-agent doctor` and `grid-agent run` with deterministic LLM configuration precedence;
 - project-owned Pi RPC adapter for a single question;
 - `gridctl` per-call isolated simulator process;
 - the minimal static capability set;
@@ -728,6 +799,9 @@ The implementation conforms to this design when:
 7. Core tracing and evaluation work locally without services.
 8. Runtime, simulator, configuration, policy, and evidence versions are auditable.
 9. The walking skeleton is delivered before optional platform components.
+10. OpenAI, OpenRouter, and DeepSeek resolve through the first-party provider catalog with deterministic CLI/environment/`.env`/default precedence.
+11. No credential is accepted as a plaintext CLI value, inherited into the simulator, or persisted in traces and artifacts.
+12. `doctor` validates configuration without billable generation unless `--probe-llm` is explicitly supplied.
 
 ## 20. References
 
@@ -738,6 +812,12 @@ The implementation conforms to this design when:
 - Pi RPC: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/rpc.md
 - Pi sessions: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/session.md
 - Pi extensions: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md
+- Pi providers: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/providers.md
+- Pi custom models and provider overrides: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/models.md
+- OpenAI API authentication: https://developers.openai.com/api/reference/overview#authentication
+- OpenRouter quickstart: https://openrouter.ai/docs/quickstart
+- DeepSeek tool calls: https://api-docs.deepseek.com/guides/tool_calls
+- DeepSeek model and API compatibility updates: https://api-docs.deepseek.com/updates/
 - pandapower 3.4.0 documentation: https://pandapower.readthedocs.io/en/develop/
 - pandapower contingency: https://pandapower.readthedocs.io/en/latest/contingency.html
 - pandapower diagnostics: https://pandapower.readthedocs.io/en/latest/powerflow/diagnostic.html
