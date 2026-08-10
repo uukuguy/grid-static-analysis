@@ -1,0 +1,16 @@
+{
+  "name": "@grid-static-analysis/pi-grid-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/hardened-bash.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.6"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

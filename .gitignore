@@ -14,7 +14,7 @@ dist/
 # Credentials and local configuration
 .env
 .env.*
-!.env.template
+!.env.example
 *.pem
 *.key
 
@@ -45,6 +45,7 @@ packages/rust/**/target/
 # Promotion/build scratch
 .promotion-*/
 tmp/
+var/
 
 # Isolated feature worktrees
 .worktrees/
@@ -52,4 +53,9 @@ tmp/
 # Local design companion state
 .superpowers/
 
-3th-party/
+**/.venv/
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+**/.coverage
+3th[-]party/
