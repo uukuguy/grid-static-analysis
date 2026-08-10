@@ -1,7 +1,7 @@
 # Grid Static Analysis Agent Design
 
 - Date: 2026-08-10
-- Status: Approved design, pending written-spec review
+- Status: Approved
 - Governing requirement: `docs/TASK.md`
 
 ## 1. Purpose
@@ -682,6 +682,7 @@ The first release stores experiment data locally. Automated prompt mutation and 
 - Agent and simulator access is limited to the session workspace and approved read-only assets.
 - LLM secrets are read from the resolved environment or an approved external secret manager, never from plaintext command-line arguments.
 - Pi receives an allowlisted child environment and the isolated project-owned `PI_CODING_AGENT_DIR`; it does not consume ambient user Pi credentials or settings.
+- The Walking Skeleton explicitly overrides Pi's built-in Bash tool with the same implementation plus a spawn hook that removes the selected credential variable before creating any tool subprocess.
 - OAuth state is Git-ignored, redacted from all output, protected with restrictive permissions where supported, and accessed under a project lock; project-written imports use atomic replacement.
 - Importing an existing Pi OAuth login is an explicit user action and copies only the selected provider entry; ordinary runtime and diagnostics never inspect ambient Pi authentication.
 - `.env` is ignored by Git, and `doctor` warns when a secret file has unsafe permissions where the host exposes permission metadata.
