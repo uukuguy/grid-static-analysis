@@ -33,7 +33,10 @@ class JsonlTraceWriter:
                 redacted = redacted.replace(secret, "[REDACTED]")
             return redacted
         if isinstance(value, Mapping):
-            return {key: self._redact(item) for key, item in value.items()}
+            return {
+                self._redact(key) if isinstance(key, str) else key: self._redact(item)
+                for key, item in value.items()
+            }
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return [self._redact(item) for item in value]
         return value

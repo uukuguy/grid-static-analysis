@@ -50,3 +50,15 @@ def test_trace_is_append_only_and_redacted(tmp_path) -> None:
     for record in records:
         timestamp = datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
         assert timestamp.tzinfo == UTC
+
+
+def test_trace_redacts_mapping_keys(tmp_path) -> None:
+    workspace = RunWorkspace.create(tmp_path, run_id="run-keys")
+    writer = JsonlTraceWriter(workspace.events_path, secret_values={"sk-secret"})
+
+    writer.append("run_started", {"header-sk-secret": "visible"})
+
+    record = json.loads(workspace.events_path.read_text().splitlines()[0])
+
+    assert "header-sk-secret" not in workspace.events_path.read_text()
+    assert record["payload"] == {"header-[REDACTED]": "visible"}
