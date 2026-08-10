@@ -158,9 +158,11 @@ grid-static-analysis/
 │   └── golden/
 ├── docs/
 └── var/
+    ├── pi/agent/
+    └── runs/
 ```
 
-`var/` is ignored by Git. Each package has an independent lock and build boundary. The main package does not acquire the simulator's scientific dependency stack.
+`var/` is ignored by Git. `var/pi/agent/` is the project-owned Pi configuration and credential boundary; it is distinct from per-session records in `var/runs/`. Each package has an independent lock and build boundary. The main package does not acquire the simulator's scientific dependency stack.
 
 No application source, test, build command, or runtime command refers to `3th-party/`. Those checkouts remain research-only material.
 
@@ -253,13 +255,17 @@ By default the CLI reads only `.env` in its current working directory. It does n
 
 The first-party `configs/llm-providers.json` file is a small versioned catalog, not a remote registry. It defines exactly the supported provider IDs and the Pi mapping tested by that project release:
 
-| Provider ID | Default base URL | Default credential variable | Pi provider |
-|---|---|---|---|
-| `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `openai` |
-| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `openrouter` |
-| `deepseek` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek` |
+| Provider ID | Default base URL | Authentication | Pi provider | Compatibility profile |
+|---|---|---|---|---|
+| `openai` | `https://api.openai.com/v1` | `api_key_env:OPENAI_API_KEY` | `openai` | OpenAI API |
+| `openrouter` | `https://openrouter.ai/api/v1` | `api_key_env:OPENROUTER_API_KEY` | `openrouter` | OpenAI-compatible |
+| `deepseek` | `https://api.deepseek.com` | `api_key_env:DEEPSEEK_API_KEY` | `deepseek` | OpenAI-compatible |
+| `openai-codex` | `https://chatgpt.com/backend-api` (fixed) | `pi_oauth:openai-codex` | `openai-codex` | Codex Responses |
+| `minimax` | `https://api.minimax.io/anthropic` | `api_key_env:MINIMAX_API_KEY` | `minimax` | Anthropic Messages-compatible |
 
-Each catalog entry also pins one tested default model, its Pi catalog identity, API/compatibility profile, tool-use capability hints, optional public headers, and descriptor version. Exact model IDs are release data rather than architectural constants because provider model catalogs change. The built-in provider is `openai`; an omitted model resolves to the selected provider entry's tested default. Other built-in defaults are a 180-second timeout per model request and two retries for retryable, idempotent requests. There is no credential default.
+`openai` and `openai-codex` are intentionally separate products. `openai` uses usage-based API-key authentication; `openai-codex` uses Pi's ChatGPT Plus/Pro OAuth login and dedicated Codex transport. An `OPENAI_API_KEY` never satisfies `openai-codex`, and an OAuth login never silently changes `openai` into `openai-codex`. `minimax` is likewise a first-class provider, not an `openai` alias; the `minimax-cn` endpoint is outside the initial release.
+
+Each catalog entry also pins one tested default model, its Pi catalog identity, authentication kind, API/compatibility profile, tool-use capability hints, optional public headers, and descriptor version. Exact model IDs are release data rather than architectural constants because provider model catalogs change. The built-in provider is `openai`; an omitted model resolves to the selected provider entry's tested default. Other built-in defaults are a 180-second timeout per model request and two retries for retryable, idempotent requests. There is no credential default.
 
 The portable environment contract is:
 
@@ -270,17 +276,28 @@ The portable environment contract is:
 - `GRID_AGENT_LLM_TIMEOUT_SECONDS`;
 - `GRID_AGENT_LLM_MAX_RETRIES`.
 
-Provider credentials use `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and `DEEPSEEK_API_KEY` by default. Optional metadata uses `GRID_AGENT_OPENAI_ORGANIZATION`, `GRID_AGENT_OPENAI_PROJECT`, `GRID_AGENT_OPENROUTER_HTTP_REFERER`, and `GRID_AGENT_OPENROUTER_APP_NAME`. These map to the corresponding OpenAI organization/project headers and the OpenRouter `HTTP-Referer`/`X-OpenRouter-Title` headers. A command may change the credential variable name with `--api-key-env NAME`, but there is deliberately no plaintext `--api-key` option.
+API-key providers use `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, and `MINIMAX_API_KEY` by default. Optional metadata uses `GRID_AGENT_OPENAI_ORGANIZATION`, `GRID_AGENT_OPENAI_PROJECT`, `GRID_AGENT_OPENROUTER_HTTP_REFERER`, and `GRID_AGENT_OPENROUTER_APP_NAME`. These map to the corresponding OpenAI organization/project headers and the OpenRouter `HTTP-Referer`/`X-OpenRouter-Title` headers. A command may change an API-key provider's credential variable name with `--api-key-env NAME`, but there is deliberately no plaintext `--api-key` option. `--api-key-env` is invalid for `openai-codex`; OAuth tokens are never accepted through `.env`, process variables, or command arguments.
 
-Resolution produces an immutable `ResolvedLLMConfig` with provider, model, normalized base URL, credential-variable name, public provider metadata, timeout, retries, compatibility profile, and a per-field source map. The secret value is held separately and is never serializable. A base-URL override must be an absolute HTTP(S) URL without user information, query, or fragment; plain HTTP is accepted only for a loopback address in the local-development profile.
+Resolution produces an immutable `ResolvedLLMConfig` with provider, model, normalized base URL, authentication kind, redacted credential reference, public provider metadata, timeout, retries, compatibility profile, and a per-field source map. For an API-key provider the credential reference is an environment-variable name; for `openai-codex` it is the project OAuth profile ID. The secret value or token bundle is held separately and is never serializable. A base-URL override must be an absolute HTTP(S) URL without user information, query, or fragment; plain HTTP is accepted only for a loopback address in the local-development profile. A base-URL override is rejected for `openai-codex` in the initial release because its OAuth and transport contract is bound to the dedicated backend.
 
-`PiRuntimeAdapter` translates `ResolvedLLMConfig` into Pi's `--provider` and `--model` arguments, an isolated session-local Pi configuration directory, and a minimal child environment. A generated Pi provider override may set the resolved base URL and non-secret headers, but never embeds an API key. The Pi directory does not inherit a user's global `auth.json`, `models.json`, or settings. Only required runtime variables, the selected provider credential, and an allowlist of operating-system variables enter the Pi process. No LLM credential or provider configuration enters the simulator process.
+`PiRuntimeAdapter` translates `ResolvedLLMConfig` into Pi's `--provider` and `--model` arguments, a minimal child environment, a session-specific session directory, and the persistent project-owned `var/pi/agent/` directory selected through `PI_CODING_AGENT_DIR`. The adapter generates project-controlled `models.json` and settings there; in the initial release `auth.json` contains only the explicitly configured `openai-codex` OAuth entry. API keys remain environment-only so Pi's auth-file precedence cannot override the typed resolver. A generated Pi provider override may set the resolved base URL and non-secret headers, but never embeds an API key. The runtime never reads a user's global `~/.pi/agent/auth.json`, `models.json`, or settings. Only required runtime variables, the selected API-key credential, and an allowlist of operating-system variables enter the Pi process. No LLM credential or provider configuration enters the simulator process.
+
+OAuth setup is explicit and outside ordinary question execution:
+
+```text
+grid-agent auth login openai-codex
+grid-agent auth import openai-codex --from-pi
+grid-agent auth status [PROVIDER] [--json]
+grid-agent auth logout openai-codex
+```
+
+`auth login` runs the pinned Pi OAuth/device flow against the project-owned directory. `auth import --from-pi` is a convenience for an existing local Pi login: it validates the source, copies only the `openai-codex` credential entry, and never imports global models or settings. Project auth mutations and OAuth-capable Pi runs are serialized with a file lock; project-written imports use atomic replacement. The directory is mode `0700` and the auth file mode `0600` on hosts that support POSIX permissions. `auth status` reports only authentication kind and configured/expiration state. `auth logout` deletes only the project-owned entry and never mutates the user's global Pi login.
 
 Although OpenRouter and DeepSeek expose OpenAI-compatible interfaces, their product provider IDs remain `openrouter` and `deepseek` in configuration, traces, evaluation, and cost records. Provider-specific reasoning and tool-call compatibility comes from the pinned descriptor/Pi mapping rather than a generic compatibility assumption. The project performs no automatic cross-provider fallback. Any provider-native routing policy that can change the serving backend must be explicit and fingerprinted.
 
-Before Pi starts, the resolver validates the provider, model-to-Pi mapping, credential presence, URL, numeric bounds, and required tool-call capability. `grid-agent doctor` performs these checks without a billable generation by default and shows a redacted resolved configuration plus its source map. `grid-agent doctor --probe-llm` explicitly opts into a minimal live model/tool-call probe and warns that it may incur cost.
+Before Pi starts, the resolver validates the provider, model-to-Pi mapping, provider-specific authentication state, URL/override policy, numeric bounds, and required tool-call capability. `grid-agent doctor` performs these checks without a billable generation by default and shows a redacted resolved configuration plus its source map. `grid-agent doctor --probe-llm` explicitly opts into a minimal live model/tool-call probe and warns that it may incur API cost or subscription usage.
 
-Every attempt records a secret-free LLM configuration fingerprint: provider and model, provider-descriptor version, normalized official base URL or a hash of an override, public generation settings, timeout/retry policy, Pi mapping, provider routing policy, and source map. Provider request IDs are correlated with the project trace when exposed. API keys, authorization headers, and raw secret values are never written to arguments, logs, traces, artifacts, error messages, or simulator input.
+Every attempt records a secret-free LLM configuration fingerprint: provider and model, provider-descriptor version, normalized official base URL or a hash of an override, authentication kind and redacted credential reference, public generation settings, timeout/retry policy, Pi mapping, provider routing policy, and source map. Provider request IDs are correlated with the project trace when exposed. API keys, OAuth access/refresh tokens, authorization headers, and raw secret values are never written to arguments, logs, traces, artifacts, error messages, or simulator input.
 
 ## 8. Command-line Contract
 
@@ -291,6 +308,10 @@ The command namespace is `grid-agent`.
 ```text
 grid-agent doctor [--json] [--probe-llm]
 grid-agent runtime install
+grid-agent auth login openai-codex
+grid-agent auth import openai-codex --from-pi
+grid-agent auth status [PROVIDER] [--json]
+grid-agent auth logout openai-codex
 grid-agent run [--provider ID] [--model ID] [--base-url URL]
                [--api-key-env NAME] [--timeout-seconds N] [--max-retries N]
                [--env-file PATH | --no-env-file]
@@ -608,7 +629,7 @@ Each attempt records:
 - project Git commit and dirty state;
 - Pi runtime commit and build hash;
 - model, provider, and model parameters;
-- LLM provider-descriptor version, base-URL identity, configuration source map, Pi mapping, and provider routing policy;
+- LLM provider-descriptor version, base-URL identity, authentication kind and redacted credential reference, configuration source map, Pi mapping, and provider routing policy;
 - system prompt and tool-schema hashes;
 - context and compaction policy;
 - turn, tool, token, time, scenario, and artifact budgets;
@@ -660,7 +681,9 @@ The first release stores experiment data locally. Automated prompt mutation and 
 - The simulator has no network requirement and receives only allowlisted paths and operations.
 - Agent and simulator access is limited to the session workspace and approved read-only assets.
 - LLM secrets are read from the resolved environment or an approved external secret manager, never from plaintext command-line arguments.
-- Pi receives an allowlisted child environment and an isolated project-generated configuration directory; it does not consume ambient user Pi credentials or settings.
+- Pi receives an allowlisted child environment and the isolated project-owned `PI_CODING_AGENT_DIR`; it does not consume ambient user Pi credentials or settings.
+- OAuth state is Git-ignored, redacted from all output, protected with restrictive permissions where supported, and accessed under a project lock; project-written imports use atomic replacement.
+- Importing an existing Pi OAuth login is an explicit user action and copies only the selected provider entry; ordinary runtime and diagnostics never inspect ambient Pi authentication.
 - `.env` is ignored by Git, and `doctor` warns when a secret file has unsafe permissions where the host exposes permission metadata.
 - Arbitrary Python evaluation is forbidden.
 - Simulator state mutations are typed and revisioned.
@@ -693,8 +716,10 @@ The system records the effective budgets in every attempt fingerprint.
 - deterministic scorers and ranking policy;
 - complete LLM precedence matrix across defaults, `.env`, process environment, and CLI;
 - `.env` non-overwrite behavior and source-attributed invalid winning values;
-- provider catalog, URL validation, Pi mappings, and tool-capability validation;
-- secret redaction, absence of secret command-line arguments, and Pi child-environment allowlisting.
+- five-provider catalog, authentication-kind validation, URL/override policy, Pi mappings, and tool-capability validation;
+- `openai-codex` rejection of API-key and base-URL overrides, and separation from `openai`;
+- OAuth login/import/status/logout using fake credentials, including selected-entry-only import, locking, atomic writes, permissions, and redaction;
+- secret redaction, absence of secret command-line arguments, Git-ignore coverage, and Pi child-environment allowlisting.
 
 ### 17.2 Simulator contract tests
 
@@ -713,7 +738,7 @@ The system records the effective budgets in every attempt fingerprint.
 - clean stdout and diagnostic stderr;
 - process crash and timeout degradation;
 - Pi/model failure fallback;
-- OpenAI, OpenRouter, and DeepSeek adapter contracts against mocked endpoints, with opt-in live probes;
+- OpenAI, OpenRouter, DeepSeek, OpenAI Codex, and MiniMax adapter contracts against mocked transports, including MiniMax Anthropic Messages/tool calls and Codex OAuth state, with opt-in live probes;
 - non-billable default `doctor` behavior and explicit `--probe-llm` behavior;
 - session and turn correlation;
 - trace recovery after interruption;
@@ -740,8 +765,9 @@ Deliver first:
 
 - independent package skeletons and locks;
 - pinned Pi runtime acquisition and health check;
-- the three-provider catalog, typed configuration resolver, `.env.example`, and redaction tests;
-- `grid-agent doctor` and `grid-agent run` with deterministic LLM configuration precedence;
+- the five-provider catalog, typed configuration/authentication resolver, `.env.example`, and redaction tests;
+- project-isolated `openai-codex` OAuth login/import/status/logout;
+- `grid-agent doctor` and `grid-agent run` with deterministic LLM configuration precedence and provider-specific authentication;
 - project-owned Pi RPC adapter for a single question;
 - `gridctl` per-call isolated simulator process;
 - the minimal static capability set;
@@ -799,9 +825,11 @@ The implementation conforms to this design when:
 7. Core tracing and evaluation work locally without services.
 8. Runtime, simulator, configuration, policy, and evidence versions are auditable.
 9. The walking skeleton is delivered before optional platform components.
-10. OpenAI, OpenRouter, and DeepSeek resolve through the first-party provider catalog with deterministic CLI/environment/`.env`/default precedence.
+10. OpenAI, OpenRouter, DeepSeek, OpenAI Codex, and MiniMax resolve through the first-party provider catalog with deterministic CLI/environment/`.env`/default precedence for configurable fields.
 11. No credential is accepted as a plaintext CLI value, inherited into the simulator, or persisted in traces and artifacts.
 12. `doctor` validates configuration without billable generation unless `--probe-llm` is explicitly supplied.
+13. OpenAI Codex uses only explicit project-owned OAuth state, never an API key or silently inherited global Pi login; login import and logout affect only the selected project credential.
+14. MiniMax uses its own provider identity, `MINIMAX_API_KEY`, and tested Anthropic Messages-compatible mapping rather than a generic OpenAI alias.
 
 ## 20. References
 
@@ -815,9 +843,12 @@ The implementation conforms to this design when:
 - Pi providers: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/providers.md
 - Pi custom models and provider overrides: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/models.md
 - OpenAI API authentication: https://developers.openai.com/api/reference/overview#authentication
+- OpenAI Codex authentication: https://developers.openai.com/codex/auth
 - OpenRouter quickstart: https://openrouter.ai/docs/quickstart
 - DeepSeek tool calls: https://api-docs.deepseek.com/guides/tool_calls
 - DeepSeek model and API compatibility updates: https://api-docs.deepseek.com/updates/
+- MiniMax Anthropic-compatible API: https://platform.minimax.io/docs/api-reference/text-anthropic-api
+- MiniMax Anthropic Messages API: https://platform.minimax.io/docs/api-reference/text-chat-anthropic
 - pandapower 3.4.0 documentation: https://pandapower.readthedocs.io/en/develop/
 - pandapower contingency: https://pandapower.readthedocs.io/en/latest/contingency.html
 - pandapower diagnostics: https://pandapower.readthedocs.io/en/latest/powerflow/diagnostic.html
