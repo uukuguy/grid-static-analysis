@@ -95,6 +95,11 @@ class _ProgressReporter:
         event_type = str(event.get("type", "unknown"))
         if event_type == "prompt_ack":
             self._write("模型请求已接收")
+        elif event_type == "response" and event.get("command") == "prompt":
+            if event.get("success") is True:
+                self._write("模型请求已接收")
+            else:
+                self._write(f"模型请求失败: {_summary(str(event.get('error', 'unknown error')))}")
         elif event_type == "text_delta":
             self._write(f"模型输出: {_summary(str(event.get('text', '')))}")
         elif event_type == "agent_end":

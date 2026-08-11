@@ -59,7 +59,7 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         f"gridctl={str(gridctl)!r}\n"
         "def call(operation,args):\n r=subprocess.run([gridctl,'request','--workspace',os.environ['GRID_AGENT_WORKSPACE']],input=json.dumps({'protocol_version':'1.0','request_id':operation,'operation':operation,'arguments':args})+'\\n',text=True,capture_output=True,check=True); return json.loads(r.stdout)['result']\n"
         "opened=call('network.open',{'network':'ieee39'})\nresult=call('powerflow.run_ac',{'network_ref':opened['network_ref']})\n"
-        "print(json.dumps({'type':'prompt_ack','ok':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':str(result['total_active_loss_mw'])}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
+        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':str(result['total_active_loss_mw'])}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
         encoding="utf-8",
     )
     pi.chmod(0o755)

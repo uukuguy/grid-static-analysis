@@ -40,7 +40,7 @@ class PiRpcClient:
     ) -> str:
         if self.process is None or self.process.stdin is None or self.process.stdout is None:
             raise PiProtocolError("Pi RPC process is not started")
-        self.process.stdin.write((json.dumps({"type": "prompt", "text": question}, separators=(",", ":")) + "\n").encode())
+        self.process.stdin.write((json.dumps({"type": "prompt", "message": question}, separators=(",", ":")) + "\n").encode())
         self.process.stdin.flush()
         lines: Queue[bytes | None] = Queue()
         Thread(target=_read_lines, args=(self.process.stdout, lines), daemon=True).start()
@@ -67,6 +67,11 @@ class PiRpcClient:
                 on_event(event)
             if event.get("type") == "prompt_ack" and event.get("ok") is True:
                 acknowledged = True
+            if event.get("type") == "response" and event.get("command") == "prompt":
+                if event.get("success") is True:
+                    acknowledged = True
+                else:
+                    raise PiProtocolError(f"Pi prompt failed: {event.get('error', 'unknown error')}")
             if event.get("type") == "text_delta":
                 text.append(str(event.get("text", "")))
             if event.get("type") == "agent_end":

@@ -67,3 +67,52 @@ def test_rpc_reports_events_and_idle_heartbeats(tmp_path: Path) -> None:
 
     assert observed == ["prompt_ack", "text_delta", "agent_end"]
     assert heartbeats
+
+
+def test_rpc_uses_current_pi_prompt_message_protocol(tmp_path: Path) -> None:
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json\n"
+        "request=json.loads(input())\n"
+        "if request.get('message') != 'question':\n"
+        " print(json.dumps({'type':'response','command':'prompt','success':False,'error':'missing message'}), flush=True)\n"
+        "else:\n"
+        " print(json.dumps({'type':'response','command':'prompt','success':True}), flush=True)\n"
+        " print(json.dumps({'type':'text_delta','text':'answer'}), flush=True)\n"
+        " print(json.dumps({'type':'agent_end'}), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+
+    client.start()
+    try:
+        assert client.prompt_and_wait("question") == "answer"
+    finally:
+        client.stop()
+
+
+def test_rpc_stops_immediately_on_failed_prompt_response(tmp_path: Path) -> None:
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json\njson.loads(input())\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':False,'error':'preflight failed'}), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+
+    client.start()
+    try:
+        with pytest.raises(PiProtocolError, match="preflight failed"):
+            client.prompt_and_wait("question")
+    finally:
+        client.stop()
