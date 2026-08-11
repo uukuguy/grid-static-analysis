@@ -30,7 +30,7 @@ def build_pi_launch(resolved: ResolvedLLM, paths: RuntimePaths, *, base_environm
     argv = (
         *paths.command.argv, "--mode", "rpc", "--provider", resolved.config.pi_provider, "--model", resolved.config.model,
         "--session-dir", str(paths.session_dir), "--system-prompt", str(paths.prompt_path), "--no-extensions", "--no-skills",
-        "--no-prompt-templates", "--no-context-files", "--extension", str(paths.extension_path), "--tools", "read,bash,grid_query",
+        "--no-prompt-templates", "--no-context-files", "--extension", str(paths.extension_path), "--tools", "read,grid_query",
     )
     return PiLaunch(argv=argv, environment=environment)
 
