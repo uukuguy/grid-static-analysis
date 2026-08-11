@@ -149,8 +149,9 @@ def install_pi() -> None:
 def auth_import_pi() -> None:
     """Copy the local Pi Codex OAuth profile into project-owned storage."""
     store = ProjectAuthStore(Path.cwd() / "var/pi/agent/auth.json")
-    helper = PiRuntimeLocator.from_cwd().resolve_oauth_helper()
-    status = AuthService(store, helper).import_from_pi()
+    # Importing an existing local Pi credential is a file operation; it must not
+    # require the managed Pi runtime to have been installed first.
+    status = store.import_provider(Path.home() / ".pi/agent/auth.json", CODEX_PROVIDER)
     typer.echo(json.dumps({"provider": status.provider, "configured": status.configured}))
 
 
