@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -36,9 +37,11 @@ def _answer(question: str, client: GridctlClient) -> str:
         ranked = client.call("results.lines", {"result_ref": powerflow["result_ref"], "sort": "loading_percent", "limit": 5})
         return "负载率最高的5条线路为：" + "、".join(f"line:index:{item['index']} ({item['loading_percent']:.3f}%)" for item in ranked["lines"])
     if "n-1" in normalized or "故障" in question:
-        contingency = client.call("contingency.run_lines", {"network_ref": reference, "line_ids": ["line:index:11"], "policy": "static-analysis-v1"})
+        match = re.search(r"线路\s*(\d+)", question)
+        line_index = int(match.group(1)) if match else 11
+        contingency = client.call("contingency.run_lines", {"network_ref": reference, "line_ids": [f"line:index:{line_index}"], "policy": "static-analysis-v1"})
         scenario = contingency["scenarios"][0]
-        return f"线路 line:index:11 N-1 后最大线路负载率为 {scenario['max_line_loading_percent']:.12f}%，越限线路为 " + "、".join(f"line:index:{item['index']}" for item in scenario["overloaded_lines"]) + f"；证据 {scenario['evidence_id']}。"
+        return f"线路 line:index:{line_index} N-1 后最大线路负载率为 {scenario['max_line_loading_percent']:.12f}%，越限线路为 " + "、".join(f"line:index:{item['index']}" for item in scenario["overloaded_lines"]) + f"；证据 {scenario['evidence_id']}。"
     return f"IEEE-39 交流潮流已收敛；总有功网损为 {powerflow['total_active_loss_mw']:.14f} MW，结果证据 {powerflow['result_ref']}。"
 
 
