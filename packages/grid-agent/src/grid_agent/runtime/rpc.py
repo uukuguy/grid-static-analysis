@@ -81,7 +81,10 @@ class PiRpcClient:
             if event.get("type") == "agent_end":
                 if not acknowledged:
                     raise PiProtocolError("Pi agent ended before prompt acknowledgement")
-                return "".join(text)
+                answer = "".join(text)
+                if not answer.strip():
+                    raise PiProtocolError("Pi agent ended without answer text")
+                return answer
         raise PiProtocolError("Pi RPC ended before agent completion")
 
     def stop(self) -> None:
