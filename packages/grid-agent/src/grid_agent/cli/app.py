@@ -87,8 +87,11 @@ class _ProgressReporter:
         self.started_at = time.monotonic()
         self.question = _summary(question)
 
-    def started(self, provider: str, model: str, run_id: str) -> None:
-        self._write(f"开始运行 run={run_id} provider={provider} model={model}")
+    def started(self, provider: str, model: str, run_id: str, *, timeout_seconds: float, max_retries: int) -> None:
+        self._write(
+            f"开始运行 run={run_id} provider={provider} model={model} "
+            f"请求超时={timeout_seconds:g}s SDK重试={max_retries}次"
+        )
         self._write(f"调用输入: {self.question}")
 
     def on_event(self, event: dict[str, Any]) -> None:
@@ -121,6 +124,14 @@ class _ProgressReporter:
             result = _redact_event(event.get("result", {}))
             status = "失败" if event.get("isError") else "完成"
             self._write(f"工具{status}: {event.get('toolName', 'unknown')} 输出: {_summary(json.dumps(result, ensure_ascii=False))}")
+        elif event_type == "auto_retry_start":
+            self._write(
+                f"模型请求失败，{event.get('delayMs', 0) / 1000:g}s 后第 "
+                f"{event.get('attempt', '?')}/{event.get('maxAttempts', '?')} 次重试: "
+                f"{_summary(str(event.get('errorMessage', 'unknown error')))}"
+            )
+        elif event_type == "auto_retry_end" and event.get("success") is False:
+            self._write(f"模型重试失败: {_summary(str(event.get('finalError', 'unknown error')))}")
         elif event_type == "agent_end":
             self._write("模型执行结束，正在整理结果")
 
@@ -192,7 +203,13 @@ def run(
                 environ=os.environ,
                 oauth_configured=lambda profile: auth_store.status(profile).configured,
             )
-            progress.started(resolved.config.provider, resolved.config.model, request.question_id)
+            progress.started(
+                resolved.config.provider,
+                resolved.config.model,
+                request.question_id,
+                timeout_seconds=resolved.config.timeout_seconds,
+                max_retries=resolved.config.max_retries,
+            )
             command = PiRuntimeLocator(state_dir, runtime_environment).resolve()
             _install_gridctl(workspace)
             PiConfigMaterializer(project_pi_dir).materialize(resolved)

@@ -23,7 +23,17 @@ class PiConfigMaterializer:
         os.chmod(self.directory, 0o700)
         settings_path = self.directory / "settings.json"
         models_path = self.directory / "models.json"
-        settings_path.write_text("{}\n", encoding="utf-8")
+        timeout_ms = round(resolved.config.timeout_seconds * 1_000)
+        retries = resolved.config.max_retries
+        settings = {
+            "httpIdleTimeoutMs": timeout_ms,
+            "retry": {
+                "enabled": retries > 0,
+                "maxRetries": retries,
+                "provider": {"timeoutMs": timeout_ms, "maxRetries": retries},
+            },
+        }
+        settings_path.write_text(json.dumps(settings, separators=(",", ":")) + "\n", encoding="utf-8")
         is_official = resolved.config.base_url == "https://api.openai.com/v1" and not resolved.config.public_headers
         models = {} if is_official else {"providers": {resolved.config.pi_provider: {"baseUrl": resolved.config.base_url, "headers": dict(resolved.config.public_headers)}}}
         models_path.write_text(json.dumps(models, separators=(",", ":")) + "\n", encoding="utf-8")
