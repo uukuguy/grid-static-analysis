@@ -83,6 +83,9 @@ class PiRpcClient:
                     raise PiProtocolError("Pi agent ended before prompt acknowledgement")
                 answer = "".join(text)
                 if not answer.strip():
+                    provider_error = _provider_error(event)
+                    if provider_error:
+                        raise PiProtocolError(f"Pi provider failure: {provider_error}")
                     raise PiProtocolError("Pi agent ended without answer text")
                 return answer
         raise PiProtocolError("Pi RPC ended before agent completion")
@@ -106,3 +109,15 @@ def _read_lines(stream: Any, lines: Queue[bytes | None]) -> None:
             lines.put(raw)
     finally:
         lines.put(None)
+
+
+def _provider_error(event: dict[str, Any]) -> str | None:
+    messages = event.get("messages")
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("stopReason") == "error":
+            error = message.get("errorMessage")
+            if isinstance(error, str) and error:
+                return error
+    return None

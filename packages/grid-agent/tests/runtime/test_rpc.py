@@ -158,3 +158,22 @@ def test_rpc_rejects_successful_agent_end_without_answer_text(tmp_path: Path) ->
             client.prompt_and_wait("question")
     finally:
         client.stop()
+
+
+def test_rpc_surfaces_provider_error_from_agent_end(tmp_path: Path) -> None:
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json\njson.loads(input())\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}), flush=True)\n"
+        "print(json.dumps({'type':'agent_end','messages':[{'role':'assistant','content':[],'stopReason':'error','errorMessage':'fetch failed'}]}), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(argv=(sys.executable, str(fake)), identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"))
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+    client.start()
+    try:
+        with pytest.raises(PiProtocolError, match="provider failure: fetch failed"):
+            client.prompt_and_wait("question")
+    finally:
+        client.stop()
