@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import typer
+from dotenv import dotenv_values
 
 from grid_agent.contracts import AnswerEnvelope, RunRequest
 from grid_agent.simulator.client import GridctlClient
@@ -68,6 +69,16 @@ def _install_gridctl(workspace: RunWorkspace) -> None:
     target.symlink_to(executable)
 
 
+def _runtime_environment(state_dir: Path) -> dict[str, str]:
+    """Apply the documented .env layer before locating the Pi executable."""
+    dotenv_layer = {
+        key: value
+        for key, value in dotenv_values(state_dir / ".env").items()
+        if value is not None
+    }
+    return {**dotenv_layer, **os.environ}
+
+
 @app.command()
 def run(
     question: str,
@@ -84,6 +95,7 @@ def run(
             workspace = RunWorkspace.create(Path.cwd() / "var/runs", run_id=request.question_id)
             trace = JsonlTraceWriter(workspace.events_path)
             state_dir = Path.cwd()
+            runtime_environment = _runtime_environment(state_dir)
             project_pi_dir = state_dir / "var/pi/agent"
             auth_store = ProjectAuthStore(project_pi_dir / "auth.json")
             resolved = resolve_llm(
@@ -97,7 +109,7 @@ def run(
                 environ=os.environ,
                 oauth_configured=lambda profile: auth_store.status(profile).configured,
             )
-            command = PiRuntimeLocator(state_dir, os.environ).resolve()
+            command = PiRuntimeLocator(state_dir, runtime_environment).resolve()
             _install_gridctl(workspace)
             PiConfigMaterializer(project_pi_dir).materialize(resolved)
             launch = build_pi_launch(
@@ -111,6 +123,7 @@ def run(
                     extension_path=_repo_root() / "packages/pi-grid-tools/src/hardened-bash.mjs",
                     prompt_path=_repo_root() / "configs/prompts/grid-agent-system.md",
                 ),
+                base_environment=runtime_environment,
             )
             rpc = PiRpcClient(launch, workspace, trace)
             rpc.start()
