@@ -7,6 +7,7 @@ from pathlib import Path
 from grid_agent.application.workspace import RunWorkspace
 from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.lock import PiCommand
+from grid_agent.runtime.environment import PiLaunch
 
 
 class PiProtocolError(RuntimeError):
@@ -14,7 +15,7 @@ class PiProtocolError(RuntimeError):
 
 
 class PiRpcClient:
-    def __init__(self, command: PiCommand, workspace: RunWorkspace, trace: JsonlTraceWriter, *, environment: dict[str, str] | None = None) -> None:
+    def __init__(self, command: PiCommand | PiLaunch, workspace: RunWorkspace, trace: JsonlTraceWriter, *, environment: dict[str, str] | None = None) -> None:
         self.command = command
         self.workspace = workspace
         self.trace = trace
@@ -22,7 +23,8 @@ class PiRpcClient:
         self.process: subprocess.Popen[bytes] | None = None
 
     def start(self) -> None:
-        self.process = subprocess.Popen(list(self.command.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.workspace.root_path, env=self.environment)
+        launch_environment = self.command.environment if isinstance(self.command, PiLaunch) else self.environment
+        self.process = subprocess.Popen(list(self.command.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.workspace.root_path, env=launch_environment)
 
     def prompt_and_wait(self, question: str) -> str:
         if self.process is None or self.process.stdin is None or self.process.stdout is None:
