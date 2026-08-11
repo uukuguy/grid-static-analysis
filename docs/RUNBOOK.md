@@ -39,6 +39,13 @@ cp .env.example .env
 
 Pi 运行时必须二选一：设置 `.env` 中的 `GRID_AGENT_PI_COMMAND=/绝对路径/pi`，或在仓库根目录执行 `make install-pi` 安装本项目锁定版本的运行时。模型密钥会仅在启动 Pi 子进程时通过环境变量传递，不写入 `var/pi/agent` 的配置文件或命令行。
 
+当 `GRID_AGENT_LLM_PROVIDER=openai-codex` 时，不填写 API key。先从已经登录的本地 Pi 导入 OAuth 凭证，或登录到项目自己的 Pi OAuth 配置：
+
+```sh
+make auth-import-pi
+# 若尚未有本地 Pi 登录态：先 make install-pi，再 make auth-login
+```
+
 ```sh
 # 默认读取 .env 中的 GRID_AGENT_LLM_PROVIDER
 make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"

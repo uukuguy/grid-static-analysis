@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-agent setup-simulator setup-tools install-pi doctor run run-llm test test-agent test-simulator test-tools test-e2e
+.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm test test-agent test-simulator test-tools test-e2e
 
 help:
 	@echo "Grid Static Analysis commands"
@@ -9,6 +9,8 @@ help:
 	@echo "  make run QUESTION='...'    Run one offline grid-analysis question"
 	@echo "  make run-llm QUESTION='...'  Run through configured Pi/LLM (.env provider by default)"
 	@echo "  make install-pi            Install the pinned Pi runtime"
+	@echo "  make auth-import-pi        Import local Pi Codex OAuth to this project"
+	@echo "  make auth-login            Log in to Pi Codex OAuth for this project"
 	@echo "  make test                  Run all offline verification"
 	@echo "  make test-e2e              Run offline command-line scenarios"
 
@@ -26,10 +28,16 @@ setup-tools:
 install-pi:
 	uv run --project packages/grid-agent grid-agent install-pi
 
+auth-import-pi:
+	uv run --project packages/grid-agent grid-agent auth-import-pi
+
+auth-login:
+	uv run --project packages/grid-agent grid-agent auth-login
+
 doctor:
 	uv run --project packages/grid-agent grid-agent doctor --json
 
-QUESTION ?= 'IEEE-39节点系统中线路11连接哪两个母线?'
+QUESTION ?= IEEE-39节点系统中线路11连接哪两个母线?
 
 run:
 	@test -n "$(QUESTION)" || (echo "Usage: make run QUESTION='IEEE-39节点系统中线路11连接哪两个母线?'" >&2; exit 2)

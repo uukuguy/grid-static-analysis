@@ -22,6 +22,8 @@ from grid_agent.runtime.environment import RuntimePaths, build_pi_launch
 from grid_agent.runtime.pi_config import PiConfigMaterializer
 from grid_agent.runtime.installer import PiRuntimeInstaller
 from grid_agent.runtime.lock import PiRuntimeLock
+from grid_agent.auth.service import AuthService
+from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
 
 
 app = typer.Typer(add_completion=False)
@@ -82,6 +84,8 @@ def run(
             workspace = RunWorkspace.create(Path.cwd() / "var/runs", run_id=request.question_id)
             trace = JsonlTraceWriter(workspace.events_path)
             state_dir = Path.cwd()
+            project_pi_dir = state_dir / "var/pi/agent"
+            auth_store = ProjectAuthStore(project_pi_dir / "auth.json")
             resolved = resolve_llm(
                 catalog=ProviderCatalog.load(),
                 cli=CliLLMOptions(
@@ -91,11 +95,10 @@ def run(
                     api_key_env=api_key_env,
                 ),
                 environ=os.environ,
-                oauth_configured=lambda _: False,
+                oauth_configured=lambda profile: auth_store.status(profile).configured,
             )
             command = PiRuntimeLocator(state_dir, os.environ).resolve()
             _install_gridctl(workspace)
-            project_pi_dir = state_dir / "var/pi/agent"
             PiConfigMaterializer(project_pi_dir).materialize(resolved)
             launch = build_pi_launch(
                 resolved,
@@ -124,6 +127,7 @@ def run(
         envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
         typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
     except Exception as exc:
+        typer.echo(f"grid-agent error: {exc}", err=True)
         typer.echo(json.dumps(AnswerEnvelope(question_id=request.question_id, answer_output=f"执行限制 / execution limitation: {type(exc).__name__}" ).model_dump(), ensure_ascii=False))
         raise typer.Exit(1)
 
@@ -139,6 +143,24 @@ def install_pi() -> None:
     """Install the pinned Pi runtime under ./var/runtime/pi."""
     command = PiRuntimeInstaller(PiRuntimeLock.load(), Path.cwd()).install()
     typer.echo(str(command.path))
+
+
+@app.command("auth-import-pi")
+def auth_import_pi() -> None:
+    """Copy the local Pi Codex OAuth profile into project-owned storage."""
+    store = ProjectAuthStore(Path.cwd() / "var/pi/agent/auth.json")
+    helper = PiRuntimeLocator.from_cwd().resolve_oauth_helper()
+    status = AuthService(store, helper).import_from_pi()
+    typer.echo(json.dumps({"provider": status.provider, "configured": status.configured}))
+
+
+@app.command("auth-login")
+def auth_login() -> None:
+    """Log into the pinned Pi Codex OAuth helper for this project."""
+    store = ProjectAuthStore(Path.cwd() / "var/pi/agent/auth.json")
+    helper = PiRuntimeLocator.from_cwd().resolve_oauth_helper()
+    status = AuthService(store, helper).login(CODEX_PROVIDER)
+    typer.echo(json.dumps({"provider": status.provider, "configured": status.configured}))
 
 
 def main() -> int:
