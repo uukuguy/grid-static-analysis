@@ -4,6 +4,9 @@ import json
 import re
 import sys
 import os
+import time
+from collections.abc import Mapping, Sequence
+from typing import Any
 from pathlib import Path
 
 import typer
@@ -79,6 +82,52 @@ def _runtime_environment(state_dir: Path) -> dict[str, str]:
     return {**dotenv_layer, **os.environ}
 
 
+class _ProgressReporter:
+    def __init__(self, question: str) -> None:
+        self.started_at = time.monotonic()
+        self.question = _summary(question)
+
+    def started(self, provider: str, model: str, run_id: str) -> None:
+        self._write(f"开始运行 run={run_id} provider={provider} model={model}")
+        self._write(f"调用输入: {self.question}")
+
+    def on_event(self, event: dict[str, Any]) -> None:
+        event_type = str(event.get("type", "unknown"))
+        if event_type == "prompt_ack":
+            self._write("模型请求已接收")
+        elif event_type == "text_delta":
+            self._write(f"模型输出: {_summary(str(event.get('text', '')))}")
+        elif event_type == "agent_end":
+            self._write("模型执行结束，正在整理结果")
+        else:
+            self._write(f"Pi 事件 {event_type}: {_summary(json.dumps(_redact_event(event), ensure_ascii=False))}")
+
+    def heartbeat(self) -> None:
+        self._write("仍在等待模型或工具响应")
+
+    def completed(self, answer: str) -> None:
+        self._write(f"已完成，输出摘要: {_summary(answer)}")
+
+    def _write(self, message: str) -> None:
+        typer.echo(f"[{time.monotonic() - self.started_at:6.1f}s] {message}", err=True)
+
+
+def _summary(value: str, limit: int = 200) -> str:
+    normalized = " ".join(value.split())
+    return normalized if len(normalized) <= limit else f"{normalized[:limit]}…"
+
+
+def _redact_event(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: "[REDACTED]" if any(term in str(key).lower() for term in ("key", "token", "secret", "authorization")) else _redact_event(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_redact_event(item) for item in value]
+    return value
+
+
 @app.command()
 def run(
     question: str,
@@ -90,6 +139,7 @@ def run(
     offline: bool = typer.Option(False, "--offline"),
 ) -> None:
     request = RunRequest(question_id=question_id, question=question.strip()) if question_id else RunRequest.from_text(question)
+    progress = _ProgressReporter(request.question)
     try:
         if not offline:
             workspace = RunWorkspace.create(Path.cwd() / "var/runs", run_id=request.question_id)
@@ -109,6 +159,7 @@ def run(
                 environ=os.environ,
                 oauth_configured=lambda profile: auth_store.status(profile).configured,
             )
+            progress.started(resolved.config.provider, resolved.config.model, request.question_id)
             command = PiRuntimeLocator(state_dir, runtime_environment).resolve()
             _install_gridctl(workspace)
             PiConfigMaterializer(project_pi_dir).materialize(resolved)
@@ -128,9 +179,14 @@ def run(
             rpc = PiRpcClient(launch, workspace, trace)
             rpc.start()
             try:
-                answer = rpc.prompt_and_wait(request.question)
+                answer = rpc.prompt_and_wait(
+                    request.question,
+                    on_event=progress.on_event,
+                    on_heartbeat=progress.heartbeat,
+                )
             finally:
                 rpc.stop()
+            progress.completed(answer)
             envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
             typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
             return

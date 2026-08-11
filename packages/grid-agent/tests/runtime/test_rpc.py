@@ -32,3 +32,38 @@ def test_rpc_starts_full_launch_with_its_restricted_environment(tmp_path: Path) 
     client = PiRpcClient(launch, workspace, JsonlTraceWriter(workspace.events_path))
     client.start()
     client.stop()
+
+
+def test_rpc_reports_events_and_idle_heartbeats(tmp_path: Path) -> None:
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json,time\n"
+        "json.loads(input())\n"
+        "print(json.dumps({'type':'prompt_ack','ok':True}), flush=True)\n"
+        "time.sleep(0.03)\n"
+        "print(json.dumps({'type':'text_delta','text':'answer'}), flush=True)\n"
+        "print(json.dumps({'type':'agent_end'}), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+    observed: list[str] = []
+    heartbeats: list[None] = []
+
+    client.start()
+    try:
+        assert client.prompt_and_wait(
+            "question",
+            on_event=lambda event: observed.append(event["type"]),
+            on_heartbeat=lambda: heartbeats.append(None),
+            heartbeat_seconds=0.01,
+        ) == "answer"
+    finally:
+        client.stop()
+
+    assert observed == ["prompt_ack", "text_delta", "agent_end"]
+    assert heartbeats

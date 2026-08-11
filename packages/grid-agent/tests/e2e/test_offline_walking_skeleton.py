@@ -78,3 +78,5 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "43.641" in json.loads(completed.stdout)["answer_output"]
+    assert "模型请求已接收" in completed.stderr
+    assert "已完成" in completed.stderr

@@ -56,6 +56,8 @@ make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪
 
 `make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。
 
+`make run-llm` 的 stdout 仍只输出最终 JSON；实时进度写到 stderr，包括运行耗时、provider/model、输入与输出前 200 字摘要、Pi 工具事件，以及超过 10 秒无事件时的等待提示。密钥字段会被隐藏。
+
 ## 验证
 
 ```sh
