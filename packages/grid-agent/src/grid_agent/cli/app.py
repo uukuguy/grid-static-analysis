@@ -15,6 +15,13 @@ from grid_agent.application.workspace import RunWorkspace
 from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.locator import PiRuntimeLocator
 from grid_agent.runtime.rpc import PiRpcClient
+from grid_agent.config.catalog import ProviderCatalog
+from grid_agent.config.models import CliLLMOptions
+from grid_agent.config.resolver import resolve_llm
+from grid_agent.runtime.environment import RuntimePaths, build_pi_launch
+from grid_agent.runtime.pi_config import PiConfigMaterializer
+from grid_agent.runtime.installer import PiRuntimeInstaller
+from grid_agent.runtime.lock import PiRuntimeLock
 
 
 app = typer.Typer(add_completion=False)
@@ -50,16 +57,59 @@ def _answer(question: str, client: GridctlClient) -> str:
     return f"IEEE-39 交流潮流已收敛；总有功网损为 {powerflow['total_active_loss_mw']:.14f} MW，结果证据 {powerflow['result_ref']}。"
 
 
+def _install_gridctl(workspace: RunWorkspace) -> None:
+    """Expose the approved simulator executable to Pi's restricted PATH."""
+    executable = GridctlLocator(_repo_root()).resolve()
+    target = workspace.bin_path / "gridctl"
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    target.symlink_to(executable)
+
+
 @app.command()
-def run(question: str, question_id: str | None = typer.Option(None, "--question-id")) -> None:
+def run(
+    question: str,
+    question_id: str | None = typer.Option(None, "--question-id"),
+    provider: str | None = typer.Option(None, "--provider"),
+    model: str | None = typer.Option(None, "--model"),
+    base_url: str | None = typer.Option(None, "--base-url"),
+    api_key_env: str | None = typer.Option(None, "--api-key-env"),
+    offline: bool = typer.Option(False, "--offline"),
+) -> None:
     request = RunRequest(question_id=question_id, question=question.strip()) if question_id else RunRequest.from_text(question)
     try:
-        if os.environ.get("GRID_AGENT_PI_COMMAND"):
+        if not offline:
             workspace = RunWorkspace.create(Path.cwd() / "var/runs", run_id=request.question_id)
             trace = JsonlTraceWriter(workspace.events_path)
-            runtime_environment = dict(os.environ)
-            runtime_environment["GRID_AGENT_WORKSPACE"] = str(workspace.root_path)
-            rpc = PiRpcClient(PiRuntimeLocator.from_cwd().resolve(), workspace, trace, environment=runtime_environment)
+            state_dir = Path.cwd()
+            resolved = resolve_llm(
+                catalog=ProviderCatalog.load(),
+                cli=CliLLMOptions(
+                    provider=provider,
+                    model=model,
+                    base_url=base_url,
+                    api_key_env=api_key_env,
+                ),
+                environ=os.environ,
+                oauth_configured=lambda _: False,
+            )
+            command = PiRuntimeLocator(state_dir, os.environ).resolve()
+            _install_gridctl(workspace)
+            project_pi_dir = state_dir / "var/pi/agent"
+            PiConfigMaterializer(project_pi_dir).materialize(resolved)
+            launch = build_pi_launch(
+                resolved,
+                RuntimePaths(
+                    command=command,
+                    project_pi_dir=project_pi_dir,
+                    session_dir=workspace.pi_path,
+                    workspace=workspace.root_path,
+                    gridctl_dir=workspace.bin_path,
+                    extension_path=_repo_root() / "packages/pi-grid-tools/src/hardened-bash.mjs",
+                    prompt_path=_repo_root() / "configs/prompts/grid-agent-system.md",
+                ),
+            )
+            rpc = PiRpcClient(launch, workspace, trace)
             rpc.start()
             try:
                 answer = rpc.prompt_and_wait(request.question)
@@ -82,6 +132,13 @@ def run(question: str, question_id: str | None = typer.Option(None, "--question-
 def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
     payload = {"gridctl": str(GridctlLocator(_repo_root()).resolve()), "live_probe": False}
     typer.echo(json.dumps(payload) if json_output else payload["gridctl"])
+
+
+@app.command("install-pi")
+def install_pi() -> None:
+    """Install the pinned Pi runtime under ./var/runtime/pi."""
+    command = PiRuntimeInstaller(PiRuntimeLock.load(), Path.cwd()).install()
+    typer.echo(str(command.path))
 
 
 def main() -> int:

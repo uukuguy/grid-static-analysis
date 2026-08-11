@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[4]
 )
 def test_offline_examples_return_strict_envelopes(question: str, expected: tuple[str, str]) -> None:
     completed = subprocess.run(
-        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", question],
+        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "--offline", question],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -38,7 +38,7 @@ def test_offline_examples_return_strict_envelopes(question: str, expected: tuple
 
 def test_unknown_line_returns_a_truthful_limitation_envelope() -> None:
     completed = subprocess.run(
-        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "对线路171开展N-1校核;"],
+        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "--offline", "对线路171开展N-1校核;"],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -63,6 +63,6 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     pi.chmod(0o755)
-    completed = subprocess.run(["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "run power flow"], cwd=ROOT, env={**os.environ, "GRID_AGENT_PI_COMMAND": str(pi)}, text=True, capture_output=True, timeout=60)
+    completed = subprocess.run(["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "run power flow"], cwd=ROOT, env={**os.environ, "GRID_AGENT_PI_COMMAND": str(pi), "OPENAI_API_KEY": "test-only-secret"}, text=True, capture_output=True, timeout=60)
     assert completed.returncode == 0, completed.stderr
     assert "43.641" in json.loads(completed.stdout)["answer_output"]

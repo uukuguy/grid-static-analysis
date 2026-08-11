@@ -41,7 +41,10 @@ def build_pi_environment(resolved: ResolvedLLM, paths: RuntimePaths, *, base_env
     allowed["PATH"] = str(paths.gridctl_dir) + os.pathsep + allowed.get("PATH", "")
     allowed["PI_CODING_AGENT_DIR"] = str(paths.project_pi_dir)
     allowed["PI_CODING_AGENT_SESSION_DIR"] = str(paths.session_dir)
-    allowed["PI_OFFLINE"] = "1"
+    # A live model run must be able to reach its provider.  Keep offline mode as
+    # an explicit diagnostic override instead of silently disabling networking.
+    if source.get("GRID_AGENT_PI_OFFLINE") == "1":
+        allowed["PI_OFFLINE"] = "1"
     allowed["GRID_AGENT_WORKSPACE"] = str(paths.workspace)
     if resolved.secret is not None:
         allowed[resolved.config.credential_reference] = resolved.secret.value

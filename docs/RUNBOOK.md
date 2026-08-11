@@ -26,9 +26,24 @@ make run QUESTION="筛选负载率最高的5条线路;"
 
 标准输出始终是一个 JSON 对象，仅含 `question_id` 与 `answer_output`。数值计算通过独立的 `gridctl` JSONL 进程完成；运行证据写入当前目录的 `var/runs/`。
 
-## Pi RPC 路径
+## LLM 配置与 Pi RPC 路径
 
-默认命令使用本地、非计费的 gridctl 证据路径。若明确设置 `GRID_AGENT_PI_COMMAND`，`grid-agent run` 会通过 Pi JSONL RPC 启动该命令；API 密钥只能通过环境变量提供，绝不能写入参数或文件。
+配置写在仓库根目录的 `.env`：它已被 Git 忽略。先复制模板，再只填写一个实际使用的密钥：
+
+```sh
+cp .env.example .env
+# 编辑 .env：例如保留 GRID_AGENT_LLM_PROVIDER=openai，填写 OPENAI_API_KEY=...
+```
+
+可选的非密钥参数也写在 `.env`：`GRID_AGENT_LLM_MODEL`、`GRID_AGENT_LLM_BASE_URL`、`GRID_AGENT_LLM_TIMEOUT_SECONDS` 与 `GRID_AGENT_LLM_MAX_RETRIES`。命令行参数优先于 `.env`，进程环境变量优先于 `.env`。支持的 provider 与默认密钥变量为：`openai`/`OPENAI_API_KEY`、`openrouter`/`OPENROUTER_API_KEY`、`deepseek`/`DEEPSEEK_API_KEY`、`minimax`/`MINIMAX_API_KEY`。`openai-codex` 使用 Pi OAuth，而不是 API key。
+
+Pi 运行时必须二选一：设置 `.env` 中的 `GRID_AGENT_PI_COMMAND=/绝对路径/pi`，或在仓库根目录执行 `make install-pi` 安装本项目锁定版本的运行时。模型密钥会仅在启动 Pi 子进程时通过环境变量传递，不写入 `var/pi/agent` 的配置文件或命令行。
+
+```sh
+make run-llm PROVIDER=openai QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
+```
+
+`make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。
 
 ## 验证
 
