@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import os
 from pathlib import Path
 
 import typer
@@ -10,6 +11,10 @@ import typer
 from grid_agent.contracts import AnswerEnvelope, RunRequest
 from grid_agent.simulator.client import GridctlClient
 from grid_agent.simulator.locator import GridctlLocator
+from grid_agent.application.workspace import RunWorkspace
+from grid_agent.observability.trace import JsonlTraceWriter
+from grid_agent.runtime.locator import PiRuntimeLocator
+from grid_agent.runtime.rpc import PiRpcClient
 
 
 app = typer.Typer(add_completion=False)
@@ -49,6 +54,18 @@ def _answer(question: str, client: GridctlClient) -> str:
 def run(question: str, question_id: str | None = typer.Option(None, "--question-id")) -> None:
     request = RunRequest(question_id=question_id, question=question.strip()) if question_id else RunRequest.from_text(question)
     try:
+        if os.environ.get("GRID_AGENT_PI_COMMAND"):
+            workspace = RunWorkspace.create(Path.cwd() / "var/runs", run_id=request.question_id)
+            trace = JsonlTraceWriter(workspace.events_path)
+            rpc = PiRpcClient(PiRuntimeLocator.from_cwd().resolve(), workspace, trace)
+            rpc.start()
+            try:
+                answer = rpc.prompt_and_wait(request.question)
+            finally:
+                rpc.stop()
+            envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
+            typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
+            return
         executable = GridctlLocator(_repo_root()).resolve()
         client = GridctlClient(executable=executable, workspace=Path.cwd() / "var/runs" / request.question_id, timeout_seconds=60)
         answer = _answer(request.question, client)
