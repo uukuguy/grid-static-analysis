@@ -74,6 +74,10 @@ class PiRpcClient:
                     raise PiProtocolError(f"Pi prompt failed: {event.get('error', 'unknown error')}")
             if event.get("type") == "text_delta":
                 text.append(str(event.get("text", "")))
+            if event.get("type") == "message_update":
+                assistant_event = event.get("assistantMessageEvent")
+                if isinstance(assistant_event, dict) and assistant_event.get("type") == "text_delta":
+                    text.append(str(assistant_event.get("delta", "")))
             if event.get("type") == "agent_end":
                 if not acknowledged:
                     raise PiProtocolError("Pi agent ended before prompt acknowledgement")

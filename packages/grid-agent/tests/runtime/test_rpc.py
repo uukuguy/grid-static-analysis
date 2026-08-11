@@ -116,3 +116,26 @@ def test_rpc_stops_immediately_on_failed_prompt_response(tmp_path: Path) -> None
             client.prompt_and_wait("question")
     finally:
         client.stop()
+
+
+def test_rpc_collects_text_from_current_pi_message_updates(tmp_path: Path) -> None:
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json\njson.loads(input())\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}), flush=True)\n"
+        "print(json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':'answer'}}), flush=True)\n"
+        "print(json.dumps({'type':'agent_end','messages':[]}), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+
+    client.start()
+    try:
+        assert client.prompt_and_wait("question") == "answer"
+    finally:
+        client.stop()

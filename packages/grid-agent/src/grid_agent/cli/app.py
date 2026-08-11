@@ -102,10 +102,27 @@ class _ProgressReporter:
                 self._write(f"模型请求失败: {_summary(str(event.get('error', 'unknown error')))}")
         elif event_type == "text_delta":
             self._write(f"模型输出: {_summary(str(event.get('text', '')))}")
+        elif event_type == "message_update":
+            assistant_event = event.get("assistantMessageEvent")
+            if isinstance(assistant_event, Mapping) and assistant_event.get("type") == "thinking_end":
+                self._write(f"模型推理: {_summary(str(assistant_event.get('content', '')))}")
+        elif event_type == "message_end":
+            message = event.get("message")
+            if isinstance(message, Mapping) and message.get("role") == "assistant":
+                output = _message_text(message)
+                if output:
+                    self._write(f"模型输出: {_summary(output)}")
+        elif event_type == "tool_execution_start":
+            self._write(
+                f"工具开始: {event.get('toolName', 'unknown')} "
+                f"输入: {_summary(json.dumps(_redact_event(event.get('args', {})), ensure_ascii=False))}"
+            )
+        elif event_type == "tool_execution_end":
+            result = _redact_event(event.get("result", {}))
+            status = "失败" if event.get("isError") else "完成"
+            self._write(f"工具{status}: {event.get('toolName', 'unknown')} 输出: {_summary(json.dumps(result, ensure_ascii=False))}")
         elif event_type == "agent_end":
             self._write("模型执行结束，正在整理结果")
-        else:
-            self._write(f"Pi 事件 {event_type}: {_summary(json.dumps(_redact_event(event), ensure_ascii=False))}")
 
     def heartbeat(self) -> None:
         self._write("仍在等待模型或工具响应")
@@ -131,6 +148,17 @@ def _redact_event(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_redact_event(item) for item in value]
     return value
+
+
+def _message_text(message: Mapping[str, Any]) -> str:
+    content = message.get("content")
+    if not isinstance(content, Sequence) or isinstance(content, (str, bytes, bytearray)):
+        return ""
+    return "".join(
+        str(block.get("text", ""))
+        for block in content
+        if isinstance(block, Mapping) and block.get("type") == "text"
+    )
 
 
 @app.command()
