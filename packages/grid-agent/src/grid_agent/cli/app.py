@@ -57,7 +57,9 @@ def run(question: str, question_id: str | None = typer.Option(None, "--question-
         if os.environ.get("GRID_AGENT_PI_COMMAND"):
             workspace = RunWorkspace.create(Path.cwd() / "var/runs", run_id=request.question_id)
             trace = JsonlTraceWriter(workspace.events_path)
-            rpc = PiRpcClient(PiRuntimeLocator.from_cwd().resolve(), workspace, trace)
+            runtime_environment = dict(os.environ)
+            runtime_environment["GRID_AGENT_WORKSPACE"] = str(workspace.root_path)
+            rpc = PiRpcClient(PiRuntimeLocator.from_cwd().resolve(), workspace, trace, environment=runtime_environment)
             rpc.start()
             try:
                 answer = rpc.prompt_and_wait(request.question)
