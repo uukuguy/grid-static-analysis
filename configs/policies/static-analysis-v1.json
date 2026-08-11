@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "policy_id": "static-analysis-v1",
+  "bus_voltage_pu": {"minimum": 0.95, "maximum": 1.05},
+  "branch_loading_percent": {"maximum": 100.0}
+}

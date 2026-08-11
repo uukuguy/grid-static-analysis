@@ -12,3 +12,9 @@ class SimulatorWorkspace:
         directory = self.root / "evidence" / "networks"
         directory.mkdir(parents=True, exist_ok=True)
         return directory
+
+    @property
+    def results_dir(self) -> Path:
+        directory = self.root / "evidence" / "results"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory

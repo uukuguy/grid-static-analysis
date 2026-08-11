@@ -1,0 +1,11 @@
+{
+  "engine": "pandapower",
+  "version": "3.4.0",
+  "ieee39": {
+    "line_11_end_bus_names": ["6", "11"],
+    "total_active_loss_mw": 43.64112576084923,
+    "top5_line_indices": [21, 11, 26, 2, 29],
+    "line_11_outage_max_loading_percent": 105.97543088358476,
+    "line_11_outage_overloaded_line_indices": [7, 16, 17]
+  }
+}
