@@ -44,7 +44,7 @@ def test_locator_marks_explicit_command_unmanaged(tmp_path: Path) -> None:
     assert command.identity.source == "explicit_override"
 
 
-def test_locator_does_not_search_ambient_pi_or_research_checkouts(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:
+def test_locator_prefers_managed_runtime_over_path_pi(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:
     create_managed_runtime(tmp_path, runtime_lock)
 
     command = PiRuntimeLocator(
@@ -54,6 +54,18 @@ def test_locator_does_not_search_ambient_pi_or_research_checkouts(tmp_path: Path
 
     assert command.identity.source == "managed"
     assert command.path == tmp_path / "var/runtime/pi/source" / runtime_lock.executable
+
+
+def test_locator_uses_pi_from_path_when_no_explicit_or_managed_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("grid_agent.runtime.locator.shutil.which", lambda *_args, **_kwargs: "/opt/homebrew/bin/pi")
+
+    command = PiRuntimeLocator(tmp_path, {"PATH": "/opt/homebrew/bin"}).resolve()
+
+    assert command.argv == ("/opt/homebrew/bin/pi",)
+    assert command.identity.source == "path"
 
 
 def test_locator_records_managed_identity_and_lock_sha(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:

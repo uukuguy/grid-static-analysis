@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -51,8 +52,14 @@ class PiRuntimeLocator:
             identity = self._identity(path=cli, source="managed", commit=self.runtime_lock.commit)
             return PiCommand(argv=("node", str(cli)), identity=identity)
 
+        path_command = shutil.which("pi", path=self.environ.get("PATH", ""))
+        if path_command:
+            path = Path(path_command)
+            identity = self._identity(path=path, source="path", commit=None)
+            return PiCommand(argv=(str(path),), identity=identity)
+
         raise PiRuntimeLocatorError(
-            "No pinned Pi runtime is available; set GRID_AGENT_PI_COMMAND or install the managed runtime"
+            "No Pi runtime is available; add pi to PATH, set GRID_AGENT_PI_COMMAND, or install the managed runtime"
         )
 
     def resolve_oauth_helper(self) -> PiOAuthHelper:
