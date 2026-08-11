@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { sanitizeEnvironment } from "../src/hardened-bash.mjs";
+import { buildGridRequest } from "../src/hardened-bash.mjs";
 
 test("removes canonical and resolver-selected secrets", () => {
   const clean = sanitizeEnvironment(
@@ -23,4 +24,13 @@ test("does not mutate the Pi environment object", () => {
   sanitizeEnvironment(source, ["MINIMAX_API_KEY"]);
 
   assert.equal(source.MINIMAX_API_KEY, "secret");
+});
+
+test("builds strict gridctl protocol requests", () => {
+  assert.deepEqual(buildGridRequest("element.resolve", { query: "11" }, "req-1"), {
+    protocol_version: "1.0",
+    request_id: "req-1",
+    operation: "element.resolve",
+    arguments: { query: "11" },
+  });
 });
