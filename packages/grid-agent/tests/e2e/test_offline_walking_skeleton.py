@@ -63,6 +63,18 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     pi.chmod(0o755)
-    completed = subprocess.run(["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "run power flow"], cwd=ROOT, env={**os.environ, "GRID_AGENT_PI_COMMAND": str(pi), "OPENAI_API_KEY": "test-only-secret"}, text=True, capture_output=True, timeout=60)
+    completed = subprocess.run(
+        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "run power flow"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "GRID_AGENT_PI_COMMAND": str(pi),
+            "GRID_AGENT_LLM_PROVIDER": "openai",
+            "OPENAI_API_KEY": "test-only-secret",
+        },
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
     assert completed.returncode == 0, completed.stderr
     assert "43.641" in json.loads(completed.stdout)["answer_output"]

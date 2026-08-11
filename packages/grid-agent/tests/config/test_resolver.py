@@ -12,6 +12,12 @@ def catalog() -> ProviderCatalog:
     return ProviderCatalog.load()
 
 
+@pytest.fixture(autouse=True)
+def isolate_default_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer's repository .env must not affect resolver unit tests."""
+    monkeypatch.chdir(tmp_path)
+
+
 def test_cli_wins_over_process_and_dotenv(tmp_path: Path, catalog: ProviderCatalog) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text("GRID_AGENT_LLM_PROVIDER=deepseek\nDEEPSEEK_API_KEY=dotenv-key\n", encoding="utf-8")

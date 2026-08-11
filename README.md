@@ -11,6 +11,6 @@ make test
 
 The simulator is separately pinned to pandapower 3.4.0. API keys are environment-only; never put them in command arguments or files. Each numeric answer is produced through the isolated `gridctl` JSONL process and leaves evidence under `var/runs/`.
 
-`make run` is explicitly offline. For an LLM backend, copy `.env.example` to the Git-ignored `.env`, set one provider key and `GRID_AGENT_PI_COMMAND` (or install the managed Pi runtime), then run `make run-llm PROVIDER=<openai|openrouter|deepseek|minimax> QUESTION="问题"`. The CLI resolves the provider, materializes a secret-free Pi configuration, and starts Pi RPC.
+`make run` is explicitly offline. For an LLM backend, copy `.env.example` to the Git-ignored `.env`, set one provider key and `GRID_AGENT_PI_COMMAND` (or install the managed Pi runtime), then run `make run-llm QUESTION="问题"`. An optional `PROVIDER=<...>` overrides the `.env` provider for that invocation. The CLI resolves the provider, materializes a secret-free Pi configuration, and starts Pi RPC.
 
 See [运行操作指南](docs/RUNBOOK.md) for setup, execution, Pi RPC, evidence, and verification details.

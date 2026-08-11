@@ -40,7 +40,11 @@ cp .env.example .env
 Pi 运行时必须二选一：设置 `.env` 中的 `GRID_AGENT_PI_COMMAND=/绝对路径/pi`，或在仓库根目录执行 `make install-pi` 安装本项目锁定版本的运行时。模型密钥会仅在启动 Pi 子进程时通过环境变量传递，不写入 `var/pi/agent` 的配置文件或命令行。
 
 ```sh
-make run-llm PROVIDER=openai QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
+# 默认读取 .env 中的 GRID_AGENT_LLM_PROVIDER
+make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
+
+# 临时覆盖 .env 中的 provider
+make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 ```
 
 `make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。
