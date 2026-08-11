@@ -58,6 +58,9 @@ def resolve_llm(
         descriptor.default_model,
     )
     model = _validate_model(model_value)
+    if descriptor.allowed_models is not None and model not in descriptor.allowed_models:
+        choices = ", ".join(sorted(descriptor.allowed_models))
+        raise ConfigurationError(f"Provider {provider!r} supports only these API model IDs: {choices}")
 
     base_url_value, base_url_source = _resolve_field(
         cli.base_url,

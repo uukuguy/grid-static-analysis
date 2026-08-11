@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "descriptor_version": "2026-08-10.pi-0.80.6",
+  "descriptor_version": "2026-08-11.deepseek-v4-model-ids",
   "default_provider": "openai",
   "providers": {
     "openai": {
@@ -29,6 +29,7 @@
     },
     "deepseek": {
       "default_model": "deepseek-v4-pro",
+      "allowed_models": ["deepseek-v4-flash", "deepseek-v4-pro"],
       "base_url": "https://api.deepseek.com",
       "base_url_policy": "override_allowed",
       "auth": {

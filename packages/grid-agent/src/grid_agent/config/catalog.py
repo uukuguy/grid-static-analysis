@@ -28,6 +28,7 @@ class ProviderDescriptor:
     pi_provider: str
     compatibility_profile: str
     supports_tools: bool
+    allowed_models: frozenset[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +121,7 @@ def _parse_provider(name: str, raw: Any) -> ProviderDescriptor:
         pi_provider=_required_string(raw, "pi_provider"),
         compatibility_profile=_required_string(raw, "compatibility_profile"),
         supports_tools=supports_tools,
+        allowed_models=_optional_string_set(raw, "allowed_models"),
     )
 
 
@@ -128,3 +130,12 @@ def _required_string(raw: Mapping[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError(f"Provider catalog field {key!r} must be a non-empty string")
     return value
+
+
+def _optional_string_set(raw: Mapping[str, Any], key: str) -> frozenset[str] | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ConfigurationError(f"Provider catalog field {key!r} must be a non-empty string list")
+    return frozenset(value)
