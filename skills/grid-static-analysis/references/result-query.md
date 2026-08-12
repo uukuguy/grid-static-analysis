@@ -2,7 +2,7 @@
 
 ## Use This For
 
-Use this guide for ranking branch rows from a persisted AC result with `result.branches.rank` and for deciding when evidence retrieval is needed.
+Use this guide for ranking branch rows from a persisted AC result with `result.branches.rank` and for deciding which returned references ground the answer.
 
 ## Do Not Use This For
 
@@ -10,12 +10,14 @@ Do not use ranking to run a new power flow, fabricate missing result rows, query
 
 ## Concepts and Terminology
 
-`result.branches.rank` consumes a prior current-run `result_ref` from `analysis.powerflow.ac.run`. It must not rerun power flow. Ranking is a read-only result query over persisted evidence.
+`result.branches.rank` consumes a prior current-run `result_ref` from `analysis.powerflow.ac.run`. It must not rerun power flow. Ranking is a read-only result query over persisted analysis artifacts.
+
+`evidence.get` is topology/network-fact-only in WP-A. It retrieves `network_fact` documents from `topology.branch.endpoints.get`; it is not the way to fetch AC, ranking, or N-1 result content.
 
 ## Available Capabilities
 
 - `result.branches.rank`: rank branches by `loading_percent`, `p_from_mw`, `p_to_mw`, or `pl_mw`.
-- `evidence.get`: retrieve supporting evidence when the answer needs the evidence document.
+- `evidence.get`: retrieve topology endpoint `network_fact` documents only; do not use it to retrieve ranking rows or analysis result content.
 
 ## Parameters and Defaults
 
@@ -43,10 +45,11 @@ Outputs include `result_ref`, `context_ref`, `revision_ref`, `metric`, `metric_u
 
 ## Evidence Requirements
 
-`result.branches.rank` has `evidence_required: true` because it depends on persisted AC result evidence. Cite the input `result_ref` and relevant evidence refs from the producing power-flow result.
+`result.branches.rank` has `evidence_required: true` because it depends on persisted AC result references. Cite the input `result_ref` and relevant `evidence_refs` from the producing power-flow result. AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs`; only topology endpoint `network_fact` documents are read through `evidence.get`.
 
 ## Common Mistakes
 
 - Calling ranking with a context ref instead of a result ref.
 - Ranking a metric that was not produced by AC power flow.
 - Answering "highest loaded" from static line ratings instead of power-flow result rows.
+- Calling `evidence.get` to retrieve ranking rows or AC/N-1 result content.

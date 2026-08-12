@@ -51,3 +51,35 @@
 
 - No LSP diagnostics tool was exposed in this session; syntax compilation and repository tests were used as the available diagnostics evidence.
 - Pandapower facts in the Skill were checked against pandapower documentation for versioned `case39`, topology `create_nxgraph`, and AC `runpp` solver parameters.
+
+## Review Fix: evidence.get scope guidance
+
+### Worktree Proof
+
+- Command: `git -C /Users/sujiangwen/sandbox/LLM/speechless.ai/SGAI/grid-static-analysis/.worktrees/pandapower-semantic-capabilities rev-parse --abbrev-ref HEAD`
+- Output: `feature/pandapower-semantic-capabilities`
+- Command: `git -C /Users/sujiangwen/sandbox/LLM/speechless.ai/SGAI/grid-static-analysis/.worktrees/pandapower-semantic-capabilities rev-parse --short HEAD`
+- Output before edits: `dfaf32d`
+
+### TDD Evidence
+
+- Red test command: `uv run --project packages/grid-agent pytest packages/grid-agent/tests/contract/test_skill.py::test_skill_limits_evidence_get_to_topology_network_fact_documents -v`
+- Red result: failed as expected because `SKILL.md` did not state the `topology` plus `network_fact` scope for `evidence.get`.
+- Green focused command: `uv run --project packages/grid-agent pytest packages/grid-agent/tests/contract/test_skill.py::test_skill_limits_evidence_get_to_topology_network_fact_documents -v`
+- Green focused result: `1 passed in 0.01s`.
+
+### Implementation Summary
+
+- Added a focused Skill contract test that requires the scope note in `SKILL.md`, `references/result-query.md`, and `references/evidence-and-recovery.md`.
+- Narrowed those three guidance files so `evidence.get` is explicitly topology/network-fact-only in WP-A.
+- Clarified that AC, ranking, N-1, non-convergence, and contingency answers cite returned `result_ref` and `evidence_refs` instead of requesting analysis result documents through `evidence.get`.
+- Left simulator runtime and descriptor contracts unchanged.
+
+### Verification
+
+- Focused Skill tests: `uv run --project packages/grid-agent pytest packages/grid-agent/tests/tools/test_guide.py packages/grid-agent/tests/contract/test_skill.py -v` -> `12 passed in 0.03s`.
+- Agent suite: `uv run --project packages/grid-agent pytest packages/grid-agent/tests -v` -> `109 passed in 12.17s`.
+- Syntax diagnostics substitute: `python -m py_compile packages/grid-agent/tests/contract/test_skill.py` -> passed.
+- Pyright: `npx pyright packages/grid-agent/tests/contract/test_skill.py` -> `0 errors, 0 warnings, 0 informations`.
+- Diff whitespace: `git diff --check` -> passed.
+- Forbidden guidance scan over the three Skill files: `rg -n "retrieve supporting evidence|final answer needs the evidence document|Show the evidence for this endpoint result|evidence body|analysis result body|contingency body|retrieve result body|retrieve contingency body" ...` -> no matches.

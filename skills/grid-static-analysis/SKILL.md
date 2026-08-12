@@ -17,6 +17,8 @@ Separate answer types:
 - Network facts come from registered model capabilities and require a current context. Topology facts that return `evidence_ref` must cite that evidence.
 - Calculation results come only from simulator analysis capabilities and must cite current-run `result_ref` or `evidence_refs`.
 
+`evidence.get` is topology/network-fact-only in WP-A. It retrieves `network_fact` documents produced by `topology.branch.endpoints.get`; AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs` rather than asking `evidence.get` for analysis result documents.
+
 Never invent voltages, flows, losses, rankings, overloads, contingency outcomes, or evidence. Do not use raw pandas, raw pandapower objects, arbitrary Python, shell commands, or filesystem paths as model capabilities. Use only the typed grid capabilities exposed by the runtime.
 
 ## Choose the Analysis Domain
@@ -53,7 +55,7 @@ Plan from stable references:
 4. Run `analysis.powerflow.ac.run` for numerical AC steady-state values.
 5. Rank existing branch results with `result.branches.rank`; do not rerun power flow for ranking.
 6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context and policy.
-7. Retrieve supporting evidence with `evidence.get` when a final answer needs the evidence document rather than only the reference.
+7. For topology endpoint facts only, call `evidence.get` when the final answer needs the `network_fact` document. For AC, ranking, and N-1, cite the returned `result_ref` and `evidence_refs`.
 
 ## Failure Recovery
 
