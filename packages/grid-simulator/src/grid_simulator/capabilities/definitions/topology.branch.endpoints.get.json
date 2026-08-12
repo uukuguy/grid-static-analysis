@@ -6,7 +6,7 @@
   "title": "Get branch endpoints",
   "purpose": "Return the two endpoint buses for a line or transformer branch in an opened context.",
   "applies_to": ["line endpoint questions", "branch-to-bus topology lookup", "pre-contingency verification"],
-  "not_for": ["power-flow values", "loading percentages", "dynamic topology switching"],
+  "not_for": ["power-flow values", "loading percentages", "flow direction"],
   "terms": {
     "zh": ["线路两端母线", "支路端点", "拓扑连接", "母线名称"],
     "en": ["line endpoints", "branch endpoints", "topology connection", "bus names"]
@@ -14,57 +14,80 @@
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["context_ref", "branch_ref"],
+    "required": ["context_ref"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "branch_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"}
-    }
+      "branch_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"},
+      "kind": {"type": "string", "enum": ["line", "trafo", "trafo3w"]},
+      "namespace": {"type": "string", "enum": ["pandapower_index", "name", "alias", "asset_ref"]},
+      "identifier": {"type": "string", "minLength": 1}
+    },
+    "oneOf": [
+      {"required": ["branch_ref"], "not": {"anyOf": [{"required": ["kind"]}, {"required": ["namespace"]}, {"required": ["identifier"]}]}},
+      {"required": ["kind", "namespace", "identifier"], "not": {"required": ["branch_ref"]}}
+    ]
   },
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["context_ref", "branch_ref", "from_bus", "to_bus"],
+    "required": ["context_ref", "revision_ref", "branch", "from_bus", "to_bus", "evidence_ref"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "branch_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"},
+      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
+      "branch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset_ref", "kind", "index", "name", "alias"],
+        "properties": {
+          "asset_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"},
+          "kind": {"type": "string", "enum": ["line", "trafo", "trafo3w"]},
+          "index": {"type": "integer", "minimum": 0},
+          "name": {"type": "string"},
+          "alias": {"type": "string"}
+        }
+      },
       "from_bus": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["bus_ref", "index", "name"],
+        "required": ["asset_ref", "index", "name", "alias"],
         "properties": {
-          "bus_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
+          "asset_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"},
           "index": {"type": "integer", "minimum": 0},
-          "name": {"type": "string"}
+          "name": {"type": "string"},
+          "alias": {"type": "string"}
         }
       },
       "to_bus": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["bus_ref", "index", "name"],
+        "required": ["asset_ref", "index", "name", "alias"],
         "properties": {
-          "bus_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
+          "asset_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"},
           "index": {"type": "integer", "minimum": 0},
-          "name": {"type": "string"}
+          "name": {"type": "string"},
+          "alias": {"type": "string"}
         }
-      }
+      },
+      "evidence_ref": {"type": "string", "pattern": "^evidence:sha256:[0-9a-f]{64}$"}
     }
   },
   "requires": ["context.open", "model.element.get"],
   "consumes": ["network.context", "network.branch"],
-  "produces": ["topology.endpoints", "network.bus"],
-  "common_next": ["analysis.contingency.n_minus_one.run", "model.dataset.query"],
-  "errors": ["unknown_context", "unknown_branch", "unsupported_branch_kind"],
+  "produces": ["topology.endpoints", "network.bus", "evidence.network_fact"],
+  "common_next": ["analysis.contingency.n_minus_one.run", "model.dataset.query", "evidence.get"],
+  "errors": ["unknown_context", "unknown_branch", "unsupported_branch_kind", "evidence_persist_failed"],
   "recovery": {
     "unknown_context": ["call context.open for a supported model"],
     "unknown_branch": ["resolve the line or transformer with model.element.get"],
-    "unsupported_branch_kind": ["use a line, trafo, or trafo3w branch reference"]
+    "unsupported_branch_kind": ["use a line, trafo, or trafo3w branch reference"],
+    "evidence_persist_failed": ["retry after checking run workspace permissions"]
   },
   "state_effect": "none",
   "evidence_required": true,
   "risk": "read_only_model",
   "pandapower": {
     "version": "3.4.0",
-    "operation": "read from_bus and to_bus from branch tables",
-    "limitations": ["Reports static table endpoints, not switch-status-reduced topology"]
+    "operation": "read from_bus and to_bus from branch tables without running power flow",
+    "limitations": ["Reports source model table endpoints, not power-flow direction"]
   }
 }

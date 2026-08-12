@@ -87,8 +87,9 @@ def test_dataset_query_uses_dataset_specific_selectable_field_enums() -> None:
     assert len(branches) == 2
     dataset_enums = {branch["properties"]["dataset"]["const"] for branch in branches}
     assert dataset_enums == {"network.buses", "network.branches"}
+    assert "fields" not in contract.input_schema["properties"]
     for branch in branches:
-        fields = branch["properties"]["fields"]["items"]
+        fields = branch["properties"]["select"]["items"]
         assert "enum" in fields
         assert fields["enum"]
         assert fields.get("type") != "string"
@@ -100,8 +101,8 @@ def test_dataset_query_schema_validates_bus_payload_and_rejects_unknown_properti
     valid_bus_query = {
         "context_ref": "context:sha256:" + "a" * 64,
         "dataset": "network.buses",
-        "fields": ["index", "name", "vn_kv"],
-        "filter": {"name": "16"},
+        "select": ["index", "name", "vn_kv"],
+        "where": {"name": "16"},
         "limit": 10,
     }
 

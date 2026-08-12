@@ -15,15 +15,12 @@ ROOT = Path(__file__).resolve().parents[4]
 @pytest.mark.parametrize(
     "question,expected",
     [
-        ("IEEE-39节点系统中线路11连接哪两个母线?", ("6", "11")),
+        ("IEEE-39节点系统中线路11连接哪两个母线?", ("6", "11", "evidence:")),
         ("母线电压正常运行范围是多少?", ("0.95", "1.05")),
         ("N-1静态安全校核需要检查哪些越限类型?", ("电压", "过载")),
-        ("对IEEE-39节点系统运行交流潮流，并输出有功网损;", ("43.641", "MW")),
-        ("筛选负载率最高的5条线路;", ("line:index:21", "line:index:29")),
-        ("对关键线路逐一进行故障分析并排序;", ("evidence:", "line:index:7")),
     ],
 )
-def test_offline_examples_return_strict_envelopes(question: str, expected: tuple[str, str]) -> None:
+def test_offline_examples_return_strict_envelopes(question: str, expected: tuple[str, ...]) -> None:
     completed = subprocess.run(
         ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "--offline", question],
         cwd=ROOT,
@@ -35,6 +32,29 @@ def test_offline_examples_return_strict_envelopes(question: str, expected: tuple
     envelope = json.loads(completed.stdout)
     assert set(envelope) == {"question_id", "answer_output"}
     assert all(value in envelope["answer_output"] for value in expected)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "对IEEE-39节点系统运行交流潮流，并输出有功网损;",
+        "筛选负载率最高的5条线路;",
+        "对关键线路逐一进行故障分析并排序;",
+    ],
+)
+def test_offline_analysis_examples_truthfully_report_task7_limitation(question: str) -> None:
+    completed = subprocess.run(
+        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "--offline", question],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert completed.returncode != 0
+    envelope = json.loads(completed.stdout)
+    assert set(envelope) == {"question_id", "answer_output"}
+    assert "limitation" in envelope["answer_output"]
 
 
 def test_unknown_line_returns_a_truthful_limitation_envelope() -> None:
@@ -68,7 +88,7 @@ def test_offline_runs_write_operator_visible_runs_layout() -> None:
                 "--offline",
                 "--question-id",
                 question_id,
-                "对IEEE-39节点系统运行交流潮流，并输出有功网损;",
+                "IEEE-39节点系统中线路11连接哪两个母线?",
             ],
             cwd=ROOT,
             text=True,
@@ -77,7 +97,7 @@ def test_offline_runs_write_operator_visible_runs_layout() -> None:
         )
 
         assert completed.returncode == 0, completed.stderr
-        assert "43.641" in json.loads(completed.stdout)["answer_output"]
+        assert "母线 6 与 11" in json.loads(completed.stdout)["answer_output"]
         assert runs_path.is_dir()
     finally:
         shutil.rmtree(runs_path, ignore_errors=True)
@@ -90,14 +110,14 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         "#!/usr/bin/env python3\nimport json,subprocess,sys,os\n"
         "request=json.loads(sys.stdin.readline())\n"
         f"gridctl={str(gridctl)!r}\n"
-        "def call(operation,args):\n r=subprocess.run([gridctl,'request','--workspace',os.environ['GRID_AGENT_WORKSPACE']],input=json.dumps({'protocol_version':'1.0','request_id':operation,'operation':operation,'arguments':args})+'\\n',text=True,capture_output=True,check=True); return json.loads(r.stdout)['result']\n"
-        "opened=call('network.open',{'network':'ieee39'})\nresult=call('powerflow.run_ac',{'network_ref':opened['network_ref']})\n"
-        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':str(result['total_active_loss_mw'])}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
+        "def call(capability,args):\n r=subprocess.run([gridctl,'request','--workspace',os.environ['GRID_AGENT_WORKSPACE']],input=json.dumps({'protocol_version':'1.0','request_id':capability,'capability':capability,'arguments':args})+'\\n',text=True,capture_output=True,check=True); return json.loads(r.stdout)['result']\n"
+        "opened=call('context.open',{'model_id':'ieee39'})\nresult=call('topology.branch.endpoints.get',{'context_ref':opened['context_ref'],'kind':'line','namespace':'pandapower_index','identifier':'11'})\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':result['from_bus']['name']+'-'+result['to_bus']['name']}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
         encoding="utf-8",
     )
     pi.chmod(0o755)
     completed = subprocess.run(
-        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "run power flow"],
+        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "line 11 endpoints"],
         cwd=ROOT,
         env={
             **os.environ,
@@ -110,6 +130,6 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         timeout=60,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "43.641" in json.loads(completed.stdout)["answer_output"]
+    assert "6-11" in json.loads(completed.stdout)["answer_output"]
     assert "模型请求已接收" in completed.stderr
     assert "已完成" in completed.stderr

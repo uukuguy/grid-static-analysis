@@ -68,13 +68,16 @@ def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() 
     historical_plan = Path(
         "docs/superpowers/plans/2026-08-10-grid-static-analysis-walking-skeleton.md"
     )
+    wp_a_foundation_plan = Path(
+        "docs/superpowers/plans/2026-08-12-wp-a-semantic-foundation-validation.md"
+    )
     approved_redesign = Path(
         "docs/superpowers/specs/2026-08-12-pandapower-semantic-capability-redesign.md"
     )
     superseded_marker = (
         "SUPERSEDED: Historical archive only; non-operative path details."
     )
-    excluded_historical_plans = {historical_plan}
+    excluded_historical_plans = {historical_plan, wp_a_foundation_plan}
     checked_paths = (
         "packages/",
         "configs/",

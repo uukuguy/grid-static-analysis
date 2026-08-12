@@ -69,7 +69,18 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
     assert response.ok is True
     assert response.result is not None
     ids = {item["id"] for item in response.result["executable_capabilities"]}
-    assert ids == {"environment.describe", "model.list", "context.open", "context.get"}
+    assert ids == {
+        "environment.describe",
+        "model.list",
+        "context.open",
+        "context.get",
+        "model.element.get",
+        "model.dataset.describe",
+        "model.dataset.query",
+        "topology.branch.endpoints.get",
+        "topology.components.get",
+        "evidence.get",
+    }
     assert "capabilities" not in response.result
 
 
@@ -140,7 +151,7 @@ def test_non_conformant_semantic_analysis_ids_are_unsupported(
     assert response.error.code == "unsupported_capability"
 
 
-def test_model_element_get_is_unsupported_until_contract_payload_exists(tmp_path: Path) -> None:
+def test_model_element_get_executes_after_context_open(tmp_path: Path) -> None:
     opened = dispatch(request("context.open", {"model": "ieee39"}), tmp_path)
     assert opened.result is not None
     resolved = dispatch(
@@ -148,17 +159,17 @@ def test_model_element_get_is_unsupported_until_contract_payload_exists(tmp_path
             "model.element.get",
             {
                 "context_ref": opened.result["context_ref"],
-                "element": "line",
+                "kind": "line",
                 "namespace": "pandapower_index",
-                "query": "11",
+                "identifier": "11",
             },
         ),
         tmp_path,
     )
 
-    assert resolved.ok is False
-    assert resolved.error is not None
-    assert resolved.error.code == "unsupported_capability"
+    assert resolved.ok is True
+    assert resolved.result is not None
+    assert resolved.result["element"]["alias"] == "pandapower:line:11"
 
 
 def test_cli_writes_exactly_one_json_response(monkeypatch, capsys, tmp_path: Path) -> None:

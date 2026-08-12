@@ -46,21 +46,29 @@ def _answer(question: str, client: GridctlClient) -> str:
         return "N-1 校核逐一退出一个元件，检查潮流是否收敛、母线低/高电压，以及线路和变压器过载。"
     if "输入" in question and "潮流" in question:
         return "交流潮流需要网络模型、运行方式以及明确的求解器/策略参数；本工具使用固定的 pandapower 3.4.0 AC 选项。"
-    network = client.call("network.open", {"network": "ieee39"})
-    reference = network["network_ref"]
+    context = client.call("context.open", {"model_id": "ieee39"})
+    context_ref = str(context["context_ref"])
     if "线路11" in question and ("连接" in question or "哪两个" in question):
-        line = client.call("element.resolve", {"network_ref": reference, "element": "line", "namespace": "index", "query": "11"})
-        return f"线路 line:index:11 连接母线 {line['from_bus']['name']} 与 {line['to_bus']['name']}。"
-    powerflow = client.call("powerflow.run_ac", {"network_ref": reference})
+        line = client.call(
+            "topology.branch.endpoints.get",
+            {"context_ref": context_ref, "kind": "line", "namespace": "pandapower_index", "identifier": "11"},
+        )
+        return (
+            f"线路 {line['branch']['alias']} 连接母线 {line['from_bus']['name']} 与 {line['to_bus']['name']}；"
+            f"证据 {line['evidence_ref']}。"
+        )
     if "负载率最高" in question:
-        ranked = client.call("results.lines", {"result_ref": powerflow["result_ref"], "sort": "loading_percent", "limit": 5})
-        return "负载率最高的5条线路为：" + "、".join(f"line:index:{item['index']} ({item['loading_percent']:.3f}%)" for item in ranked["lines"])
+        client.call("analysis.powerflow.ac.run", {"context_ref": context_ref, "solver": "pandapower.runpp"})
+        return "负载率排序需要 Task7 analysis.powerflow.ac.run 支持。"
     if "n-1" in normalized or "故障" in question:
         match = re.search(r"线路\s*(\d+)", question)
         line_index = int(match.group(1)) if match else 11
-        contingency = client.call("contingency.run_lines", {"network_ref": reference, "line_ids": [f"line:index:{line_index}"], "policy": "static-analysis-v1"})
-        scenario = contingency["scenarios"][0]
-        return f"线路 line:index:{line_index} N-1 后最大线路负载率为 {scenario['max_line_loading_percent']:.12f}%，越限线路为 " + "、".join(f"line:index:{item['index']}" for item in scenario["overloaded_lines"]) + f"；证据 {scenario['evidence_id']}。"
+        client.call(
+            "analysis.contingency.n_minus_one.run",
+            {"context_ref": context_ref, "branch_refs": [f"asset:line:sha256:{line_index:064x}"], "policy": "static-analysis-v1"},
+        )
+        return f"线路 {line_index} N-1 校核需要 Task7 analysis.contingency.n_minus_one.run 支持。"
+    powerflow = client.call("analysis.powerflow.ac.run", {"context_ref": context_ref, "solver": "pandapower.runpp"})
     return f"IEEE-39 交流潮流已收敛；总有功网损为 {powerflow['total_active_loss_mw']:.14f} MW，结果证据 {powerflow['result_ref']}。"
 
 

@@ -21,9 +21,9 @@ class GridctlClient:
         self.timeout_seconds = timeout_seconds
         self.last_diagnostics = ""
 
-    def call(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+    def call(self, capability: str, arguments: dict[str, object]) -> dict[str, object]:
         request_id = f"sim-{uuid4().hex}"
-        request = {"protocol_version": "1.0", "request_id": request_id, "operation": operation, "arguments": arguments}
+        request = {"protocol_version": "1.0", "request_id": request_id, "capability": capability, "arguments": arguments}
         try:
             completed = subprocess.run(
                 [str(self.executable), "request", "--workspace", str(self.workspace)],

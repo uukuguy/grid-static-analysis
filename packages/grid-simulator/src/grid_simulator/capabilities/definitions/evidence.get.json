@@ -22,17 +22,53 @@
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["evidence_ref", "artifact_type", "content_sha256", "created_by"],
+    "required": ["evidence_ref", "document"],
     "properties": {
       "evidence_ref": {"type": "string", "pattern": "^evidence:sha256:[0-9a-f]{64}$"},
-      "artifact_type": {"type": "string", "enum": ["context", "powerflow_result", "contingency_result", "ranked_result"]},
-      "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-      "created_by": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"}
+      "document": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidence_type",
+          "capability_id",
+          "context_ref",
+          "revision_ref",
+          "subject_ref",
+          "facts",
+          "provenance"
+        ],
+        "properties": {
+          "evidence_type": {"type": "string", "enum": ["network_fact"]},
+          "capability_id": {"type": "string", "enum": ["topology.branch.endpoints.get"]},
+          "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+          "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
+          "subject_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"},
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from_bus_ref", "to_bus_ref"],
+            "properties": {
+              "from_bus_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"},
+              "to_bus_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"}
+            }
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["engine", "engine_version", "source_alias"],
+            "properties": {
+              "engine": {"type": "string", "enum": ["pandapower"]},
+              "engine_version": {"type": "string", "enum": ["3.4.0"]},
+              "source_alias": {"type": "string"}
+            }
+          }
+        }
+      }
     }
   },
   "requires": [],
   "consumes": ["evidence.reference"],
-  "produces": ["evidence.record"],
+  "produces": ["evidence.network_fact"],
   "common_next": [],
   "errors": ["unknown_evidence", "artifact_unreadable"],
   "recovery": {

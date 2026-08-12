@@ -23,15 +23,28 @@
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["dataset_ref", "context_ref", "dataset", "row_count", "selectable_fields"],
+    "required": ["dataset_ref", "context_ref", "revision_ref", "dataset", "row_count", "fields"],
     "properties": {
       "dataset_ref": {"type": "string", "pattern": "^dataset:network\\.(buses|branches):sha256:[0-9a-f]{64}$"},
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
       "dataset": {"type": "string", "enum": ["network.buses", "network.branches"]},
       "row_count": {"type": "integer", "minimum": 0},
-      "selectable_fields": {
+      "fields": {
         "type": "array",
-        "items": {"enum": ["index", "name", "vn_kv", "in_service", "from_bus", "to_bus", "length_km", "max_i_ka", "element_kind"]}
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "type", "unit", "meaning", "provenance"],
+          "properties": {
+            "name": {"type": "string"},
+            "type": {"type": "string"},
+            "unit": {"type": ["string", "null"]},
+            "meaning": {"type": "string"},
+            "provenance": {"type": "string"}
+          }
+        }
       }
     }
   },

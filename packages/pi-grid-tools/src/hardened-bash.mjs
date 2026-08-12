@@ -21,8 +21,8 @@ export function sanitizeEnvironment(env, selectedNames = []) {
   );
 }
 
-export function buildGridRequest(operation, params, requestId = randomUUID()) {
-  return { protocol_version: "1.0", request_id: requestId, operation, arguments: params };
+export function buildGridRequest(capability, params, requestId = randomUUID()) {
+  return { protocol_version: "1.0", request_id: requestId, capability, arguments: params };
 }
 
 function runGridctl(payload) {
@@ -47,17 +47,18 @@ function runGridctl(payload) {
 const gridQueryTool = defineTool({
   name: "grid_query",
   label: "Grid query",
-  description: "Run one verified IEEE-39 simulator operation. Use this instead of bash for every gridctl request.",
+  description: "Run one verified IEEE-39 simulator capability. Use this instead of bash for every gridctl request.",
   parameters: Type.Object({
-    operation: Type.Union([
-      Type.Literal("capabilities.list"), Type.Literal("capabilities.describe"), Type.Literal("network.open"),
-      Type.Literal("network.describe"), Type.Literal("element.resolve"), Type.Literal("powerflow.run_ac"),
-      Type.Literal("results.lines"), Type.Literal("contingency.run_lines"),
+    capability: Type.Union([
+      Type.Literal("environment.describe"), Type.Literal("model.list"), Type.Literal("context.open"),
+      Type.Literal("context.get"), Type.Literal("model.element.get"), Type.Literal("model.dataset.describe"),
+      Type.Literal("model.dataset.query"), Type.Literal("topology.branch.endpoints.get"),
+      Type.Literal("topology.components.get"), Type.Literal("evidence.get"),
     ]),
     arguments: Type.Object({}, { additionalProperties: true }),
   }),
   async execute(_id, params) {
-    const response = await runGridctl(buildGridRequest(params.operation, params.arguments));
+    const response = await runGridctl(buildGridRequest(params.capability, params.arguments));
     return { content: [{ type: "text", text: JSON.stringify(response) }], details: response, isError: response.ok !== true };
   },
 });

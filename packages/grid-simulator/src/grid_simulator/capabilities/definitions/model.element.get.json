@@ -14,41 +14,42 @@
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["context_ref", "element", "namespace", "query"],
+    "required": ["context_ref", "kind", "namespace", "identifier"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "element": {"type": "string", "enum": ["bus", "line", "trafo", "trafo3w"]},
-      "namespace": {"type": "string", "enum": ["pandapower_index", "name"]},
-      "query": {"type": "string", "minLength": 1}
+      "kind": {"type": "string", "enum": ["bus", "line", "trafo", "trafo3w"]},
+      "namespace": {"type": "string", "enum": ["pandapower_index", "name", "alias", "asset_ref"]},
+      "identifier": {"type": "string", "minLength": 1}
     }
   },
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["element_ref", "element", "namespace", "query", "pandapower_index"],
+    "required": ["context_ref", "revision_ref", "asset_ref", "element"],
     "properties": {
-      "element_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
-      "element": {"type": "string", "enum": ["bus", "line", "trafo", "trafo3w"]},
-      "namespace": {"type": "string", "enum": ["pandapower_index", "name"]},
-      "query": {"type": "string"},
-      "pandapower_index": {"type": "integer", "minimum": 0},
-      "name": {"type": "string"},
-      "from_bus": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
+      "asset_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
+      "element": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["index", "name"],
+        "required": ["asset_ref", "kind", "index", "name", "alias"],
         "properties": {
+          "asset_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
+          "kind": {"type": "string", "enum": ["bus", "line", "trafo", "trafo3w"]},
           "index": {"type": "integer", "minimum": 0},
-          "name": {"type": "string"}
-        }
-      },
-      "to_bus": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["index", "name"],
-        "properties": {
-          "index": {"type": "integer", "minimum": 0},
-          "name": {"type": "string"}
+          "name": {"type": "string"},
+          "alias": {"type": "string"},
+          "vn_kv": {"type": "number"},
+          "in_service": {"type": "boolean"},
+          "from_bus_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"},
+          "to_bus_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"},
+          "from_bus_index": {"type": "integer", "minimum": 0},
+          "to_bus_index": {"type": "integer", "minimum": 0},
+          "from_bus_name": {"type": "string"},
+          "to_bus_name": {"type": "string"},
+          "length_km": {"type": ["number", "null"]},
+          "max_i_ka": {"type": ["number", "null"]}
         }
       }
     }
@@ -64,7 +65,7 @@
     "unknown_element": ["call model.dataset.query to inspect available elements"]
   },
   "state_effect": "none",
-  "evidence_required": true,
+  "evidence_required": false,
   "risk": "read_only_model",
   "pandapower": {
     "version": "3.4.0",

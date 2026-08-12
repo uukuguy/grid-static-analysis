@@ -27,10 +27,10 @@ test("does not mutate the Pi environment object", () => {
 });
 
 test("builds strict gridctl protocol requests", () => {
-  assert.deepEqual(buildGridRequest("element.resolve", { query: "11" }, "req-1"), {
+  assert.deepEqual(buildGridRequest("model.element.get", { identifier: "11" }, "req-1"), {
     protocol_version: "1.0",
     request_id: "req-1",
-    operation: "element.resolve",
-    arguments: { query: "11" },
+    capability: "model.element.get",
+    arguments: { identifier: "11" },
   });
 });

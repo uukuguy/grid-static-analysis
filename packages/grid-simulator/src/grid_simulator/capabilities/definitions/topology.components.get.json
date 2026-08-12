@@ -14,28 +14,35 @@
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["context_ref", "include_out_of_service"],
+    "required": ["context_ref"],
     "properties": {
-      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "include_out_of_service": {"type": "boolean"}
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"}
     }
   },
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["context_ref", "components"],
+    "required": ["context_ref", "revision_ref", "component_count", "components"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
+      "component_count": {"type": "integer", "minimum": 0},
       "components": {
         "type": "array",
+        "maxItems": 50,
         "items": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["component_id", "bus_count", "branch_count"],
+          "required": ["component_id", "bus_count", "branch_count", "bus_refs"],
           "properties": {
             "component_id": {"type": "string", "pattern": "^component:[0-9]+$"},
             "bus_count": {"type": "integer", "minimum": 0},
-            "branch_count": {"type": "integer", "minimum": 0}
+            "branch_count": {"type": "integer", "minimum": 0},
+            "bus_refs": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"}
+            }
           }
         }
       }
@@ -55,7 +62,7 @@
   "risk": "read_only_model",
   "pandapower": {
     "version": "3.4.0",
-    "operation": "derive graph connectivity from pandapowerNet topology tables",
+    "operation": "pandapower.topology.create_nxgraph(respect_switches=True, include_out_of_service=False)",
     "limitations": ["Does not execute power flow or contingency switching"]
   }
 }

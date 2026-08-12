@@ -1,5 +1,7 @@
 # WP-A Semantic Foundation and Validation Baseline Implementation Plan
 
+SUPERSEDED: Historical archive only; non-operative path details.
+
 > **For agentic workers:** Use `subagent-driven-development` (recommended) or execute inline task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Design reference:** [`2026-08-12-pandapower-semantic-capability-redesign.md`](../specs/2026-08-12-pandapower-semantic-capability-redesign.md)
