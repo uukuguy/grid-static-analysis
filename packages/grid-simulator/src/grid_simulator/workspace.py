@@ -32,6 +32,9 @@ class SimulatorWorkspace:
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
+    def result_document(self, prefix: str, digest: str) -> Path:
+        return self.root / "evidence" / "results" / f"{prefix}-{digest}.json"
+
     def context_document(self, context_ref: str) -> Path:
         return self.contexts_dir / f"{_parse_context_ref(context_ref)}.json"
 

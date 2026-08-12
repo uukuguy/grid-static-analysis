@@ -68,3 +68,26 @@ Ported AC power flow, branch result ranking, and N-1 contingency analysis to exe
   - Result: passed.
   - `uv build --project packages/grid-simulator`
   - Result: built source distribution and wheel successfully; generated archives were removed from the worktree afterward.
+
+## Review Fix Evidence: Result Read Integrity and Read-only Ranking
+
+- Mandatory worktree guard:
+  - `git -C /Users/sujiangwen/sandbox/LLM/speechless.ai/SGAI/grid-static-analysis/.worktrees/pandapower-semantic-capabilities rev-parse --show-toplevel && git -C /Users/sujiangwen/sandbox/LLM/speechless.ai/SGAI/grid-static-analysis/.worktrees/pandapower-semantic-capabilities branch --show-current && git -C /Users/sujiangwen/sandbox/LLM/speechless.ai/SGAI/grid-static-analysis/.worktrees/pandapower-semantic-capabilities log -1 --oneline`
+  - Result: root `/Users/sujiangwen/sandbox/LLM/speechless.ai/SGAI/grid-static-analysis/.worktrees/pandapower-semantic-capabilities`; branch `feature/pandapower-semantic-capabilities`; head `48ac571 Protect ranking against forged result evidence`.
+- Red run:
+  - `uv run --project packages/grid-simulator pytest packages/grid-simulator/tests/test_powerflow.py -v`
+  - Result: 2 failed, 6 passed. Failures proved non-UTF8 result bytes escaped as `UnicodeDecodeError`, and unknown result ranking created an `evidence` directory in an empty workspace.
+- Green focused run:
+  - Same command.
+  - Result: 8 passed, 14 existing pandapower deprecation warnings.
+- Diagnostics:
+  - `pyright packages/grid-simulator/src/grid_simulator/analyses.py packages/grid-simulator/src/grid_simulator/workspace.py packages/grid-simulator/tests/test_powerflow.py`
+  - Result: 0 errors, 0 warnings, 0 informations.
+- Lint and compile:
+  - `ruff check packages/grid-simulator/src/grid_simulator/analyses.py packages/grid-simulator/src/grid_simulator/workspace.py packages/grid-simulator/tests/test_powerflow.py`
+  - Result: all checks passed.
+  - `uv run --project packages/grid-simulator python -m compileall -q packages/grid-simulator/src packages/grid-simulator/tests`
+  - Result: passed.
+- Full simulator suite:
+  - `uv run --project packages/grid-simulator pytest packages/grid-simulator/tests -v`
+  - Result: 78 passed, 18 existing pandapower deprecation warnings.

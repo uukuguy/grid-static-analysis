@@ -634,11 +634,15 @@ def _load_powerflow_result(workspace: SimulatorWorkspace, result_ref: str) -> di
     match = _RESULT_REF_PATTERN.fullmatch(result_ref)
     if match is None:
         raise UnknownResultError("result reference is malformed")
-    path = workspace.results_dir / f"powerflow-{match.group(1)}.json"
+    path = workspace.result_document("powerflow", match.group(1))
     if not path.is_file():
         raise UnknownResultError("powerflow result is unavailable in this workspace")
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ResultIntegrityError("powerflow result document is not UTF-8 JSON") from exc
+    except OSError as exc:
+        raise ResultIntegrityError("powerflow result document could not be read") from exc
     except json.JSONDecodeError as exc:
         raise ResultIntegrityError("powerflow result document is not valid JSON") from exc
     _verify_powerflow_result_document(document, result_ref)

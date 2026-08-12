@@ -114,6 +114,24 @@ def test_branch_ranking_rejects_invalid_json_result_document(grid, context_ref: 
     assert error.phase == "resolve"
 
 
+def test_branch_ranking_rejects_non_utf8_result_document(grid, context_ref: str) -> None:
+    powerflow = grid.call("analysis.powerflow.ac.run", {"context_ref": context_ref})
+    _result_document_path(str(powerflow["result_ref"]), grid.workspace.root).write_bytes(b"\xff\xfe\xfa")
+
+    error = grid.call_error(
+        "result.branches.rank",
+        {
+            "result_ref": powerflow["result_ref"],
+            "metric": "loading_percent",
+            "direction": "descending",
+            "limit": 1,
+        },
+    )
+
+    assert error.code == "result_integrity_failed"
+    assert error.phase == "resolve"
+
+
 def test_branch_ranking_rejects_result_document_without_result_ref(grid, context_ref: str) -> None:
     powerflow = grid.call("analysis.powerflow.ac.run", {"context_ref": context_ref})
     path = _result_document_path(str(powerflow["result_ref"]), grid.workspace.root)
@@ -133,3 +151,19 @@ def test_branch_ranking_rejects_result_document_without_result_ref(grid, context
 
     assert error.code == "result_integrity_failed"
     assert error.phase == "resolve"
+
+
+def test_branch_ranking_unknown_result_is_read_only(grid) -> None:
+    error = grid.call_error(
+        "result.branches.rank",
+        {
+            "result_ref": "result:sha256:" + "1" * 64,
+            "metric": "loading_percent",
+            "direction": "descending",
+            "limit": 1,
+        },
+    )
+
+    assert error.code == "unknown_result"
+    assert error.phase == "resolve"
+    assert not (grid.workspace.root / "evidence").exists()
