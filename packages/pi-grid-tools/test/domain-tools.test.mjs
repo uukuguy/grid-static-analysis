@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -145,6 +145,79 @@ test("guide tool rejects traversal and opens published guides", async () => {
   assert.match(opened.details.text, /endpoint capability/);
   assert.equal(rejected.isError, true);
   assert.equal(escaped.isError, true);
+});
+
+test("guide tool rejects lexically allowed symlinks outside the published root", async () => {
+  const root = await makeFixtureRoot();
+  const outside = await mkdtemp(join(tmpdir(), "grid-domain-tools-outside-"));
+  const outsideGuidePath = join(outside, "secret.md");
+  const guideSymlinkPath = join(root, "guides/escape.md");
+  const registered = [];
+  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
+  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
+  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
+  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
+  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
+  await writeFile(outsideGuidePath, "outside guide secret", "utf8");
+  await symlink(outsideGuidePath, guideSymlinkPath);
+  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root, {
+    escape: guideSymlinkPath,
+  });
+
+  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
+  const guide = registered.find((tool) => tool.name === "grid_guide_open");
+
+  const result = await guide.execute("guide-escape", { resource_id: "escape" });
+
+  assert.equal(result.isError, true);
+  assert.equal(result.details.error.code, "guide_path_rejected");
+  assert.doesNotMatch(result.content[0].text, /outside guide secret/);
+});
+
+test("startup rejects configured symlink paths that escape the workspace", async () => {
+  const cases = [
+    {
+      name: "GRID_AGENT_TOOL_CATALOG",
+      link: "tool-catalog-link.json",
+      outside: "tool-catalog.json",
+      writeOutside: writeCatalog,
+    },
+    {
+      name: "GRID_AGENT_GUIDE_INDEX",
+      link: "guide-index-link.json",
+      outside: "guide-index.json",
+      writeOutside: async (path, root) => writeGuideIndex(path, root),
+    },
+    {
+      name: "GRID_AGENT_ANSWER_DRAFT",
+      link: "answer-draft.json",
+      outside: "answer-draft.json",
+      writeOutside: async (path) => writeFile(path, "{}", "utf8"),
+    },
+  ];
+
+  for (const testCase of cases) {
+    const root = await makeFixtureRoot();
+    const outside = await mkdtemp(join(tmpdir(), "grid-domain-tools-outside-"));
+    const outsidePath = join(outside, testCase.outside);
+    const linkPath = join(root, "run", testCase.link);
+    const registered = [];
+    await testCase.writeOutside(outsidePath, root);
+    await symlink(outsidePath, linkPath);
+    process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
+    process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
+    process.env.GRID_AGENT_WORKSPACE = join(root, "run");
+    process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
+    await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
+    await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
+    process.env[testCase.name] = linkPath;
+
+    assert.throws(
+      () => domainToolsExtension({ registerTool: (tool) => registered.push(tool) }),
+      new RegExp(`${testCase.name}.*outside GRID_AGENT_WORKSPACE`),
+    );
+    assert.deepEqual(registered, []);
+  }
 });
 
 test("answer submission atomically writes the configured draft path", async () => {

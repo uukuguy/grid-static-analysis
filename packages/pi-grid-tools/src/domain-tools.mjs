@@ -2,9 +2,9 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { readFileSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 
 const CANONICAL_SECRET_NAMES = [
   "OPENAI_API_KEY",
@@ -69,15 +69,15 @@ export default function domainToolsExtension(pi) {
   const paths = runtimePaths(process.env);
   const catalog = readJsonSync(paths.toolCatalogPath);
   for (const contract of catalog.tools) {
-    pi.registerTool(createGridTool(contract));
+    pi.registerTool(createGridTool(contract, (payload) => runGridctl(payload, paths.workspacePath)));
   }
   pi.registerTool(createGuideTool(paths.guideIndexPath));
   pi.registerTool(createSubmitAnswerTool(paths.answerDraftPath));
 }
 
-function runGridctl(payload) {
+function runGridctl(payload, workspacePath = requiredExistingRealPath(process.env, "GRID_AGENT_WORKSPACE")) {
   return new Promise((resolveResponse) => {
-    const child = spawn("gridctl", ["request", "--workspace", process.env.GRID_AGENT_WORKSPACE], {
+    const child = spawn("gridctl", ["request", "--workspace", workspacePath], {
       env: sanitizeEnvironment(process.env, selectedSecretNames(process.env)),
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -123,7 +123,7 @@ function createGuideTool(guideIndexPath) {
         });
       }
       const guideIndex = await readJson(guideIndexPath);
-      const root = resolve(String(guideIndex.root));
+      const root = await realpath(String(guideIndex.root));
       const resourcePath = guideIndex.resources?.[params.resource_id];
       if (typeof resourcePath !== "string") {
         return toolError({
@@ -132,7 +132,16 @@ function createGuideTool(guideIndexPath) {
           message: "guide resource is not published",
         });
       }
-      const resolvedPath = resolve(resourcePath);
+      let resolvedPath;
+      try {
+        resolvedPath = await realpath(resourcePath);
+      } catch {
+        return toolError({
+          code: "guide_path_rejected",
+          phase: "resolve",
+          message: "guide resource path is unavailable",
+        });
+      }
       if (!isInside(resolvedPath, root)) {
         return toolError({
           code: "guide_path_rejected",
@@ -171,24 +180,54 @@ function createSubmitAnswerTool(answerDraftPath) {
 }
 
 function runtimePaths(env) {
-  const workspacePath = requiredResolvedPath(env, "GRID_AGENT_WORKSPACE");
-  const toolCatalogPath = requiredResolvedPath(env, "GRID_AGENT_TOOL_CATALOG");
-  const guideIndexPath = requiredResolvedPath(env, "GRID_AGENT_GUIDE_INDEX");
-  const answerDraftPath = requiredResolvedPath(env, "GRID_AGENT_ANSWER_DRAFT");
-  for (const candidate of [toolCatalogPath, guideIndexPath, answerDraftPath]) {
+  const workspacePath = requiredExistingRealPath(env, "GRID_AGENT_WORKSPACE");
+  const toolCatalogPath = requiredExistingRealPath(env, "GRID_AGENT_TOOL_CATALOG");
+  const guideIndexPath = requiredExistingRealPath(env, "GRID_AGENT_GUIDE_INDEX");
+  const answerDraftPath = requiredWritableRealPath(env, "GRID_AGENT_ANSWER_DRAFT");
+  for (const [name, candidate] of [
+    ["GRID_AGENT_TOOL_CATALOG", toolCatalogPath],
+    ["GRID_AGENT_GUIDE_INDEX", guideIndexPath],
+    ["GRID_AGENT_ANSWER_DRAFT", answerDraftPath],
+  ]) {
     if (!isInside(candidate, workspacePath)) {
-      throw new Error(`${candidate} is outside GRID_AGENT_WORKSPACE`);
+      throw new Error(`${name} resolved path ${candidate} is outside GRID_AGENT_WORKSPACE`);
     }
   }
   return { workspacePath, toolCatalogPath, guideIndexPath, answerDraftPath };
 }
 
-function requiredResolvedPath(env, name) {
+function requiredAbsolutePath(env, name) {
   const value = env[name];
   if (typeof value !== "string" || value.length === 0 || !isAbsolute(value)) {
     throw new Error(`${name} must be an absolute path`);
   }
   return resolve(value);
+}
+
+function requiredExistingRealPath(env, name) {
+  const path = requiredAbsolutePath(env, name);
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    throw new Error(`${name} must resolve to an existing path: ${error.message}`);
+  }
+}
+
+function requiredWritableRealPath(env, name) {
+  const path = requiredAbsolutePath(env, name);
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw new Error(`${name} must resolve to a writable path: ${error.message}`);
+    }
+    const parent = dirname(path);
+    try {
+      return resolve(realpathSync(parent), basename(path));
+    } catch (parentError) {
+      throw new Error(`${name} parent must resolve to an existing path: ${parentError.message}`);
+    }
+  }
 }
 
 function isInside(candidate, root) {
