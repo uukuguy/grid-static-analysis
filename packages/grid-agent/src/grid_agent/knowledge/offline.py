@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 
 class CapabilityClient(Protocol):
@@ -15,6 +15,13 @@ class KnowledgeEntry:
     concept_id: str
     source_id: str
     answer: str
+
+
+@dataclass(frozen=True)
+class DiagnosticPlan:
+    intent: Literal["line_endpoints", "powerflow", "ranking", "n_minus_one", "fault_ranking"]
+    model_id: str
+    line_id: str | None = None
 
 
 _ENTRIES = (
@@ -42,6 +49,9 @@ _ENTRIES = (
     ),
 )
 
+_SUPPORTED_OFFLINE_MODEL_ID = "ieee39"
+_SUPPORTED_OFFLINE_LINE_IDS = frozenset({"11"})
+
 
 def answer_information(question: str) -> str | None:
     normalized = question.lower()
@@ -55,14 +65,18 @@ def answer_information(question: str) -> str | None:
 
 
 def answer_diagnostic(question: str, client: CapabilityClient) -> str:
-    opened = client.invoke("context.open", {"model_id": "ieee39"})
+    plan = plan_diagnostic(question)
+    if isinstance(plan, str):
+        return plan
+
+    opened = client.invoke("context.open", {"model_id": plan.model_id})
     context_ref = str(opened["context_ref"])
 
-    if _asks_line_endpoints(question):
-        line_id = _line_identifier(question) or "11"
+    if plan.intent == "line_endpoints":
+        line_id = str(plan.line_id)
         return _answer_line_endpoints(client, context_ref, line_id)
 
-    if "负载率最高" in question:
+    if plan.intent == "ranking":
         powerflow = client.invoke("analysis.powerflow.ac.run", {"context_ref": context_ref})
         ranking = client.invoke(
             "result.branches.rank",
@@ -76,8 +90,8 @@ def answer_diagnostic(question: str, client: CapabilityClient) -> str:
         )
         return _answer_ranking(ranking, powerflow)
 
-    if _asks_n_minus_one(question):
-        line_id = _line_identifier(question) or "11"
+    if plan.intent == "n_minus_one":
+        line_id = str(plan.line_id)
         element = client.invoke(
             "model.element.get",
             {
@@ -94,7 +108,7 @@ def answer_diagnostic(question: str, client: CapabilityClient) -> str:
         )
         return _answer_n_minus_one(result, line_id)
 
-    if "故障" in question and "排序" in question:
+    if plan.intent == "fault_ranking":
         powerflow = client.invoke("analysis.powerflow.ac.run", {"context_ref": context_ref})
         ranking = client.invoke(
             "result.branches.rank",
@@ -113,13 +127,96 @@ def answer_diagnostic(question: str, client: CapabilityClient) -> str:
         )
         return _answer_fault_ranking(result)
 
-    if "潮流" in question and any(term in question for term in ("运行", "输出", "网损", "有功")):
+    if plan.intent == "powerflow":
         powerflow = client.invoke("analysis.powerflow.ac.run", {"context_ref": context_ref})
         return _answer_powerflow(powerflow)
 
+    raise AssertionError(f"unhandled offline diagnostic intent: {plan.intent}")
+
+
+def plan_diagnostic(question: str) -> DiagnosticPlan | str:
+    intent = _diagnostic_intent(question)
+    if intent is None:
+        return (
+            "执行限制 / execution limitation: 离线诊断路径只支持已审核的信息概念、明确 IEEE-39 模型的"
+            "线路11端点、交流潮流、有功网损、线路负载率排序和 N-1 静态安全校核。"
+        )
+
+    model_id = _model_id(question)
+    if model_id is None:
+        model_name = _explicit_ieee_model_name(question)
+        if model_name is not None:
+            return (
+                f"执行限制 / execution limitation: 当前离线诊断路径不支持 {model_name}；"
+                "仅支持明确请求已注册的 IEEE-39 模型，且不会创建仿真运行。"
+            )
+        return (
+            f"执行限制 / execution limitation: {_intent_label(intent)}需要在问题中明确指定已注册的 IEEE-39 模型，"
+            "当前请求缺少可识别模型，未创建仿真运行。"
+        )
+
+    if intent == "line_endpoints":
+        line_id = _line_identifier(question)
+        if line_id not in _SUPPORTED_OFFLINE_LINE_IDS:
+            return _unsupported_line_limitation(line_id)
+        return DiagnosticPlan(intent=intent, model_id=model_id, line_id=line_id)
+
+    if intent == "n_minus_one":
+        line_id = _line_identifier(question)
+        if line_id not in _SUPPORTED_OFFLINE_LINE_IDS:
+            return _unsupported_line_limitation(line_id, prefix="N-1 静态安全校核")
+        return DiagnosticPlan(intent=intent, model_id=model_id, line_id=line_id)
+
+    return DiagnosticPlan(intent=intent, model_id=model_id)
+
+
+def _diagnostic_intent(
+    question: str,
+) -> Literal["line_endpoints", "powerflow", "ranking", "n_minus_one", "fault_ranking"] | None:
+    if _asks_line_endpoints(question):
+        return "line_endpoints"
+    if "故障" in question and "排序" in question:
+        return "fault_ranking"
+    if "负载率最高" in question:
+        return "ranking"
+    if _asks_n_minus_one(question):
+        return "n_minus_one"
+    if "潮流" in question and any(term in question for term in ("运行", "输出", "网损", "有功")):
+        return "powerflow"
+    return None
+
+
+def _model_id(question: str) -> str | None:
+    return _SUPPORTED_OFFLINE_MODEL_ID if re.search(r"ieee\s*-?\s*39(?!\d)", question, flags=re.IGNORECASE) else None
+
+
+def _explicit_ieee_model_name(question: str) -> str | None:
+    match = re.search(r"ieee\s*-?\s*(\d+)(?!\d)", question, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    return f"IEEE-{match.group(1)}"
+
+
+def _intent_label(intent: str) -> str:
+    labels = {
+        "line_endpoints": "线路端点查询",
+        "powerflow": "交流潮流诊断",
+        "ranking": "线路负载率排序",
+        "n_minus_one": "N-1 静态安全校核",
+        "fault_ranking": "故障分析排序",
+    }
+    return labels.get(intent, "离线仿真诊断")
+
+
+def _unsupported_line_limitation(line_id: str | None, *, prefix: str = "离线诊断") -> str:
+    if line_id is None:
+        return (
+            f"执行限制 / execution limitation: {prefix} 需要明确且受支持的线路目标；"
+            "当前请求缺少可识别线路编号，未创建仿真运行。"
+        )
     return (
-        "执行限制 / execution limitation: 离线诊断路径只支持已审核的信息概念、IEEE-39 线路端点、"
-        "交流潮流、有功网损、线路负载率排序和 N-1 静态安全校核。"
+        f"执行限制 / execution limitation: {prefix} 当前离线烟测只支持 IEEE-39 的线路11；"
+        f"线路{line_id}不是此离线路径中可识别的受支持目标，未创建仿真运行。"
     )
 
 
@@ -132,7 +229,7 @@ def _asks_line_endpoints(question: str) -> bool:
 
 
 def _asks_n_minus_one(question: str) -> bool:
-    return "n-1" in question.lower() or "校核" in question
+    return "n-1" in question.lower()
 
 
 def _line_identifier(question: str) -> str | None:

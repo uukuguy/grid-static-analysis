@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import os
@@ -12,7 +13,7 @@ import typer
 from dotenv import dotenv_values
 
 from grid_agent.contracts import AnswerEnvelope, RunRequest
-from grid_agent.knowledge.offline import answer_diagnostic, answer_information
+from grid_agent.knowledge.offline import answer_diagnostic, answer_information, plan_diagnostic
 from grid_agent.simulator.client import GridctlClient
 from grid_agent.simulator.locator import GridctlLocator
 from grid_agent.application.paths import ProjectPaths
@@ -176,8 +177,61 @@ def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...
         digest = evidence_ref.removeprefix("evidence:sha256:")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise RuntimeError(f"claimed evidence ref is invalid: {evidence_ref}")
-        if not any(path.is_file() for path in workspace.evidence_path.rglob(f"*{digest}.json")):
+        document_path = _allowed_evidence_document_path(workspace, digest)
+        if document_path is None:
             raise RuntimeError(f"claimed evidence ref is not in the current run: {evidence_ref}")
+        document = _load_json_document(document_path)
+        _verify_evidence_document(evidence_ref, digest, document_path, document)
+
+
+def _allowed_evidence_document_path(workspace: RunWorkspace, digest: str) -> Path | None:
+    candidates = (
+        workspace.evidence_path / "network-facts" / f"network-fact-{digest}.json",
+        workspace.evidence_path / "analysis" / f"analysis-evidence-{digest}.json",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _load_json_document(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"claimed evidence document is not UTF-8 JSON: {path.name}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"claimed evidence document could not be read: {path.name}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"claimed evidence document is not valid JSON: {path.name}") from exc
+
+
+def _verify_evidence_document(evidence_ref: str, digest: str, path: Path, document: object) -> None:
+    if not isinstance(document, dict):
+        raise RuntimeError(f"claimed evidence document is malformed: {evidence_ref}")
+    if _sha256_canonical_json(document) != digest:
+        raise RuntimeError(f"claimed evidence document content does not match reference: {evidence_ref}")
+    evidence_type = document.get("evidence_type")
+    capability_id = document.get("capability_id")
+    if path.parent.name == "network-facts":
+        if evidence_type != "network_fact" or capability_id != "topology.branch.endpoints.get":
+            raise RuntimeError(f"claimed evidence document type is not allowed: {evidence_ref}")
+        return
+    allowed_analysis = {
+        ("analysis_result", "analysis.powerflow.ac.run"),
+        ("contingency_scenario", "analysis.contingency.n_minus_one.run"),
+        ("powerflow_non_convergence", "analysis.powerflow.ac.run"),
+        ("powerflow_non_convergence", "analysis.contingency.n_minus_one.run"),
+    }
+    if (str(evidence_type), str(capability_id)) not in allowed_analysis:
+        raise RuntimeError(f"claimed evidence document type is not allowed: {evidence_ref}")
+    if evidence_type in {"analysis_result", "contingency_scenario"} and not isinstance(document.get("result_ref"), str):
+        raise RuntimeError(f"claimed analysis evidence is not linked to a result document: {evidence_ref}")
+
+
+def _sha256_canonical_json(document: object) -> str:
+    payload = json.dumps(document, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 @app.command()
@@ -269,10 +323,14 @@ def run(
             return
         answer = answer_information(request.question)
         if answer is None:
-            executable = GridctlLocator(_repo_root()).resolve()
-            workspace = RunWorkspace.create(project_paths.runs_dir, run_id=request.question_id)
-            client = GridctlClient(executable=executable, workspace=workspace.root_path, timeout_seconds=60)
-            answer = answer_diagnostic(request.question, client)
+            diagnostic_plan = plan_diagnostic(request.question)
+            if isinstance(diagnostic_plan, str):
+                answer = diagnostic_plan
+            else:
+                executable = GridctlLocator(_repo_root()).resolve()
+                workspace = RunWorkspace.create(project_paths.runs_dir, run_id=request.question_id)
+                client = GridctlClient(executable=executable, workspace=workspace.root_path, timeout_seconds=60)
+                answer = answer_diagnostic(request.question, client)
         envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
         typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
     except Exception as exc:

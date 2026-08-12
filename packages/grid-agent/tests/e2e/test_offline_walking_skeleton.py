@@ -68,18 +68,70 @@ def test_information_answer_creates_no_run_directory() -> None:
     "question_id,question,expected",
     [
         (
+            "unsupported-ieee118-ac-e2e",
+            "对IEEE-118节点系统运行交流潮流，并输出有功网损;",
+            ("执行限制", "IEEE-118"),
+        ),
+        (
+            "unsupported-line171-n1-e2e",
+            "对IEEE-39节点系统线路171开展N-1校核;",
+            ("执行限制", "线路171"),
+        ),
+        (
+            "ambiguous-n1-no-run-e2e",
+            "开展N-1静态安全校核;",
+            ("执行限制", "N-1"),
+        ),
+    ],
+)
+def test_offline_diagnostic_rejects_unsupported_or_ambiguous_requests_without_runs(
+    question_id: str, question: str, expected: tuple[str, ...]
+) -> None:
+    runs_path = ROOT / "runs" / question_id
+    shutil.rmtree(runs_path, ignore_errors=True)
+
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            "packages/grid-agent",
+            "grid-agent",
+            "run",
+            "--offline",
+            "--question-id",
+            question_id,
+            question,
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert set(envelope) == {"question_id", "answer_output"}
+    assert all(value in envelope["answer_output"] for value in expected)
+    assert not runs_path.exists()
+
+
+@pytest.mark.parametrize(
+    "question_id,question,expected",
+    [
+        (
             "semantic-powerflow-e2e",
             "对IEEE-39节点系统运行交流潮流，并输出有功网损;",
             ("交流潮流已收敛", "有功网损", "MW", "evidence:"),
         ),
         (
             "semantic-ranking-e2e",
-            "筛选负载率最高的5条线路;",
+            "筛选IEEE-39节点系统负载率最高的5条线路;",
             ("负载率最高", "5", "线路", "%", "evidence:"),
         ),
         (
             "semantic-n1-e2e",
-            "对线路11开展N-1校核;",
+            "对IEEE-39节点系统线路11开展N-1校核;",
             ("N-1", "线路 11", "evidence:"),
         ),
     ],
