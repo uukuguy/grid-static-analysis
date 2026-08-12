@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from grid_simulator.operations import dispatch
-from grid_simulator.protocol import OperationError, SimulatorRequest, SimulatorResponse
+from grid_simulator.protocol import CapabilityError, GridCapabilityRequest, GridCapabilityResponse
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -23,12 +23,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         raw = json.loads(sys.stdin.read())
-        request = SimulatorRequest.model_validate(raw)
+        request = GridCapabilityRequest.model_validate(raw)
     except (json.JSONDecodeError, ValidationError) as exc:
-        response = SimulatorResponse(
+        response = GridCapabilityResponse(
             request_id="invalid-request",
             ok=False,
-            error=OperationError(code="invalid_request", message="Request must be a valid protocol 1.0 JSON object"),
+            error=CapabilityError(
+                code="invalid_request",
+                phase="parse",
+                message="Request must be a valid grid-capability 1.0 JSON object",
+            ),
         )
         _write_response(response)
         print(f"gridctl: invalid request: {exc}", file=sys.stderr)
@@ -38,5 +42,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _write_response(response: SimulatorResponse) -> None:
+def _write_response(response: GridCapabilityResponse) -> None:
     sys.stdout.write(json.dumps(response.model_dump(mode="json"), separators=(",", ":")) + "\n")

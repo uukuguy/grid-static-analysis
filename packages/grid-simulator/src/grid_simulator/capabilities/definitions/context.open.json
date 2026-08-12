@@ -1,0 +1,62 @@
+{
+  "id": "context.open",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_context_open",
+  "title": "Open a supported grid model",
+  "purpose": "Create a deterministic context reference for a supported pandapower network model.",
+  "applies_to": ["loading IEEE-39", "creating a context reference", "starting simulator-backed analysis"],
+  "not_for": ["loading arbitrary user files", "editing network topology", "performing calculations"],
+  "terms": {
+    "zh": ["打开模型", "IEEE-39节点系统", "上下文引用", "网络指纹"],
+    "en": ["open model", "IEEE-39 bus system", "context reference", "network fingerprint"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["model"],
+    "properties": {
+      "model": {"type": "string", "enum": ["ieee39"]}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "model", "engine", "pandapower_version", "source", "semantic_sha256", "counts"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "model": {"type": "string", "enum": ["ieee39"]},
+      "engine": {"type": "string", "enum": ["pandapower"]},
+      "pandapower_version": {"type": "string", "enum": ["3.4.0"]},
+      "source": {"type": "string", "enum": ["pandapower.networks.case39"]},
+      "semantic_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+      "counts": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["buses", "lines", "transformers"],
+        "properties": {
+          "buses": {"type": "integer", "minimum": 0},
+          "lines": {"type": "integer", "minimum": 0},
+          "transformers": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "requires": [],
+  "consumes": ["model.catalog"],
+  "produces": ["network.context", "network.metadata"],
+  "common_next": ["context.get", "model.dataset.describe", "analysis.powerflow.ac.run"],
+  "errors": ["unsupported_model", "persist_failed"],
+  "recovery": {
+    "unsupported_model": ["call model.list and choose a supported model id"],
+    "persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "state_effect": "creates_context",
+  "evidence_required": true,
+  "risk": "read_only_model",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "pandapower.networks.case39",
+    "limitations": ["Only the packaged IEEE-39 model is currently supported"]
+  }
+}

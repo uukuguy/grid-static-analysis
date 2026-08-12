@@ -1,0 +1,68 @@
+{
+  "id": "result.branches.rank",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_result_branches_rank",
+  "title": "Rank branch result rows",
+  "purpose": "Rank branch rows from a persisted analysis result by an explicit numeric metric.",
+  "applies_to": ["highest loading lines", "largest active losses", "post-powerflow screening"],
+  "not_for": ["running a new power flow", "ranking unavailable metrics", "ranking without a result reference"],
+  "terms": {
+    "zh": ["线路排序", "负载率最高", "有功损耗", "结果引用"],
+    "en": ["branch ranking", "highest loading", "active loss", "result reference"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["result_ref", "metric", "limit"],
+    "properties": {
+      "result_ref": {"type": "string", "pattern": "^result:sha256:[0-9a-f]{64}$"},
+      "metric": {"type": "string", "enum": ["loading_percent", "p_from_mw", "p_to_mw", "pl_mw"]},
+      "direction": {"type": "string", "enum": ["descending", "ascending"]},
+      "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+      "element_kind": {"type": "string", "enum": ["line", "trafo", "trafo3w"]}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["result_ref", "metric", "direction", "branches"],
+    "properties": {
+      "result_ref": {"type": "string", "pattern": "^result:sha256:[0-9a-f]{64}$"},
+      "metric": {"type": "string", "enum": ["loading_percent", "p_from_mw", "p_to_mw", "pl_mw"]},
+      "direction": {"type": "string", "enum": ["descending", "ascending"]},
+      "branches": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["branch_ref", "element_kind", "pandapower_index", "metric_value"],
+          "properties": {
+            "branch_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"},
+            "element_kind": {"type": "string", "enum": ["line", "trafo", "trafo3w"]},
+            "pandapower_index": {"type": "integer", "minimum": 0},
+            "metric_value": {"type": "number"},
+            "loading_percent": {"type": "number"},
+            "p_from_mw": {"type": "number"},
+            "p_to_mw": {"type": "number"},
+            "pl_mw": {"type": "number"}
+          }
+        }
+      }
+    }
+  },
+  "requires": ["analysis.powerflow.ac.run"],
+  "consumes": ["analysis.powerflow.result", "network.branch.loading"],
+  "produces": ["analysis.branch.ranking"],
+  "common_next": ["analysis.contingency.n_minus_one.run", "evidence.get"],
+  "errors": ["unknown_result", "invalid_metric", "invalid_limit"],
+  "recovery": {
+    "unknown_result": ["run analysis.powerflow.ac.run first"],
+    "invalid_metric": ["choose loading_percent, p_from_mw, p_to_mw, or pl_mw"],
+    "invalid_limit": ["use a limit between 1 and 100"]
+  },
+  "state_effect": "none",
+  "evidence_required": true,
+  "risk": "read_only_analysis",
+  "pandapower": null
+}

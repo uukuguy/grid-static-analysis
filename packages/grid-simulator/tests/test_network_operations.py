@@ -3,15 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 
 from grid_simulator.operations import dispatch
-from grid_simulator.protocol import SimulatorRequest
+from grid_simulator.protocol import GridCapabilityRequest
 
 
 def test_network_open_rejects_unknown_network(tmp_path: Path) -> None:
     response = dispatch(
-        SimulatorRequest(protocol_version="1.0", request_id="bad-network", operation="network.open", arguments={"network": "other"}),
+        GridCapabilityRequest(
+            protocol="grid-capability",
+            protocol_version="1.0",
+            request_id="bad-network",
+            capability="context.open",
+            arguments={"model": "other"},
+        ),
         tmp_path,
     )
 
     assert response.ok is False
     assert response.error is not None
-    assert response.error.code == "unsupported_network"
+    assert response.error.code == "unsupported_model"

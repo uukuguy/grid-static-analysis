@@ -1,35 +1,93 @@
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
+from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.operations import dispatch
-from grid_simulator.protocol import SimulatorRequest
+from grid_simulator.protocol import GridCapabilityRequest, GridCapabilityResponse
 
 
-def request(operation: str, arguments: dict[str, object]) -> SimulatorRequest:
-    return SimulatorRequest(protocol_version="1.0", request_id="req-1", operation=operation, arguments=arguments)
+def request(capability: str, arguments: dict[str, object]) -> GridCapabilityRequest:
+    return GridCapabilityRequest(
+        protocol="grid-capability",
+        protocol_version="1.0",
+        request_id="req-1",
+        capability=capability,
+        arguments=arguments,
+    )
+
+
+def test_request_uses_named_grid_capability_protocol() -> None:
+    parsed = GridCapabilityRequest(
+        protocol="grid-capability",
+        protocol_version="1.0",
+        request_id="req-1",
+        capability="topology.branch.endpoints.get",
+        arguments={
+            "context_ref": "context:sha256:" + "a" * 64,
+            "branch_ref": "asset:line:sha256:" + "b" * 64,
+        },
+    )
+
+    assert parsed.capability == "topology.branch.endpoints.get"
+
+
+def test_request_rejects_legacy_operation_envelope() -> None:
+    with pytest.raises(ValidationError):
+        GridCapabilityRequest.model_validate(
+            {"protocol_version": "1.0", "request_id": "req-1", "operation": "network.open", "arguments": {}}
+        )
+
+
+def test_response_requires_exactly_one_result_or_error() -> None:
+    with pytest.raises(ValidationError):
+        GridCapabilityResponse(request_id="req-1", ok=True, result=None, error=None)
+
+    with pytest.raises(ValidationError):
+        GridCapabilityResponse(request_id="req-1", ok=False, result={"value": 1}, error=None)
+
+
+def test_contracts_express_composition_and_pandapower_binding() -> None:
+    contract = CapabilityRegistry.load_packaged().require("topology.branch.endpoints.get")
+
+    assert contract.tool_name == "grid_topology_branch_endpoints"
+    assert "network.branch" in contract.consumes
+    assert "topology.endpoints" in contract.produces
+    assert contract.pandapower is not None
+    assert contract.pandapower.version == "3.4.0"
+    assert contract.terms["zh"]
+    assert contract.not_for
 
 
 def test_registry_is_discoverable(tmp_path: Path) -> None:
-    response = dispatch(request("capabilities.list", {}), tmp_path)
+    response = dispatch(request("environment.describe", {}), tmp_path)
 
     assert response.ok is True
     assert response.result is not None
     ids = {item["id"] for item in response.result["capabilities"]}
-    assert {"network.open", "element.resolve", "powerflow.run_ac", "results.lines", "contingency.run_lines"} <= ids
+    assert {
+        "context.open",
+        "model.element.get",
+        "analysis.powerflow.ac.run",
+        "result.branches.rank",
+        "analysis.contingency.n_minus_one.run",
+    } <= ids
 
 
 def test_line_index_11_resolves_user_bus_names(tmp_path: Path) -> None:
-    opened = dispatch(request("network.open", {"network": "ieee39"}), tmp_path)
+    opened = dispatch(request("context.open", {"model": "ieee39"}), tmp_path)
     assert opened.result is not None
     resolved = dispatch(
         request(
-            "element.resolve",
+            "model.element.get",
             {
-                "network_ref": opened.result["network_ref"],
+                "context_ref": opened.result["context_ref"],
                 "element": "line",
-                "namespace": "index",
+                "namespace": "pandapower_index",
                 "query": "11",
             },
         ),
@@ -46,12 +104,19 @@ def test_line_index_11_resolves_user_bus_names(tmp_path: Path) -> None:
 def test_cli_writes_exactly_one_json_response(monkeypatch, capsys, tmp_path: Path) -> None:
     from grid_simulator.cli import main
 
-    monkeypatch.setattr("sys.stdin", _TextInput('{"protocol_version":"1.0","request_id":"cli-1","operation":"capabilities.list","arguments":{}}\n'))
+    monkeypatch.setattr(
+        "sys.stdin",
+        _TextInput(
+            '{"protocol":"grid-capability","protocol_version":"1.0","request_id":"cli-1",'
+            '"capability":"environment.describe","arguments":{}}\n'
+        ),
+    )
 
     assert main(["request", "--workspace", str(tmp_path)]) == 0
 
     output = capsys.readouterr().out
     response = json.loads(output)
+    assert response["protocol"] == "grid-capability"
     assert response["request_id"] == "cli-1"
     assert response["ok"] is True
     assert output.count("\n") == 1

@@ -1,0 +1,54 @@
+{
+  "id": "model.list",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_model_list",
+  "title": "List supported grid models",
+  "purpose": "Return the deterministic set of grid models that can be opened by the simulator.",
+  "applies_to": ["model discovery", "unsupported model recovery", "planning an analysis context"],
+  "not_for": ["opening the model", "querying element data", "performing simulator calculations"],
+  "terms": {
+    "zh": ["模型列表", "IEEE-39节点系统", "支持范围", "开源算例"],
+    "en": ["model list", "IEEE-39 bus system", "supported scope", "test case"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+      "family": {"type": "string", "enum": ["pandapower.networks"]}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["models"],
+    "properties": {
+      "models": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "source", "pandapower_version"],
+          "properties": {
+            "model": {"type": "string", "enum": ["ieee39"]},
+            "source": {"type": "string", "enum": ["pandapower.networks.case39"]},
+            "pandapower_version": {"type": "string", "enum": ["3.4.0"]}
+          }
+        }
+      }
+    }
+  },
+  "requires": [],
+  "consumes": ["runtime.catalog"],
+  "produces": ["model.catalog"],
+  "common_next": ["context.open"],
+  "errors": ["catalog_unavailable"],
+  "recovery": {
+    "catalog_unavailable": ["report the supported-model catalog failure"]
+  },
+  "state_effect": "none",
+  "evidence_required": false,
+  "risk": "catalog",
+  "pandapower": null
+}

@@ -1,81 +1,91 @@
 from __future__ import annotations
 
+from copy import deepcopy
+import json
 from pathlib import Path
 from typing import Any
-import json
-from copy import deepcopy
 
 from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.engine import Pandapower340Engine
 from grid_simulator.evidence import fingerprint, write_json, write_network
-from grid_simulator.protocol import OperationError, SimulatorRequest, SimulatorResponse
+from grid_simulator.protocol import CapabilityError, GridCapabilityRequest, GridCapabilityResponse
 from grid_simulator.workspace import SimulatorWorkspace
 
 
-def dispatch(request: SimulatorRequest, workspace_path: Path) -> SimulatorResponse:
+def dispatch(request: GridCapabilityRequest, workspace_path: Path) -> GridCapabilityResponse:
     try:
         result = _dispatch(request, SimulatorWorkspace(workspace_path))
     except _OperationFailure as exc:
-        return SimulatorResponse(request_id=request.request_id, ok=False, error=exc.error)
-    return SimulatorResponse(request_id=request.request_id, ok=True, result=result)
+        return GridCapabilityResponse(request_id=request.request_id, ok=False, error=exc.error)
+    return GridCapabilityResponse(request_id=request.request_id, ok=True, result=result)
 
 
-def _dispatch(request: SimulatorRequest, workspace: SimulatorWorkspace) -> dict[str, Any]:
-    registry = CapabilityRegistry()
-    if request.operation == "capabilities.list":
-        return {"capabilities": registry.list()}
-    if request.operation == "capabilities.describe":
-        identifier = request.arguments.get("id")
-        item = registry.describe(str(identifier)) if identifier is not None else None
-        if item is None:
-            raise _failure("unknown_capability", "Capability is not available")
-        return {"capability": item}
-    if request.operation == "network.open":
-        if request.arguments.get("network") != "ieee39":
-            raise _failure("unsupported_network", "Only the ieee39 network is supported")
+def _dispatch(request: GridCapabilityRequest, workspace: SimulatorWorkspace) -> dict[str, Any]:
+    registry = CapabilityRegistry.load_packaged()
+    if request.capability == "environment.describe":
+        return {
+            "protocol": "grid-capability",
+            "protocol_version": "1.0",
+            "simulator": "grid-simulator",
+            "pandapower_version": "3.4.0",
+            "capabilities": [
+                {"id": contract.id, "tool_name": contract.tool_name, "title": contract.title, "risk": contract.risk}
+                for contract in registry.list()
+            ],
+        }
+    if request.capability == "model.list":
+        return {"models": [{"model": "ieee39", "source": "pandapower.networks.case39", "pandapower_version": "3.4.0"}]}
+    if request.capability == "context.open":
+        if request.arguments.get("model") != "ieee39":
+            raise _failure("unsupported_model", "Only the ieee39 model is supported")
         engine = Pandapower340Engine()
         net = engine.open_ieee39()
         serialized = engine.serialize(net)
         network_hash = fingerprint(serialized)
         write_network(workspace.networks_dir / f"{network_hash}.json", serialized)
         return {
-            "network_ref": f"network:ieee39:{network_hash}",
+            "context_ref": f"context:sha256:{network_hash}",
+            "model": "ieee39",
             "engine": engine.name,
-            "version": engine.version,
+            "pandapower_version": engine.version,
             "source": "pandapower.networks.case39",
             "semantic_sha256": network_hash,
             "counts": {"buses": int(len(net.bus)), "lines": int(len(net.line)), "transformers": int(len(net.trafo))},
         }
-    if request.operation in {"network.describe", "element.resolve"}:
+    if request.capability in {"context.get", "model.element.get"}:
         net, network_hash = _opened_network(request.arguments)
-        if request.operation == "network.describe":
-            return {"network_ref": f"network:ieee39:{network_hash}", "counts": {"buses": int(len(net.bus)), "lines": int(len(net.line))}}
+        if request.capability == "context.get":
+            return {
+                "context_ref": f"context:sha256:{network_hash}",
+                "model": "ieee39",
+                "counts": {"buses": int(len(net.bus)), "lines": int(len(net.line)), "transformers": int(len(net.trafo))},
+            }
         return _resolve_element(net, request.arguments)
-    if request.operation == "powerflow.run_ac":
+    if request.capability == "analysis.powerflow.ac.run":
         net, network_hash = _opened_network(request.arguments)
         return _run_ac(net, network_hash, workspace)
-    if request.operation == "results.lines":
+    if request.capability == "result.branches.rank":
         return _rank_lines(request.arguments, workspace)
-    if request.operation == "contingency.run_lines":
+    if request.capability == "analysis.contingency.n_minus_one.run":
         net, network_hash = _opened_network(request.arguments)
         return _run_contingencies(net, network_hash, request.arguments, workspace)
-    raise _failure("unsupported_operation", f"Operation {request.operation!r} is not implemented")
+    raise _failure("unsupported_capability", f"Capability {request.capability!r} is not implemented")
 
 
 def _opened_network(arguments: dict[str, Any]):
-    reference = arguments.get("network_ref")
+    reference = arguments.get("context_ref")
     engine = Pandapower340Engine()
     net = engine.open_ieee39()
     network_hash = fingerprint(engine.serialize(net))
-    expected = f"network:ieee39:{network_hash}"
+    expected = f"context:sha256:{network_hash}"
     if reference != expected:
-        raise _failure("unknown_network_ref", "Network reference is unknown or expired")
+        raise _failure("unknown_context", "Context reference is unknown or expired")
     return net, network_hash
 
 
 def _resolve_element(net, arguments: dict[str, Any]) -> dict[str, Any]:
-    if arguments.get("element") != "line" or arguments.get("namespace") != "index":
-        raise _failure("unsupported_element", "Only line elements addressed by index are supported")
+    if arguments.get("element") != "line" or arguments.get("namespace") != "pandapower_index":
+        raise _failure("unsupported_element", "Only line elements addressed by pandapower index are supported")
     try:
         index = int(str(arguments.get("query")))
     except ValueError as exc:
@@ -113,27 +123,27 @@ def _run_ac(net, network_hash: str, workspace: SimulatorWorkspace) -> dict[str, 
         "lines": line_rows,
     }
     result_hash = fingerprint(json.dumps(document, sort_keys=True, separators=(",", ":")))
-    result_ref = f"result:{result_hash}"
+    result_ref = f"result:sha256:{result_hash}"
     write_json(workspace.results_dir / f"{result_hash}.json", document)
-    return {**document, "result_ref": result_ref}
+    return {**document, "context_ref": f"context:sha256:{network_hash}", "result_ref": result_ref}
 
 
 def _rank_lines(arguments: dict[str, Any], workspace: SimulatorWorkspace) -> dict[str, Any]:
     reference = arguments.get("result_ref")
-    if not isinstance(reference, str) or not reference.startswith("result:"):
+    if not isinstance(reference, str) or not reference.startswith("result:sha256:"):
         raise _failure("invalid_result_ref", "A result_ref is required")
-    result_path = workspace.results_dir / f"{reference.removeprefix('result:')}.json"
+    result_path = workspace.results_dir / f"{reference.removeprefix('result:sha256:')}.json"
     if not result_path.is_file():
         raise _failure("unknown_result_ref", "Result reference is unknown or expired")
     document = json.loads(result_path.read_text(encoding="utf-8"))
-    sort_key = arguments.get("sort", "loading_percent")
+    sort_key = arguments.get("metric", "loading_percent")
     if sort_key not in {"loading_percent", "p_from_mw", "p_to_mw", "pl_mw"}:
-        raise _failure("invalid_sort", "Unsupported line sort field")
+        raise _failure("invalid_metric", "Unsupported branch ranking metric")
     limit = arguments.get("limit", 5)
     if not isinstance(limit, int) or not 1 <= limit <= 100:
         raise _failure("invalid_limit", "Line result limit must be an integer from 1 to 100")
     lines = sorted(document["lines"], key=lambda row: (-float(row[sort_key]), int(row["index"])))[:limit]
-    return {"result_ref": reference, "sort": sort_key, "lines": lines}
+    return {"result_ref": reference, "metric": sort_key, "direction": "descending", "branches": lines}
 
 
 def _run_contingencies(net, network_hash: str, arguments: dict[str, Any], workspace: SimulatorWorkspace) -> dict[str, Any]:
@@ -167,10 +177,10 @@ def _run_contingencies(net, network_hash: str, arguments: dict[str, Any], worksp
                 "overloaded_lines": overloaded,
             }
             evidence_hash = fingerprint(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
-            receipt["evidence_id"] = f"evidence:{evidence_hash}"
+            receipt["evidence_id"] = f"evidence:sha256:{evidence_hash}"
             write_json(workspace.results_dir / f"{evidence_hash}.json", {"network_fingerprint": network_hash, **receipt})
         scenarios.append(receipt)
-    return {"network_ref": f"network:ieee39:{network_hash}", "policy": "static-analysis-v1", "scenarios": scenarios}
+    return {"context_ref": f"context:sha256:{network_hash}", "policy": "static-analysis-v1", "scenarios": scenarios}
 
 
 def _line_index(line_id: object) -> int:
@@ -199,9 +209,9 @@ def _line_rows(net) -> list[dict[str, Any]]:
 
 
 class _OperationFailure(Exception):
-    def __init__(self, error: OperationError) -> None:
+    def __init__(self, error: CapabilityError) -> None:
         self.error = error
 
 
 def _failure(code: str, message: str) -> _OperationFailure:
-    return _OperationFailure(OperationError(code=code, message=message))
+    return _OperationFailure(CapabilityError(code=code, phase="execute", message=message))

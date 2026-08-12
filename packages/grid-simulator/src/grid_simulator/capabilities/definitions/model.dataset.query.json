@@ -1,0 +1,118 @@
+{
+  "id": "model.dataset.query",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_model_dataset_query",
+  "title": "Query a model dataset",
+  "purpose": "Query curated bus or branch dataset rows with dataset-specific field selection.",
+  "applies_to": ["bus data lookup", "branch data lookup", "bounded table queries"],
+  "not_for": ["arbitrary pandas queries", "result table ranking", "modifying network data"],
+  "terms": {
+    "zh": ["数据查询", "母线字段", "支路字段", "筛选"],
+    "en": ["dataset query", "bus fields", "branch fields", "filter"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context_ref", "dataset", "fields"],
+        "properties": {
+          "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+          "dataset": {"type": "string", "const": "network.buses", "enum": ["network.buses"]},
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"enum": ["index", "name", "vn_kv", "in_service"]}
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "name": {"type": "string", "minLength": 1}
+            }
+          },
+          "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context_ref", "dataset", "fields"],
+        "properties": {
+          "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+          "dataset": {"type": "string", "const": "network.branches", "enum": ["network.branches"]},
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"enum": ["element_ref", "element_kind", "pandapower_index", "from_bus", "to_bus", "in_service", "length_km", "max_i_ka"]}
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "element_kind": {"type": "string", "enum": ["line", "trafo", "trafo3w"]},
+              "pandapower_index": {"type": "integer", "minimum": 0},
+              "in_service": {"type": "boolean"}
+            }
+          },
+          "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+        }
+      }
+    ],
+    "properties": {}
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["dataset_ref", "context_ref", "dataset", "rows"],
+    "properties": {
+      "dataset_ref": {"type": "string", "pattern": "^dataset:network\\.(buses|branches):sha256:[0-9a-f]{64}$"},
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "dataset": {"type": "string", "enum": ["network.buses", "network.branches"]},
+      "rows": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "index": {"type": "integer", "minimum": 0},
+            "name": {"type": "string"},
+            "vn_kv": {"type": "number"},
+            "in_service": {"type": "boolean"},
+            "element_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
+            "element_kind": {"type": "string", "enum": ["line", "trafo", "trafo3w"]},
+            "pandapower_index": {"type": "integer", "minimum": 0},
+            "from_bus": {"type": "integer", "minimum": 0},
+            "to_bus": {"type": "integer", "minimum": 0},
+            "length_km": {"type": "number"},
+            "max_i_ka": {"type": "number"}
+          }
+        }
+      }
+    }
+  },
+  "requires": ["context.open", "model.dataset.describe"],
+  "consumes": ["network.context", "dataset.schema"],
+  "produces": ["dataset.rows"],
+  "common_next": ["model.element.get", "topology.branch.endpoints.get"],
+  "errors": ["unknown_context", "unsupported_dataset", "invalid_field", "invalid_filter"],
+  "recovery": {
+    "unknown_context": ["call context.open for a supported model"],
+    "invalid_field": ["call model.dataset.describe and select only supported fields"],
+    "invalid_filter": ["use dataset-specific filter keys from the contract"]
+  },
+  "state_effect": "none",
+  "evidence_required": false,
+  "risk": "read_only_model",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "read curated pandapowerNet table columns",
+    "limitations": ["No arbitrary Python, pandas expressions, or uncurated columns"]
+  }
+}

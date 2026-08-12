@@ -1,0 +1,57 @@
+{
+  "id": "context.get",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_context_get",
+  "title": "Get opened grid context metadata",
+  "purpose": "Return deterministic metadata for an already opened network context without running calculations.",
+  "applies_to": ["context lookup", "model size checks", "reference validation"],
+  "not_for": ["opening a new model", "power-flow calculation", "N-1 analysis"],
+  "terms": {
+    "zh": ["上下文", "模型元数据", "节点数量", "线路数量"],
+    "en": ["context", "model metadata", "bus count", "line count"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "model", "counts"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "model": {"type": "string", "enum": ["ieee39"]},
+      "counts": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["buses", "lines", "transformers"],
+        "properties": {
+          "buses": {"type": "integer", "minimum": 0},
+          "lines": {"type": "integer", "minimum": 0},
+          "transformers": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "requires": ["context.open"],
+  "consumes": ["network.context"],
+  "produces": ["network.metadata"],
+  "common_next": ["model.dataset.describe", "model.element.get", "analysis.powerflow.ac.run"],
+  "errors": ["unknown_context"],
+  "recovery": {
+    "unknown_context": ["call context.open with a supported model id"]
+  },
+  "state_effect": "none",
+  "evidence_required": false,
+  "risk": "read_only_model",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "inspect pandapowerNet element tables",
+    "limitations": ["Does not execute power flow"]
+  }
+}

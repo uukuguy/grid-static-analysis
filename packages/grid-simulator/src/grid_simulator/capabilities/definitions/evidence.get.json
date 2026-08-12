@@ -1,0 +1,46 @@
+{
+  "id": "evidence.get",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_evidence_get",
+  "title": "Get persisted evidence",
+  "purpose": "Retrieve a persisted simulator evidence document by reference so final answers can cite concrete artifacts.",
+  "applies_to": ["evidence retrieval", "answer grounding", "artifact inspection"],
+  "not_for": ["creating new calculations", "modifying evidence", "substituting evidence that does not exist"],
+  "terms": {
+    "zh": ["证据", "运行产物", "引用", "结果文件"],
+    "en": ["evidence", "artifact", "reference", "result file"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["evidence_ref"],
+    "properties": {
+      "evidence_ref": {"type": "string", "pattern": "^evidence:sha256:[0-9a-f]{64}$"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["evidence_ref", "artifact_type", "content_sha256", "created_by"],
+    "properties": {
+      "evidence_ref": {"type": "string", "pattern": "^evidence:sha256:[0-9a-f]{64}$"},
+      "artifact_type": {"type": "string", "enum": ["context", "powerflow_result", "contingency_result", "ranked_result"]},
+      "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+      "created_by": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"}
+    }
+  },
+  "requires": [],
+  "consumes": ["evidence.reference"],
+  "produces": ["evidence.record"],
+  "common_next": [],
+  "errors": ["unknown_evidence", "artifact_unreadable"],
+  "recovery": {
+    "unknown_evidence": ["do not claim evidence; rerun the producing capability if calculation is required"],
+    "artifact_unreadable": ["report the unreadable artifact and preserve the original reference"]
+  },
+  "state_effect": "none",
+  "evidence_required": false,
+  "risk": "read_only_analysis",
+  "pandapower": null
+}

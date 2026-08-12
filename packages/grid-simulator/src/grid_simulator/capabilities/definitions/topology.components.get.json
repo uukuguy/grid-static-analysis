@@ -1,0 +1,61 @@
+{
+  "id": "topology.components.get",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_topology_components_get",
+  "title": "Get topology components",
+  "purpose": "Return connected component summaries for the opened network topology.",
+  "applies_to": ["island detection", "connected component summaries", "topology sanity checks"],
+  "not_for": ["AC reachability under contingencies", "dynamic islanding", "line loading analysis"],
+  "terms": {
+    "zh": ["连通分量", "孤岛", "拓扑", "母线集合"],
+    "en": ["connected components", "island", "topology", "bus set"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "include_out_of_service"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "include_out_of_service": {"type": "boolean"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "components"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "components": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component_id", "bus_count", "branch_count"],
+          "properties": {
+            "component_id": {"type": "string", "pattern": "^component:[0-9]+$"},
+            "bus_count": {"type": "integer", "minimum": 0},
+            "branch_count": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    }
+  },
+  "requires": ["context.open"],
+  "consumes": ["network.context", "network.bus", "network.branch"],
+  "produces": ["topology.components"],
+  "common_next": ["analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run"],
+  "errors": ["unknown_context", "topology_unavailable"],
+  "recovery": {
+    "unknown_context": ["call context.open for a supported model"],
+    "topology_unavailable": ["report that components could not be derived from the model topology"]
+  },
+  "state_effect": "none",
+  "evidence_required": false,
+  "risk": "read_only_model",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "derive graph connectivity from pandapowerNet topology tables",
+    "limitations": ["Does not execute power flow or contingency switching"]
+  }
+}

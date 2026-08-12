@@ -5,21 +5,30 @@ from pathlib import Path
 import pytest
 
 from grid_simulator.operations import dispatch
-from grid_simulator.protocol import SimulatorRequest
+from grid_simulator.protocol import GridCapabilityRequest
 
 
-def _result(operation: str, arguments: dict[str, object], workspace: Path) -> dict[str, object]:
-    response = dispatch(SimulatorRequest(protocol_version="1.0", request_id="contingency", operation=operation, arguments=arguments), workspace)
+def _result(capability: str, arguments: dict[str, object], workspace: Path) -> dict[str, object]:
+    response = dispatch(
+        GridCapabilityRequest(
+            protocol="grid-capability",
+            protocol_version="1.0",
+            request_id="contingency",
+            capability=capability,
+            arguments=arguments,
+        ),
+        workspace,
+    )
     assert response.ok, response.error
     assert response.result is not None
     return response.result
 
 
 def test_line_11_outage_has_full_receipt(tmp_path: Path) -> None:
-    network_ref = _result("network.open", {"network": "ieee39"}, tmp_path)["network_ref"]
+    context_ref = _result("context.open", {"model": "ieee39"}, tmp_path)["context_ref"]
     result = _result(
-        "contingency.run_lines",
-        {"network_ref": network_ref, "line_ids": ["line:index:11"], "policy": "static-analysis-v1"},
+        "analysis.contingency.n_minus_one.run",
+        {"context_ref": context_ref, "line_ids": ["line:index:11"], "policy": "static-analysis-v1"},
         tmp_path,
     )
 

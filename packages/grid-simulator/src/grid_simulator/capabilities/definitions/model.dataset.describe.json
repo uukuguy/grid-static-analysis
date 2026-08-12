@@ -1,0 +1,55 @@
+{
+  "id": "model.dataset.describe",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_model_dataset_describe",
+  "title": "Describe a model dataset",
+  "purpose": "Describe selectable fields and row counts for supported network datasets in an opened context.",
+  "applies_to": ["bus table inspection", "branch table inspection", "dataset planning"],
+  "not_for": ["free-form table access", "power-flow results", "mutating model data"],
+  "terms": {
+    "zh": ["数据集描述", "母线表", "支路表", "可选字段"],
+    "en": ["dataset description", "bus table", "branch table", "selectable fields"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "dataset"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "dataset": {"type": "string", "enum": ["network.buses", "network.branches"]}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["dataset_ref", "context_ref", "dataset", "row_count", "selectable_fields"],
+    "properties": {
+      "dataset_ref": {"type": "string", "pattern": "^dataset:network\\.(buses|branches):sha256:[0-9a-f]{64}$"},
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "dataset": {"type": "string", "enum": ["network.buses", "network.branches"]},
+      "row_count": {"type": "integer", "minimum": 0},
+      "selectable_fields": {
+        "type": "array",
+        "items": {"enum": ["index", "name", "vn_kv", "in_service", "from_bus", "to_bus", "length_km", "max_i_ka", "element_kind"]}
+      }
+    }
+  },
+  "requires": ["context.open"],
+  "consumes": ["network.context", "network.dataset"],
+  "produces": ["dataset.schema", "dataset.reference"],
+  "common_next": ["model.dataset.query"],
+  "errors": ["unknown_context", "unsupported_dataset"],
+  "recovery": {
+    "unknown_context": ["call context.open for a supported model"],
+    "unsupported_dataset": ["choose network.buses or network.branches"]
+  },
+  "state_effect": "none",
+  "evidence_required": false,
+  "risk": "read_only_model",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "inspect pandapowerNet bus, line, trafo, and trafo3w tables",
+    "limitations": ["Only curated table fields are exposed"]
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "id": "environment.describe",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_environment_describe",
+  "title": "Describe simulator environment",
+  "purpose": "Return the simulator protocol, engine, and capability catalog so a caller can plan tool usage without calculations.",
+  "applies_to": ["capability discovery", "runtime readiness", "tool planning"],
+  "not_for": ["model-specific analysis", "power-flow execution", "creating evidence artifacts"],
+  "terms": {
+    "zh": ["能力清单", "运行环境", "协议版本", "仿真器"],
+    "en": ["capability catalog", "runtime environment", "protocol version", "simulator"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {}
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["protocol", "protocol_version", "simulator", "pandapower_version", "capabilities"],
+    "properties": {
+      "protocol": {"type": "string", "enum": ["grid-capability"]},
+      "protocol_version": {"type": "string", "enum": ["1.0"]},
+      "simulator": {"type": "string", "enum": ["grid-simulator"]},
+      "pandapower_version": {"type": "string", "enum": ["3.4.0"]},
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "tool_name", "title", "risk"],
+          "properties": {
+            "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"},
+            "tool_name": {"type": "string", "pattern": "^grid_[a-z0-9_]+$"},
+            "title": {"type": "string", "minLength": 1},
+            "risk": {"type": "string", "enum": ["catalog", "read_only_model", "read_only_analysis"]}
+          }
+        }
+      }
+    }
+  },
+  "requires": [],
+  "consumes": ["runtime.catalog"],
+  "produces": ["capability.catalog"],
+  "common_next": ["model.list", "context.open"],
+  "errors": ["catalog_unavailable"],
+  "recovery": {
+    "catalog_unavailable": ["report the environment discovery failure without running analysis"]
+  },
+  "state_effect": "none",
+  "evidence_required": false,
+  "risk": "catalog",
+  "pandapower": null
+}

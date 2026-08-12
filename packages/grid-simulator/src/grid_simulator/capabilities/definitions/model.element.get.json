@@ -1,0 +1,74 @@
+{
+  "id": "model.element.get",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_model_element_get",
+  "title": "Get a model element",
+  "purpose": "Resolve a user-addressed network element to a stable asset reference and curated attributes.",
+  "applies_to": ["line index lookup", "bus lookup", "stable asset reference resolution"],
+  "not_for": ["free-form element mutation", "calculating flows", "contingency execution"],
+  "terms": {
+    "zh": ["元件查询", "线路编号", "母线", "稳定引用"],
+    "en": ["element lookup", "line index", "bus", "stable reference"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "element", "namespace", "query"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "element": {"type": "string", "enum": ["bus", "line", "trafo", "trafo3w"]},
+      "namespace": {"type": "string", "enum": ["pandapower_index", "name"]},
+      "query": {"type": "string", "minLength": 1}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["element_ref", "element", "namespace", "query", "pandapower_index"],
+    "properties": {
+      "element_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
+      "element": {"type": "string", "enum": ["bus", "line", "trafo", "trafo3w"]},
+      "namespace": {"type": "string", "enum": ["pandapower_index", "name"]},
+      "query": {"type": "string"},
+      "pandapower_index": {"type": "integer", "minimum": 0},
+      "name": {"type": "string"},
+      "from_bus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "name"],
+        "properties": {
+          "index": {"type": "integer", "minimum": 0},
+          "name": {"type": "string"}
+        }
+      },
+      "to_bus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "name"],
+        "properties": {
+          "index": {"type": "integer", "minimum": 0},
+          "name": {"type": "string"}
+        }
+      }
+    }
+  },
+  "requires": ["context.open"],
+  "consumes": ["network.context", "network.element"],
+  "produces": ["asset.reference", "network.element.attributes"],
+  "common_next": ["topology.branch.endpoints.get", "analysis.contingency.n_minus_one.run"],
+  "errors": ["unknown_context", "unsupported_element", "invalid_query", "unknown_element"],
+  "recovery": {
+    "unknown_context": ["call context.open for a supported model"],
+    "unsupported_element": ["choose bus, line, trafo, or trafo3w"],
+    "unknown_element": ["call model.dataset.query to inspect available elements"]
+  },
+  "state_effect": "none",
+  "evidence_required": true,
+  "risk": "read_only_model",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "resolve rows from pandapowerNet element tables",
+    "limitations": ["Only curated element namespaces are exposed"]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "id": "analysis.powerflow.ac.run",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_analysis_powerflow_ac",
+  "title": "Run AC power flow",
+  "purpose": "Run pandapower 3.4.0 AC load flow for an opened network context and persist a result artifact.",
+  "applies_to": ["AC steady-state load flow", "active loss calculation", "branch loading calculation"],
+  "not_for": ["DC approximation", "dynamic simulation", "answering numeric results without a simulator run"],
+  "terms": {
+    "zh": ["交流潮流", "有功网损", "收敛", "线路负载率"],
+    "en": ["AC power flow", "active power loss", "convergence", "line loading"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "solver"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "solver": {"type": "string", "enum": ["pandapower.runpp"]},
+      "calculate_voltage_angles": {"type": "boolean"},
+      "init": {"type": "string", "enum": ["auto", "flat", "dc", "results"]}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["result_ref", "context_ref", "converged", "total_active_loss_mw", "units"],
+    "properties": {
+      "result_ref": {"type": "string", "pattern": "^result:sha256:[0-9a-f]{64}$"},
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "converged": {"type": "boolean"},
+      "total_active_loss_mw": {"type": "number"},
+      "units": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["total_active_loss_mw", "loading_percent"],
+        "properties": {
+          "total_active_loss_mw": {"type": "string", "enum": ["MW"]},
+          "loading_percent": {"type": "string", "enum": ["percent"]}
+        }
+      }
+    }
+  },
+  "requires": ["context.open"],
+  "consumes": ["network.context", "network.parameters"],
+  "produces": ["analysis.powerflow.result", "network.branch.loading", "network.losses"],
+  "common_next": ["result.branches.rank", "analysis.contingency.n_minus_one.run", "evidence.get"],
+  "errors": ["unknown_context", "powerflow_failed", "persist_failed"],
+  "recovery": {
+    "unknown_context": ["call context.open for a supported model"],
+    "powerflow_failed": ["report non-convergence instead of estimating numeric values"],
+    "persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "state_effect": "creates_result",
+  "evidence_required": true,
+  "risk": "read_only_analysis",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "pandapower.runpp",
+    "limitations": ["Uses the configured pandapower AC solver defaults unless arguments override allowed options"]
+  }
+}
