@@ -1,7 +1,5 @@
 # WP-A Semantic Foundation and Validation Baseline Implementation Plan
 
-SUPERSEDED: Historical archive only; non-operative path details.
-
 > **For agentic workers:** Use `subagent-driven-development` (recommended) or execute inline task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Design reference:** [`2026-08-12-pandapower-semantic-capability-redesign.md`](../specs/2026-08-12-pandapower-semantic-capability-redesign.md)
@@ -268,7 +266,7 @@ Update runtime lock loading to resolve `configs/runtime/pi-runtime.lock.json`. U
 uv run --project packages/grid-agent pytest packages/grid-agent/tests/application/test_paths.py packages/grid-agent/tests/runtime packages/grid-agent/tests/auth -v
 ```
 
-Expected: PASS; no assertion mentions `var/runtime` or `var/pi`.
+Expected: PASS; assertions use `.grid-agent/runtime/pi`, `.grid-agent/auth/pi`, and `runs/`.
 
 - [ ] **Step 6: Commit the state-layout boundary**
 

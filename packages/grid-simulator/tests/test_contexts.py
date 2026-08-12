@@ -116,7 +116,7 @@ def test_load_network_wraps_invalid_pandapower_json_as_context_integrity(tmp_pat
 
 
 def test_context_get_executes_against_verified_existing_context(tmp_path: Path) -> None:
-    opened = dispatch(_request("context.open", {"model": "ieee39"}), tmp_path)
+    opened = dispatch(_request("context.open", {"model_id": "ieee39"}), tmp_path)
     assert opened.ok is True
     assert opened.result is not None
 
@@ -140,7 +140,7 @@ def test_context_get_missing_ref_is_typed_unknown_context(tmp_path: Path) -> Non
 
 
 def test_context_open_unknown_registered_model_is_operation_error(tmp_path: Path) -> None:
-    response = dispatch(_request("context.open", {"model": "case118"}), tmp_path)
+    response = dispatch(_request("context.open", {"model_id": "case118"}), tmp_path)
 
     assert response.ok is False
     assert response.error is not None

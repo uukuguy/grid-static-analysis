@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
 import os
 import time
@@ -46,6 +45,9 @@ def _answer(question: str, client: GridctlClient) -> str:
         return "N-1 校核逐一退出一个元件，检查潮流是否收敛、母线低/高电压，以及线路和变压器过载。"
     if "输入" in question and "潮流" in question:
         return "交流潮流需要网络模型、运行方式以及明确的求解器/策略参数；本工具使用固定的 pandapower 3.4.0 AC 选项。"
+    task7_limitation = _task7_limitation(question)
+    if task7_limitation is not None:
+        return task7_limitation
     context = client.call("context.open", {"model_id": "ieee39"})
     context_ref = str(context["context_ref"])
     if "线路11" in question and ("连接" in question or "哪两个" in question):
@@ -57,19 +59,31 @@ def _answer(question: str, client: GridctlClient) -> str:
             f"线路 {line['branch']['alias']} 连接母线 {line['from_bus']['name']} 与 {line['to_bus']['name']}；"
             f"证据 {line['evidence_ref']}。"
         )
-    if "负载率最高" in question:
-        client.call("analysis.powerflow.ac.run", {"context_ref": context_ref, "solver": "pandapower.runpp"})
-        return "负载率排序需要 Task7 analysis.powerflow.ac.run 支持。"
-    if "n-1" in normalized or "故障" in question:
-        match = re.search(r"线路\s*(\d+)", question)
-        line_index = int(match.group(1)) if match else 11
-        client.call(
-            "analysis.contingency.n_minus_one.run",
-            {"context_ref": context_ref, "branch_refs": [f"asset:line:sha256:{line_index:064x}"], "policy": "static-analysis-v1"},
-        )
-        return f"线路 {line_index} N-1 校核需要 Task7 analysis.contingency.n_minus_one.run 支持。"
     powerflow = client.call("analysis.powerflow.ac.run", {"context_ref": context_ref, "solver": "pandapower.runpp"})
     return f"IEEE-39 交流潮流已收敛；总有功网损为 {powerflow['total_active_loss_mw']:.14f} MW，结果证据 {powerflow['result_ref']}。"
+
+
+def _task7_limitation(question: str) -> str | None:
+    normalized = question.lower()
+    if "负载率最高" in question:
+        return (
+            "执行限制 / execution limitation: Task7 result.branches.rank 负载率排序能力尚不可用；"
+            "当前离线路径不会运行交流潮流、排序或生成仿真证据。"
+        )
+    if "n-1" in normalized or "故障" in question:
+        capabilities = "analysis.contingency.n_minus_one.run"
+        if "排序" in question:
+            capabilities = f"{capabilities} 与 result.branches.rank"
+        return (
+            f"执行限制 / execution limitation: Task7 {capabilities} 故障分析/N-1 静态安全校核能力尚不可用；"
+            "当前离线路径不会执行故障校核、风险排序或生成仿真证据。"
+        )
+    if "潮流" in question and any(term in question for term in ("运行", "输出", "网损", "有功")):
+        return (
+            "执行限制 / execution limitation: Task7 analysis.powerflow.ac.run 交流潮流分析能力尚不可用；"
+            "当前离线路径不会运行潮流计算或生成仿真证据。"
+        )
+    return None
 
 
 def _install_gridctl(workspace: RunWorkspace) -> None:

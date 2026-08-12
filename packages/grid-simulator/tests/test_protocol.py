@@ -85,7 +85,7 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
 
 
 def test_context_open_rejects_unexpected_arguments_before_persistence(tmp_path: Path) -> None:
-    response = dispatch(request("context.open", {"model": "ieee39", "unexpected": True}), tmp_path)
+    response = dispatch(request("context.open", {"model_id": "ieee39", "unexpected": True}), tmp_path)
 
     assert response.ok is False
     assert response.error is not None
@@ -95,6 +95,19 @@ def test_context_open_rejects_unexpected_arguments_before_persistence(tmp_path: 
     assert response.error.state_effect == "none"
     assert response.error.allowed_recovery_actions == ("correct_arguments",)
     assert response.error.details == {}
+    assert not (tmp_path / "evidence").exists()
+
+
+def test_context_open_rejects_legacy_model_alias_before_persistence(tmp_path: Path) -> None:
+    response = dispatch(request("context.open", {"model": "ieee39"}), tmp_path)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "invalid_arguments"
+    assert response.error.phase == "validate"
+    assert response.error.retryable is False
+    assert response.error.state_effect == "none"
+    assert response.error.allowed_recovery_actions == ("correct_arguments",)
     assert not (tmp_path / "evidence").exists()
 
 
@@ -111,7 +124,7 @@ def test_model_list_rejects_forbidden_family_argument(tmp_path: Path) -> None:
 
 
 def test_context_open_valid_arguments_pass_schema_gate(tmp_path: Path) -> None:
-    response = dispatch(request("context.open", {"model": "ieee39"}), tmp_path)
+    response = dispatch(request("context.open", {"model_id": "ieee39"}), tmp_path)
 
     assert response.ok is True
     assert response.result is not None
@@ -152,7 +165,7 @@ def test_non_conformant_semantic_analysis_ids_are_unsupported(
 
 
 def test_model_element_get_executes_after_context_open(tmp_path: Path) -> None:
-    opened = dispatch(request("context.open", {"model": "ieee39"}), tmp_path)
+    opened = dispatch(request("context.open", {"model_id": "ieee39"}), tmp_path)
     assert opened.result is not None
     resolved = dispatch(
         request(

@@ -14,14 +14,10 @@
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
+    "required": ["model_id"],
     "properties": {
-      "model_id": {"type": "string", "minLength": 1},
-      "model": {"type": "string", "minLength": 1}
-    },
-    "oneOf": [
-      {"required": ["model_id"], "not": {"required": ["model"]}},
-      {"required": ["model"], "not": {"required": ["model_id"]}}
-    ]
+      "model_id": {"type": "string", "minLength": 1}
+    }
   },
   "output_schema": {
     "type": "object",

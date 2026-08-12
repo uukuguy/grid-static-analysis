@@ -35,40 +35,65 @@ def test_offline_examples_return_strict_envelopes(question: str, expected: tuple
 
 
 @pytest.mark.parametrize(
-    "question",
+    "question_id,question,expected",
     [
-        "对IEEE-39节点系统运行交流潮流，并输出有功网损;",
-        "筛选负载率最高的5条线路;",
-        "对关键线路逐一进行故障分析并排序;",
+        (
+            "task7-powerflow-limitation-e2e",
+            "对IEEE-39节点系统运行交流潮流，并输出有功网损;",
+            ("Task7", "analysis.powerflow.ac.run", "交流潮流"),
+        ),
+        (
+            "task7-ranking-limitation-e2e",
+            "筛选负载率最高的5条线路;",
+            ("Task7", "result.branches.rank", "负载率排序"),
+        ),
+        (
+            "task7-n1-limitation-e2e",
+            "对线路171开展N-1校核;",
+            ("Task7", "analysis.contingency.n_minus_one.run", "N-1"),
+        ),
+        (
+            "task7-fault-ranking-limitation-e2e",
+            "对关键线路逐一进行故障分析并排序;",
+            ("Task7", "analysis.contingency.n_minus_one.run", "result.branches.rank", "故障分析"),
+        ),
     ],
 )
-def test_offline_analysis_examples_truthfully_report_task7_limitation(question: str) -> None:
-    completed = subprocess.run(
-        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "--offline", question],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=60,
-    )
+def test_offline_task7_analysis_forms_return_limitation_without_run_artifacts(
+    question_id: str, question: str, expected: tuple[str, ...]
+) -> None:
+    runs_path = ROOT / "runs" / question_id
+    shutil.rmtree(runs_path, ignore_errors=True)
 
-    assert completed.returncode != 0
-    envelope = json.loads(completed.stdout)
-    assert set(envelope) == {"question_id", "answer_output"}
-    assert "limitation" in envelope["answer_output"]
+    try:
+        completed = subprocess.run(
+            [
+                "uv",
+                "run",
+                "--project",
+                "packages/grid-agent",
+                "grid-agent",
+                "run",
+                "--offline",
+                "--question-id",
+                question_id,
+                question,
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
 
-
-def test_unknown_line_returns_a_truthful_limitation_envelope() -> None:
-    completed = subprocess.run(
-        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "--offline", "对线路171开展N-1校核;"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=60,
-    )
-    assert completed.returncode != 0
-    envelope = json.loads(completed.stdout)
-    assert set(envelope) == {"question_id", "answer_output"}
-    assert "limitation" in envelope["answer_output"]
+        assert completed.returncode == 0, completed.stderr
+        envelope = json.loads(completed.stdout)
+        assert set(envelope) == {"question_id", "answer_output"}
+        assert envelope["question_id"] == question_id
+        assert all(value in envelope["answer_output"] for value in expected)
+        assert "execution limitation" in envelope["answer_output"]
+        assert not runs_path.exists()
+    finally:
+        shutil.rmtree(runs_path, ignore_errors=True)
 
 
 def test_offline_runs_write_operator_visible_runs_layout() -> None:

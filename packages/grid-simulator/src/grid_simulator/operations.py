@@ -135,7 +135,7 @@ def _model_list(engine: Pandapower340Engine) -> dict[str, Any]:
 def _context_open(workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]) -> dict[str, Any]:
     registry = ModelRegistry(engine)
     store = ContextStore(workspace, registry)
-    model_id = str(arguments.get("model_id", arguments.get("model")))
+    model_id = str(arguments["model_id"])
     try:
         context = store.create(model_id)
     except ModelNotFoundError as exc:

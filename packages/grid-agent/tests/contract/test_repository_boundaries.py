@@ -77,7 +77,7 @@ def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() 
     superseded_marker = (
         "SUPERSEDED: Historical archive only; non-operative path details."
     )
-    excluded_historical_plans = {historical_plan, wp_a_foundation_plan}
+    excluded_historical_plans = {historical_plan}
     checked_paths = (
         "packages/",
         "configs/",
@@ -126,6 +126,10 @@ def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() 
     checked_relative_paths = {path.relative_to(ROOT) for path in tracked_files}
     assert approved_redesign in checked_relative_paths
     assert historical_plan in checked_relative_paths
+    assert wp_a_foundation_plan in checked_relative_paths
+    assert superseded_marker not in (
+        ROOT / wp_a_foundation_plan
+    ).read_text(encoding="utf-8")
     assert "### 17.2 WP-A: semantic foundation and validation baseline" in (
         ROOT / approved_redesign
     ).read_text(encoding="utf-8")
