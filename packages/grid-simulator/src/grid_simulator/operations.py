@@ -10,12 +10,19 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.capabilities.schema import CapabilityContract
 from grid_simulator.engine import Pandapower340Engine
-from grid_simulator.evidence import fingerprint, write_network
+from grid_simulator.models import (
+    ContextIntegrityError,
+    ContextNotFoundError,
+    ContextStore,
+    InvalidContextRef,
+    ModelNotFoundError,
+    ModelRegistry,
+)
 from grid_simulator.protocol import CapabilityError, GridCapabilityRequest, GridCapabilityResponse
 from grid_simulator.workspace import SimulatorWorkspace
 
 
-EXECUTABLE_CAPABILITIES = frozenset({"environment.describe", "model.list", "context.open"})
+EXECUTABLE_CAPABILITIES = frozenset({"environment.describe", "model.list", "context.open", "context.get"})
 
 
 def dispatch(request: GridCapabilityRequest, workspace_path: Path) -> GridCapabilityResponse:
@@ -50,22 +57,52 @@ def _dispatch(
             ],
         }
     if request.capability == "model.list":
-        return {"models": [{"model": "ieee39", "source": "pandapower.networks.case39", "pandapower_version": "3.4.0"}]}
-    if request.capability == "context.open":
-        if request.arguments.get("model") != "ieee39":
-            raise _failure("unsupported_model", "Only the ieee39 model is supported")
-        engine = Pandapower340Engine()
-        net = engine.open_ieee39()
-        serialized = engine.serialize(net)
-        network_hash = fingerprint(serialized)
-        write_network(workspace.networks_dir / f"{network_hash}.json", serialized)
         return {
-            "context_ref": f"context:sha256:{network_hash}",
-            "model": "ieee39",
+            "models": [
+                {"model": model.model_id, "source": model.source, "pandapower_version": model.engine_version}
+                for model in ModelRegistry(Pandapower340Engine()).list()
+            ]
+        }
+    if request.capability == "context.open":
+        engine = Pandapower340Engine()
+        registry = ModelRegistry(engine)
+        store = ContextStore(workspace, registry)
+        try:
+            context = store.create(str(request.arguments["model"]))
+        except ModelNotFoundError as exc:
+            raise _failure(
+                "model_not_found",
+                f"Model {exc.model_id!r} is not registered",
+                phase="resolve",
+                allowed_recovery_actions=("call_model_list",),
+            ) from exc
+        model = registry.list()[0]
+        net = store.load_network(context.context_ref)
+        return {
+            "context_ref": context.context_ref,
+            "model": context.model_id,
             "engine": engine.name,
             "pandapower_version": engine.version,
-            "source": "pandapower.networks.case39",
-            "semantic_sha256": network_hash,
+            "source": model.source,
+            "semantic_sha256": context.revision_ref.removeprefix("revision:sha256:"),
+            "counts": {"buses": int(len(net.bus)), "lines": int(len(net.line)), "transformers": int(len(net.trafo))},
+        }
+    if request.capability == "context.get":
+        engine = Pandapower340Engine()
+        store = ContextStore(workspace, ModelRegistry(engine))
+        try:
+            context = store.require(str(request.arguments["context_ref"]))
+            net = store.load_network(context.context_ref)
+        except (InvalidContextRef, ContextNotFoundError, ContextIntegrityError) as exc:
+            raise _failure(
+                "unknown_context",
+                "Context reference is not available or failed verification",
+                phase="resolve",
+                allowed_recovery_actions=("call_context_open",),
+            ) from exc
+        return {
+            "context_ref": context.context_ref,
+            "model": context.model_id,
             "counts": {"buses": int(len(net.bus)), "lines": int(len(net.line)), "transformers": int(len(net.trafo))},
         }
     raise _unsupported_capability(request.capability)

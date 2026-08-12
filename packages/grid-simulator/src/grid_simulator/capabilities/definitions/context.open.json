@@ -16,7 +16,7 @@
     "additionalProperties": false,
     "required": ["model"],
     "properties": {
-      "model": {"type": "string", "enum": ["ieee39"]}
+      "model": {"type": "string", "minLength": 1}
     }
   },
   "output_schema": {
@@ -46,9 +46,9 @@
   "consumes": ["model.catalog"],
   "produces": ["network.context", "network.metadata"],
   "common_next": ["context.get", "model.dataset.describe", "analysis.powerflow.ac.run"],
-  "errors": ["unsupported_model", "persist_failed"],
+  "errors": ["model_not_found", "persist_failed"],
   "recovery": {
-    "unsupported_model": ["call model.list and choose a supported model id"],
+    "model_not_found": ["call model.list and choose a supported model id"],
     "persist_failed": ["retry after checking run workspace permissions"]
   },
   "state_effect": "creates_context",

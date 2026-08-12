@@ -6,7 +6,7 @@ from grid_simulator.operations import dispatch
 from grid_simulator.protocol import GridCapabilityRequest
 
 
-def test_network_open_rejects_unknown_network_argument(tmp_path: Path) -> None:
+def test_network_open_rejects_unknown_network_argument_at_operation_boundary(tmp_path: Path) -> None:
     response = dispatch(
         GridCapabilityRequest(
             protocol="grid-capability",
@@ -20,6 +20,6 @@ def test_network_open_rejects_unknown_network_argument(tmp_path: Path) -> None:
 
     assert response.ok is False
     assert response.error is not None
-    assert response.error.code == "invalid_arguments"
-    assert response.error.phase == "validate"
-    assert response.error.allowed_recovery_actions == ("correct_arguments",)
+    assert response.error.code == "model_not_found"
+    assert response.error.phase == "resolve"
+    assert response.error.allowed_recovery_actions == ("call_model_list",)

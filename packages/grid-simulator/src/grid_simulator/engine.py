@@ -4,6 +4,7 @@ import pandapower as pp
 import pandapower.networks as pn
 
 from grid_simulator.evidence import fingerprint
+from grid_simulator.models import ModelNotFoundError
 
 
 class Pandapower340Engine:
@@ -25,8 +26,16 @@ class Pandapower340Engine:
     def open_ieee39(self):
         return pn.case39()
 
+    def open_registered(self, model_id: str):
+        if model_id != "ieee39":
+            raise ModelNotFoundError(model_id)
+        return self.open_ieee39()
+
     def serialize(self, net) -> str:
         return pp.to_json(net)
+
+    def deserialize(self, payload: str):
+        return pp.from_json_string(payload)
 
     def network_ref(self, net) -> str:
         return f"network:ieee39:{fingerprint(self.serialize(net))}"

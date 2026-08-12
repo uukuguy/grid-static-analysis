@@ -69,7 +69,7 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
     assert response.ok is True
     assert response.result is not None
     ids = {item["id"] for item in response.result["executable_capabilities"]}
-    assert ids == {"environment.describe", "model.list", "context.open"}
+    assert ids == {"environment.describe", "model.list", "context.open", "context.get"}
     assert "capabilities" not in response.result
 
 
