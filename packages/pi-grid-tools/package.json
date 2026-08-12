@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/hardened-bash.mjs",
+    "check": "node --check src/domain-tools.mjs",
     "test": "node --test"
   },
   "dependencies": {

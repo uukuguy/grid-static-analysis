@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +62,21 @@ class GuideIndex:
             text=text,
             path=path,
         )
+
+    def materialize(self, path: Path) -> Path:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "protocol": "grid-guide-index",
+            "version": "1.0",
+            "root": str(self._skill_root),
+            "resources": {
+                resource_id: str(resource_path)
+                for resource_id, resource_path in sorted(self._resources.items())
+            },
+        }
+        target.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+        return target
 
 
 def _extract_title(text: str, *, fallback: str) -> str:

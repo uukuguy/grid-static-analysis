@@ -14,7 +14,7 @@ make setup
 make doctor
 ```
 
-`make setup` 分别创建 agent 与 simulator 的隔离环境，并安装 Pi Bash 扩展依赖。`make doctor` 不发送模型请求。
+`make setup` 分别创建 agent 与 simulator 的隔离环境，并安装 Pi grid domain tools 扩展依赖。`make doctor` 不发送模型请求。
 
 ## 执行分析问题
 
@@ -56,7 +56,7 @@ make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 ```
 
-`make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。
+`make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。Pi 只暴露项目生成的 `grid_*` domain tools、`grid_guide_open` 和 `grid_submit_answer`；不会启用通用 shell/read/write/edit 内置工具。
 
 `make run-llm` 的 stdout 仍只输出最终 JSON；实时进度写到 stderr，包括运行耗时、provider/model、生效的超时与重试参数、输入与输出前 200 字摘要、Pi 工具事件、重试事件，以及超过 10 秒无事件时的等待提示。密钥字段会被隐藏。
 

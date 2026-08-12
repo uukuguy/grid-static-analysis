@@ -20,7 +20,15 @@ def test_provider_launch_keeps_secret_out_of_argv(tmp_path: Path) -> None:
     project_paths = ProjectPaths.from_root(tmp_path)
     paths = RuntimePaths(
         command=PiCommand(argv=("pi",), identity=PiRuntimeIdentity(path=Path("pi"), source="explicit_override", package_version="0.80.6", lock_sha256="lock")),
-        project_pi_dir=project_paths.pi_agent_dir, session_dir=tmp_path / "run/pi", workspace=tmp_path / "run", gridctl_dir=tmp_path / "run/bin", extension_path=tmp_path / "hardened-bash.mjs", prompt_path=tmp_path / "prompt.md",
+        project_pi_dir=project_paths.pi_agent_dir,
+        session_dir=tmp_path / "run/pi",
+        workspace=tmp_path / "run",
+        gridctl_dir=tmp_path / "run/bin",
+        extension_path=tmp_path / "domain-tools.mjs",
+        tool_catalog_path=tmp_path / "run/tool-catalog.json",
+        guide_index_path=tmp_path / "run/guide-index.json",
+        answer_draft_path=tmp_path / "run/answer-draft.json",
+        system_policy_path=tmp_path / "system-policy.md",
     )
 
     launch = build_pi_launch(resolved, paths, base_environment={"PATH": "/bin", "HOME": "/tmp"})

@@ -28,6 +28,8 @@ from grid_agent.runtime.installer import PiRuntimeInstaller
 from grid_agent.runtime.lock import PiRuntimeLock
 from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
+from grid_agent.tools.catalog import ToolCatalog, load_packaged_capability_documents
+from grid_agent.tools.guide import GuideIndex
 
 
 app = typer.Typer(add_completion=False)
@@ -236,6 +238,19 @@ def run(
             runtime_lock = PiRuntimeLock.load(project_paths.runtime_lock)
             command = PiRuntimeLocator(project_paths.pi_runtime_dir, runtime_environment, runtime_lock=runtime_lock).resolve()
             _install_gridctl(workspace)
+            gridctl = GridctlClient(
+                executable=workspace.bin_path / "gridctl",
+                workspace=workspace.root_path,
+                timeout_seconds=60,
+            )
+            environment_description = gridctl.call("environment.describe", {})
+            tool_catalog_path = ToolCatalog.from_environment(
+                load_packaged_capability_documents(_repo_root()),
+                environment_description,
+            ).materialize(workspace.root_path / "tool-catalog.json")
+            guide_index_path = GuideIndex.load(_repo_root() / "skills/grid-static-analysis").materialize(
+                workspace.root_path / "guide-index.json"
+            )
             PiConfigMaterializer(project_pi_dir).materialize(resolved)
             launch = build_pi_launch(
                 resolved,
@@ -245,8 +260,11 @@ def run(
                     session_dir=workspace.pi_path,
                     workspace=workspace.root_path,
                     gridctl_dir=workspace.bin_path,
-                    extension_path=_repo_root() / "packages/pi-grid-tools/src/hardened-bash.mjs",
-                    prompt_path=_repo_root() / "configs/prompts/grid-agent-system.md",
+                    extension_path=_repo_root() / "packages/pi-grid-tools/src/domain-tools.mjs",
+                    tool_catalog_path=tool_catalog_path,
+                    guide_index_path=guide_index_path,
+                    answer_draft_path=workspace.root_path / "answer-draft.json",
+                    system_policy_path=_repo_root() / "configs/runtime/grid-agent-system-policy.md",
                 ),
                 base_environment=runtime_environment,
             )

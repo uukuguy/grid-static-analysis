@@ -16,7 +16,10 @@ class RuntimePaths:
     workspace: Path
     gridctl_dir: Path
     extension_path: Path
-    prompt_path: Path
+    tool_catalog_path: Path
+    guide_index_path: Path
+    answer_draft_path: Path
+    system_policy_path: Path
 
 
 @dataclass(frozen=True)
@@ -29,8 +32,9 @@ def build_pi_launch(resolved: ResolvedLLM, paths: RuntimePaths, *, base_environm
     environment = build_pi_environment(resolved, paths, base_environment=base_environment)
     argv = (
         *paths.command.argv, "--mode", "rpc", "--provider", resolved.config.pi_provider, "--model", resolved.config.model,
-        "--session-dir", str(paths.session_dir), "--system-prompt", str(paths.prompt_path), "--no-extensions", "--no-skills",
-        "--no-prompt-templates", "--no-context-files", "--extension", str(paths.extension_path), "--tools", "read,grid_query",
+        "--session-dir", str(paths.session_dir), "--system-prompt", str(paths.system_policy_path), "--no-extensions",
+        "--no-skills", "--no-prompt-templates", "--no-context-files", "--extension", str(paths.extension_path),
+        "--no-builtin-tools",
     )
     return PiLaunch(argv=argv, environment=environment)
 
@@ -46,6 +50,9 @@ def build_pi_environment(resolved: ResolvedLLM, paths: RuntimePaths, *, base_env
     if source.get("GRID_AGENT_PI_OFFLINE") == "1":
         allowed["PI_OFFLINE"] = "1"
     allowed["GRID_AGENT_WORKSPACE"] = str(paths.workspace)
+    allowed["GRID_AGENT_TOOL_CATALOG"] = str(paths.tool_catalog_path)
+    allowed["GRID_AGENT_GUIDE_INDEX"] = str(paths.guide_index_path)
+    allowed["GRID_AGENT_ANSWER_DRAFT"] = str(paths.answer_draft_path)
     if resolved.secret is not None:
         allowed[resolved.config.credential_reference] = resolved.secret.value
         allowed["GRID_AGENT_SECRET_ENV_NAMES"] = resolved.config.credential_reference
