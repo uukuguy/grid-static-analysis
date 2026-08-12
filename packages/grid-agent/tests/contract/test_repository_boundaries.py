@@ -1,6 +1,8 @@
 import os
-from pathlib import Path
+import re
+import subprocess
 import tomllib
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 TEXT_SUFFIXES = {".py", ".toml", ".json", ".mjs", ".md"}
@@ -60,3 +62,46 @@ def test_operator_docs_use_current_state_paths() -> None:
     assert "runs/<question_id>/" in combined
     assert ".grid-agent/auth/pi" in combined
     assert ".grid-agent/runtime/pi" in combined
+
+
+def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() -> None:
+    source_roots = (
+        "packages/",
+        "configs/",
+        "knowledge/",
+        "README.md",
+        "docs/RUNBOOK.md",
+        "docs/TASK.md",
+        "Makefile",
+        ".env.example",
+    )
+    completed = subprocess.run(
+        ["git", "ls-files", *source_roots],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    tracked_files = [
+        ROOT / line
+        for line in completed.stdout.splitlines()
+        if line
+        and Path(line) != Path("packages/grid-agent/tests/contract/test_repository_boundaries.py")
+        and (ROOT / line).suffix in TEXT_SUFFIXES
+    ]
+    legacy_var = "v" + "ar"
+    forbidden_patterns = (
+        re.compile(rf"['\"]{legacy_var}/(?:pi|runs)(?:/|['\"])"),
+        re.compile(rf"['\"]{legacy_var}['\"]\s*/\s*['\"](?:pi|runs|runtime)['\"]"),
+    )
+
+    offenders: list[str] = []
+    for path in tracked_files:
+        text = path.read_text(encoding="utf-8")
+        for pattern in forbidden_patterns:
+            if pattern.search(text):
+                offenders.append(str(path.relative_to(ROOT)))
+                break
+
+    assert offenders == []
+    assert tracked_files

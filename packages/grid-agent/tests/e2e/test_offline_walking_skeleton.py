@@ -54,9 +54,7 @@ def test_unknown_line_returns_a_truthful_limitation_envelope() -> None:
 def test_offline_runs_write_operator_visible_runs_layout() -> None:
     question_id = "path-layout-e2e"
     runs_path = ROOT / "runs" / question_id
-    legacy_path = ROOT / "var/runs" / question_id
     shutil.rmtree(runs_path, ignore_errors=True)
-    shutil.rmtree(legacy_path, ignore_errors=True)
 
     try:
         completed = subprocess.run(
@@ -81,10 +79,8 @@ def test_offline_runs_write_operator_visible_runs_layout() -> None:
         assert completed.returncode == 0, completed.stderr
         assert "43.641" in json.loads(completed.stdout)["answer_output"]
         assert runs_path.is_dir()
-        assert not legacy_path.exists()
     finally:
         shutil.rmtree(runs_path, ignore_errors=True)
-        shutil.rmtree(legacy_path, ignore_errors=True)
 
 
 def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
