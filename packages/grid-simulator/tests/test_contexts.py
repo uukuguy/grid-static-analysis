@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandapower.networks as pn
 import pytest
 
 from grid_simulator.engine import Pandapower340Engine
+from grid_simulator.evidence import canonical_json, fingerprint, write_json, write_network
 from grid_simulator.models import ContextIntegrityError, ContextNotFoundError, ContextStore, InvalidContextRef, ModelRegistry
 from grid_simulator.operations import dispatch
 from grid_simulator.protocol import GridCapabilityRequest
@@ -19,6 +21,22 @@ def _request(capability: str, arguments: dict[str, object]) -> GridCapabilityReq
         capability=capability,
         arguments=arguments,
     )
+
+
+def _write_self_consistent_context(
+    workspace: SimulatorWorkspace, artifact_payload: str, *, model_id: str = "ieee39"
+) -> str:
+    revision_ref = f"revision:sha256:{fingerprint(artifact_payload)}"
+    document = {
+        "model_id": model_id,
+        "revision_ref": revision_ref,
+        "engine": "pandapower",
+        "engine_version": "3.4.0",
+    }
+    context_ref = f"context:sha256:{fingerprint(canonical_json(document))}"
+    write_network(workspace.model_artifact(revision_ref), artifact_payload)
+    write_json(workspace.context_document(context_ref), document)
+    return context_ref
 
 
 def test_require_rejects_malformed_context_ref(tmp_path: Path) -> None:
@@ -54,6 +72,23 @@ def test_require_detects_tampered_context_document(tmp_path: Path) -> None:
         store.require(context.context_ref)
 
 
+def test_require_rejects_self_consistent_forged_ieee39_context_ref(tmp_path: Path) -> None:
+    workspace = SimulatorWorkspace(tmp_path)
+    engine = Pandapower340Engine()
+    forged_context_ref = _write_self_consistent_context(workspace, engine.serialize(pn.case9()))
+    store = ContextStore(workspace, ModelRegistry(engine))
+
+    with pytest.raises(ContextIntegrityError):
+        store.require(forged_context_ref)
+
+    response = dispatch(_request("context.get", {"context_ref": forged_context_ref}), tmp_path)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "unknown_context"
+    assert response.error.phase == "resolve"
+
+
 def test_load_network_detects_tampered_model_artifact(tmp_path: Path) -> None:
     workspace = SimulatorWorkspace(tmp_path)
     store = ContextStore(workspace, ModelRegistry(Pandapower340Engine()))
@@ -62,6 +97,22 @@ def test_load_network_detects_tampered_model_artifact(tmp_path: Path) -> None:
 
     with pytest.raises(ContextIntegrityError):
         store.load_network(context.context_ref)
+
+
+def test_load_network_wraps_invalid_pandapower_json_as_context_integrity(tmp_path: Path) -> None:
+    workspace = SimulatorWorkspace(tmp_path)
+    context_ref = _write_self_consistent_context(workspace, '{"not":"pandapower"}')
+    store = ContextStore(workspace, ModelRegistry(Pandapower340Engine()))
+
+    with pytest.raises(ContextIntegrityError):
+        store.load_network(context_ref)
+
+    response = dispatch(_request("context.get", {"context_ref": context_ref}), tmp_path)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "unknown_context"
+    assert response.error.phase == "resolve"
 
 
 def test_context_get_executes_against_verified_existing_context(tmp_path: Path) -> None:

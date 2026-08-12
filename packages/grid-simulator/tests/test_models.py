@@ -29,6 +29,14 @@ def test_open_context_persists_immutable_revision(tmp_path: Path) -> None:
     assert workspace.model_artifact(context.revision_ref).is_file()
 
 
+def test_context_revision_matches_registry_trusted_revision(tmp_path: Path) -> None:
+    engine = Pandapower340Engine()
+    registry = ModelRegistry(engine)
+    context = ContextStore(SimulatorWorkspace(tmp_path), registry).create("ieee39")
+
+    assert context.revision_ref == registry.trusted_revision_ref("ieee39")
+
+
 def test_reopening_registered_model_keeps_same_context_and_revision(tmp_path: Path) -> None:
     store = ContextStore(SimulatorWorkspace(tmp_path), ModelRegistry(Pandapower340Engine()))
 

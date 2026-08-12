@@ -66,6 +66,7 @@ class ModelRegistry:
         self._engine = engine
         self._models = (_IEEE39,)
         self._by_id = {model.model_id: model for model in self._models}
+        self._trusted_revisions: dict[str, str] = {}
 
     def list(self) -> tuple[RegisteredModel, ...]:
         return self._models
@@ -75,6 +76,17 @@ class ModelRegistry:
         if model is None:
             raise ModelNotFoundError(model_id)
         return model, self._engine.open_registered(model.model_id)
+
+    def trusted_revision_ref(self, model_id: str) -> str:
+        model = self._by_id.get(model_id)
+        if model is None:
+            raise ModelNotFoundError(model_id)
+        revision_ref = self._trusted_revisions.get(model.model_id)
+        if revision_ref is None:
+            net = self._engine.open_registered(model.model_id)
+            revision_ref = f"revision:sha256:{fingerprint(self._engine.serialize(net))}"
+            self._trusted_revisions[model.model_id] = revision_ref
+        return revision_ref
 
 
 class ContextStore:
@@ -86,8 +98,9 @@ class ContextStore:
     def create(self, model_id: str) -> OpenedContext:
         model, net = self._registry.open(model_id)
         serialized = self._engine.serialize(net)
-        revision_digest = fingerprint(serialized)
-        revision_ref = f"revision:sha256:{revision_digest}"
+        revision_ref = self._registry.trusted_revision_ref(model.model_id)
+        if revision_ref != f"revision:sha256:{fingerprint(serialized)}":
+            raise ContextIntegrityError("registered model serialization does not match trusted revision")
         document = {
             "model_id": model.model_id,
             "revision_ref": revision_ref,
@@ -121,13 +134,20 @@ class ContextStore:
         artifact_path = self._workspace.model_artifact(context.revision_ref)
         payload = artifact_path.read_text(encoding="utf-8")
         self._verify_metadata(context)
-        return self._engine.deserialize(payload)
+        try:
+            return self._engine.deserialize(payload)
+        except Exception as exc:
+            raise ContextIntegrityError("model artifact is not valid pandapower JSON") from exc
 
     def _verify_metadata(self, context: OpenedContext) -> None:
         if context.engine != self._engine.name or context.engine_version != self._engine.version:
             raise ContextIntegrityError("context engine metadata does not match runtime")
-        if context.model_id not in {model.model_id for model in self._registry.list()}:
-            raise ContextIntegrityError("context model is not registered")
+        try:
+            expected_revision_ref = self._registry.trusted_revision_ref(context.model_id)
+        except ModelNotFoundError as exc:
+            raise ContextIntegrityError("context model is not registered") from exc
+        if context.revision_ref != expected_revision_ref:
+            raise ContextIntegrityError("context revision does not match registered model")
 
     def _verify_artifact(self, revision_ref: str) -> None:
         expected_digest = _parse_revision_ref(revision_ref)
