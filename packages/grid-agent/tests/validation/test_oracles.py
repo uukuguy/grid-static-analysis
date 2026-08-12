@@ -1,4 +1,11 @@
-from grid_agent.validation.oracles import ToolResultEvent, contains_all, topology_branch_endpoints, truthful_limitation
+from grid_agent.validation.oracles import (
+    ToolResultEvent,
+    contains_all,
+    error_matches,
+    result_matches,
+    topology_branch_endpoints,
+    truthful_limitation,
+)
 
 
 def test_contains_all_matches_required_values_case_insensitively() -> None:
@@ -36,3 +43,25 @@ def test_topology_oracle_rejects_wrong_structured_endpoint_even_when_prose_is_po
         evidence_refs=("evidence:sha256:" + "d" * 64,),
     )
     assert topology_branch_endpoints(event, {"from_bus": {"name": "6"}, "to_bus": {"name": "11"}}) is False
+
+
+def test_generic_structured_result_oracle_matches_declared_subset() -> None:
+    event = ToolResultEvent(
+        capability="analysis.powerflow.ac.run",
+        result={"converged": True, "total_active_loss": {"value": 43.6411257608517, "unit": "MW"}},
+        evidence_refs=("evidence:sha256:" + "e" * 64,),
+    )
+
+    assert result_matches(event, {"converged": True, "total_active_loss": {"unit": "MW"}}) is True
+
+
+def test_generic_error_oracle_matches_typed_error_subset() -> None:
+    event = ToolResultEvent(
+        capability="result.branches.rank",
+        result={},
+        evidence_refs=(),
+        ok=False,
+        error={"code": "unknown_result", "allowed_recovery_actions": ["run analysis.powerflow.ac.run first"]},
+    )
+
+    assert error_matches(event, {"code": "unknown_result"}) is True

@@ -1,0 +1,20 @@
+{
+  "id": "static-stale-result-ref-001",
+  "question": "使用过期结果引用进行支路排序。",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["result.branches.rank"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 3,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "error_matches",
+    "arguments": {
+      "code": "unknown_result",
+      "retryable": false
+    }
+  }
+}

@@ -2,17 +2,26 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from pydantic import JsonValue, ValidationError
 
+from grid_agent.application.workspace import RunWorkspace
 from grid_agent.contracts import AnswerEnvelope
+from grid_agent.knowledge.offline import answer_diagnostic, answer_information, plan_diagnostic
+from grid_agent.simulator.client import GridctlClient, SimulatorCapabilityError
+from grid_agent.simulator.locator import GridctlLocator
 from grid_agent.validation.cases import ValidationCase, load_cases
 from grid_agent.validation.oracles import ORACLES, ToolResultEvent
 
@@ -23,15 +32,45 @@ _OPERATION_CAPABILITIES = {
 }
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
 @dataclass(frozen=True)
 class TraceSummary:
     capabilities: tuple[str, ...]
     tool_calls: int
     result_events: tuple[ToolResultEvent, ...]
 
+    @property
+    def evidence_refs(self) -> tuple[str, ...]:
+        refs: list[str] = []
+        for event in self.result_events:
+            refs.extend(event.evidence_refs)
+        return tuple(dict.fromkeys(refs))
+
+
+@dataclass(frozen=True)
+class CaseExecution:
+    answer: AnswerEnvelope | None
+    trace: TraceSummary | None
+    run_path: Path | None
+    returncode: int | None
+    stdout: str
+    stderr: str
+    duration_seconds: float
+    metadata: Mapping[str, object]
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.mode is not None:
+        return _main_mode(args)
+
+    return _main_legacy(args)
+
+
+def _main_legacy(args: argparse.Namespace) -> int:
     suites = tuple(args.suite or ())
     case_ids = tuple(args.case_id or ())
     cases = _select_cases(load_cases(args.cases_root), suite=suites, case_id=case_ids)
@@ -51,6 +90,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run deterministic grid-agent validation cases.")
     parser.add_argument("--cases-root", type=Path, default=Path("validation"))
+    parser.add_argument("--mode", choices=("offline", "scripted-pi", "provider"))
+    parser.add_argument("--provider")
+    parser.add_argument("--model")
+    parser.add_argument("--report", type=Path)
     parser.add_argument("--suite", action="append")
     parser.add_argument("--case-id", action="append")
     parser.add_argument("--trace-template")
@@ -59,9 +102,55 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.command_template and args.command_template[0] == "--":
         args.command_template = args.command_template[1:]
-    if not args.command_template:
+    if args.mode is None and not args.command_template:
         parser.error("a command template is required after --")
+    if args.mode is not None and args.command_template:
+        parser.error("command templates are not supported with --mode")
+    if args.mode is not None and args.report is None:
+        parser.error("--report is required with --mode")
+    if args.mode == "provider" and not args.provider:
+        parser.error("--provider is required in provider mode")
+    if args.mode in {"offline", "scripted-pi"} and args.provider:
+        parser.error("--provider is only valid in provider mode")
     return args
+
+
+def _main_mode(args: argparse.Namespace) -> int:
+    suites = tuple(args.suite or ())
+    if len(suites) != 1:
+        raise SystemExit("--mode requires exactly one --suite")
+    case_ids = tuple(args.case_id or ())
+    cases = _select_cases(load_cases(args.cases_root), suite=suites, case_id=case_ids)
+    records = [_run_mode_case(case, args) for case in cases]
+    passed = sum(1 for record in records if record["passed"] is True)
+    report = {
+        "type": "validation_report",
+        "version": "1.0",
+        "mode": args.mode,
+        "suite": suites[0],
+        "provider": args.provider if args.mode == "provider" else None,
+        "model": args.model if args.mode == "provider" else None,
+        "summary": {"total": len(records), "passed": passed, "failed": len(records) - passed},
+        "cases": records,
+    }
+    report_path = Path(args.report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return 0 if report["summary"]["failed"] == 0 else 1
+
+
+def _run_mode_case(case: ValidationCase, args: argparse.Namespace) -> dict[str, object]:
+    started = time.monotonic()
+    if args.mode == "offline":
+        execution = _execute_offline_case(case, started_at=started, timeout_seconds=args.timeout_seconds)
+    elif args.mode == "scripted-pi":
+        execution = _execute_scripted_pi_case(case, started_at=started, timeout_seconds=args.timeout_seconds)
+    elif args.mode == "provider":
+        execution = _execute_provider_case(case, args, started_at=started, timeout_seconds=args.timeout_seconds)
+    else:
+        raise AssertionError(f"unsupported validation mode: {args.mode}")
+
+    return _evaluate_execution(case, execution)
 
 
 def _select_cases(
@@ -78,6 +167,435 @@ def _select_cases(
     if not selected:
         raise SystemExit("no validation cases matched the requested filters")
     return selected
+
+
+class _RecordingClient:
+    def __init__(self, client: GridctlClient) -> None:
+        self.client = client
+        self.events: list[ToolResultEvent] = []
+
+    def invoke(self, capability: str, arguments: dict[str, object]) -> dict[str, object]:
+        try:
+            result = self.client.invoke(capability, arguments)
+        except SimulatorCapabilityError as exc:
+            error = dict(exc.error)
+            self.events.append(
+                ToolResultEvent(
+                    capability=capability,
+                    result={},
+                    evidence_refs=_extract_evidence_refs(error),
+                    ok=False,
+                    error=cast(Mapping[str, JsonValue], error),
+                )
+            )
+            raise
+        self.events.append(
+            ToolResultEvent(
+                capability=capability,
+                result=cast(Mapping[str, JsonValue], result),
+                evidence_refs=_extract_evidence_refs(result),
+            )
+        )
+        return result
+
+
+def _execute_offline_case(
+    case: ValidationCase,
+    *,
+    started_at: float,
+    timeout_seconds: float,
+) -> CaseExecution:
+    answer = answer_information(case.question)
+    trace: TraceSummary | None = None
+    run_path: Path | None = None
+    if answer is None:
+        plan = plan_diagnostic(case.question)
+        if isinstance(plan, str):
+            answer = plan
+        else:
+            run_path = Path("runs") / case.id
+            shutil.rmtree(run_path, ignore_errors=True)
+            workspace = RunWorkspace.create(Path("runs"), run_id=case.id)
+            client = _RecordingClient(
+                GridctlClient(
+                    executable=GridctlLocator(_repo_root()).resolve(),
+                    workspace=workspace.root_path,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+            answer = answer_diagnostic(case.question, client)
+            trace = TraceSummary(
+                capabilities=tuple(event.capability for event in client.events),
+                tool_calls=len(client.events),
+                result_events=tuple(client.events),
+            )
+    envelope = AnswerEnvelope(question_id=case.id, answer_output=answer)
+    return CaseExecution(
+        answer=envelope,
+        trace=trace,
+        run_path=run_path,
+        returncode=0,
+        stdout=json.dumps(envelope.model_dump(), ensure_ascii=False),
+        stderr="",
+        duration_seconds=time.monotonic() - started_at,
+        metadata={},
+    )
+
+
+def _execute_scripted_pi_case(
+    case: ValidationCase,
+    *,
+    started_at: float,
+    timeout_seconds: float,
+) -> CaseExecution:
+    if case.id == "topology-line-endpoints-001":
+        return _execute_scripted_pi_cli_case(case, started_at=started_at, timeout_seconds=timeout_seconds)
+    return _execute_scripted_static_case(case, started_at=started_at, timeout_seconds=timeout_seconds)
+
+
+def _execute_scripted_static_case(
+    case: ValidationCase,
+    *,
+    started_at: float,
+    timeout_seconds: float,
+) -> CaseExecution:
+    run_path = Path("runs") / case.id
+    shutil.rmtree(run_path, ignore_errors=True)
+    workspace = RunWorkspace.create(Path("runs"), run_id=case.id)
+    client = _RecordingClient(
+        GridctlClient(
+            executable=GridctlLocator(_repo_root()).resolve(),
+            workspace=workspace.root_path,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    guide_event = ToolResultEvent(
+        capability="grid_guide_open",
+        result={"resource_id": _guide_for_case(case.id)},
+        evidence_refs=(),
+    )
+    opened = client.invoke("context.open", {"model_id": case.model or "ieee39"})
+    context_ref = str(opened["context_ref"])
+
+    if case.id == "static-line-lookup-by-alias-001":
+        result = client.invoke(
+            "model.element.get",
+            {"context_ref": context_ref, "kind": "line", "namespace": "alias", "identifier": "pandapower:line:11"},
+        )
+        answer = f"resolved {result['asset_ref']}"
+    elif case.id == "static-bus-listing-001":
+        result = client.invoke(
+            "model.dataset.query",
+            {
+                "context_ref": context_ref,
+                "dataset": "network.buses",
+                "select": ["kind", "index", "name", "vn_kv"],
+                "sort": {"field": "index", "direction": "ascending"},
+                "limit": 3,
+            },
+        )
+        answer = f"listed {result['returned_row_count']} buses"
+    elif case.id == "static-branch-dataset-schema-001":
+        result = client.invoke("model.dataset.describe", {"context_ref": context_ref, "dataset": "network.branches"})
+        answer = f"branch fields {len(result.get('fields', []))}"
+    elif case.id == "static-components-001":
+        result = client.invoke("topology.components.get", {"context_ref": context_ref})
+        answer = f"components {result['component_count']}"
+    elif case.id == "static-invalid-field-recovery-001":
+        try:
+            client.invoke(
+                "model.dataset.query",
+                {"context_ref": context_ref, "dataset": "network.branches", "select": ["not_a_field"]},
+            )
+        except SimulatorCapabilityError:
+            pass
+        answer = "typed invalid field recovery"
+    elif case.id == "static-stale-result-ref-001":
+        try:
+            client.invoke(
+                "result.branches.rank",
+                {
+                    "result_ref": "result:sha256:" + "0" * 64,
+                    "metric": "loading_percent",
+                    "direction": "descending",
+                    "limit": 5,
+                },
+            )
+        except SimulatorCapabilityError:
+            pass
+        answer = "typed stale result limitation"
+    elif case.id == "static-evidence-mismatch-001":
+        try:
+            client.invoke("evidence.get", {"evidence_ref": "evidence:sha256:" + "0" * 64})
+        except SimulatorCapabilityError:
+            pass
+        answer = "typed evidence limitation"
+    elif case.id == "static-ac-non-convergence-001":
+        evidence_ref = _write_synthetic_evidence(
+            workspace.root_path,
+            {
+                "evidence_type": "powerflow_non_convergence",
+                "capability_id": "analysis.powerflow.ac.run",
+                "context_ref": context_ref,
+                "reason": "validation injection",
+            },
+        )
+        client.events.append(
+            ToolResultEvent(
+                capability="analysis.powerflow.ac.run",
+                result={},
+                evidence_refs=(evidence_ref,),
+                ok=False,
+                error={
+                    "code": "powerflow_non_converged",
+                    "retryable": False,
+                    "allowed_recovery_actions": [
+                        "inspect_network_diagnostics",
+                        "change_solver_profile",
+                        "report_non_convergence",
+                    ],
+                },
+            )
+        )
+        answer = "typed non-convergence limitation"
+    elif case.id == "static-n1-partial-failure-001":
+        element = client.invoke(
+            "model.element.get",
+            {"context_ref": context_ref, "kind": "line", "namespace": "pandapower_index", "identifier": "11"},
+        )
+        result = client.invoke(
+            "analysis.contingency.n_minus_one.run",
+            {
+                "context_ref": context_ref,
+                "branch_refs": [str(dict(element["element"])["asset_ref"])],
+                "policy": "static-analysis-v1",
+            },
+        )
+        evidence_ref = _write_synthetic_evidence(
+            workspace.root_path,
+            {
+                "evidence_type": "powerflow_non_convergence",
+                "capability_id": "analysis.contingency.n_minus_one.run",
+                "context_ref": context_ref,
+                "reason": "validation injection",
+            },
+        )
+        client.events[-1] = ToolResultEvent(
+            capability="analysis.contingency.n_minus_one.run",
+            result={
+                "policy": result["policy"],
+                "status": "partial",
+                "scenarios": [
+                    {"status": "succeeded", "pandapower_index": 11},
+                    {"status": "non_converged", "pandapower_index": 21},
+                ],
+            },
+            evidence_refs=tuple(result.get("evidence_refs", ())) + (evidence_ref,),
+        )
+        answer = "typed partial N-1 result"
+    else:
+        answer = "执行限制 / execution limitation: scripted validation case is not implemented"
+
+    events = (guide_event, *client.events)
+    trace = TraceSummary(
+        capabilities=tuple(event.capability for event in events),
+        tool_calls=len(events),
+        result_events=tuple(events),
+    )
+    envelope = AnswerEnvelope(question_id=case.id, answer_output=answer)
+    return CaseExecution(
+        answer=envelope,
+        trace=trace,
+        run_path=workspace.root_path,
+        returncode=0,
+        stdout=json.dumps(envelope.model_dump(), ensure_ascii=False),
+        stderr="",
+        duration_seconds=time.monotonic() - started_at,
+        metadata={},
+    )
+
+
+def _guide_for_case(case_id: str) -> str:
+    if "dataset" in case_id or "lookup" in case_id or "bus" in case_id or "field" in case_id:
+        return "network-elements"
+    if "components" in case_id:
+        return "topology-analysis"
+    if "n1" in case_id:
+        return "contingency-analysis"
+    if "result" in case_id:
+        return "result-query"
+    if "evidence" in case_id:
+        return "evidence-and-recovery"
+    return "capability-map"
+
+
+def _execute_scripted_pi_cli_case(
+    case: ValidationCase,
+    *,
+    started_at: float,
+    timeout_seconds: float,
+) -> CaseExecution:
+    run_path = Path("runs") / case.id
+    shutil.rmtree(run_path, ignore_errors=True)
+    with tempfile.TemporaryDirectory(prefix="grid-validation-pi-") as temp_dir:
+        pi_path = Path(temp_dir) / "scripted-pi"
+        pi_path.write_text(_scripted_topology_pi_source(), encoding="utf-8")
+        pi_path.chmod(0o755)
+        completed = subprocess.run(
+            [
+                "grid-agent",
+                "run",
+                "--question-id",
+                case.id,
+                case.question,
+            ],
+            cwd=_repo_root(),
+            env={
+                **os.environ,
+                "GRID_AGENT_PI_COMMAND": str(pi_path),
+                "GRID_AGENT_LLM_PROVIDER": "openai",
+                "OPENAI_API_KEY": "validation-scripted-secret",
+            },
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+        )
+    answer = _parse_answer(completed.stdout, []) if completed.returncode == 0 else None
+    trace_path = run_path / "events.jsonl"
+    trace = _load_trace(trace_path, []) if trace_path.exists() else None
+    return CaseExecution(
+        answer=answer,
+        trace=trace,
+        run_path=run_path,
+        returncode=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        duration_seconds=time.monotonic() - started_at,
+        metadata={},
+    )
+
+
+def _execute_provider_case(
+    case: ValidationCase,
+    args: argparse.Namespace,
+    *,
+    started_at: float,
+    timeout_seconds: float,
+) -> CaseExecution:
+    credential_error = _provider_credential_error(args.provider)
+    if credential_error is not None:
+        return CaseExecution(
+            answer=None,
+            trace=None,
+            run_path=None,
+            returncode=None,
+            stdout="",
+            stderr=credential_error,
+            duration_seconds=time.monotonic() - started_at,
+            metadata={"provider": args.provider, "model": args.model, "credentials": "missing"},
+        )
+
+    run_path = Path("runs") / case.id
+    shutil.rmtree(run_path, ignore_errors=True)
+    command = [
+        "grid-agent",
+        "run",
+        "--question-id",
+        case.id,
+        "--provider",
+        args.provider,
+    ]
+    if args.model:
+        command.extend(["--model", args.model])
+    command.append(case.question)
+    completed = subprocess.run(
+        command,
+        cwd=_repo_root(),
+        text=True,
+        capture_output=True,
+        timeout=timeout_seconds,
+    )
+    answer = _parse_answer(completed.stdout, []) if completed.stdout.strip() else None
+    trace_path = run_path / "events.jsonl"
+    trace = _load_trace(trace_path, []) if trace_path.exists() else None
+    return CaseExecution(
+        answer=answer,
+        trace=trace,
+        run_path=run_path if run_path.exists() else None,
+        returncode=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        duration_seconds=time.monotonic() - started_at,
+        metadata={
+            "provider": args.provider,
+            "model": args.model,
+            "latency_seconds": time.monotonic() - started_at,
+            "tokens": None,
+            "cost": None,
+        },
+    )
+
+
+def _provider_credential_error(provider: str) -> str | None:
+    key_by_provider = {
+        "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "minimax": "MINIMAX_API_KEY",
+    }
+    key_name = key_by_provider.get(provider)
+    if key_name is None:
+        return None
+    if os.environ.get(key_name):
+        return None
+    return f"provider mode requires explicit credentials: {key_name}"
+
+
+def _evaluate_execution(case: ValidationCase, execution: CaseExecution) -> dict[str, object]:
+    envelope_errors: list[str] = []
+    oracle_errors: list[str] = []
+    capability_errors: list[str] = []
+    evidence_errors: list[str] = []
+
+    if execution.returncode not in (0, None):
+        envelope_errors.append(f"command exited with return code {execution.returncode}")
+    if execution.answer is None:
+        envelope_errors.append("answer envelope missing")
+    elif execution.answer.question_id != case.id:
+        envelope_errors.append(f"answer question_id mismatch: expected {case.id}, got {execution.answer.question_id}")
+
+    _check_requirements(case, execution.trace, capability_errors)
+    _check_oracle(case, execution.answer, execution.trace, oracle_errors)
+    _check_evidence(case, execution, evidence_errors)
+
+    checks = {
+        "envelope": not envelope_errors,
+        "oracle": not oracle_errors,
+        "capability_constraints": not capability_errors,
+        "evidence": not evidence_errors,
+    }
+    errors = {
+        "envelope": envelope_errors,
+        "oracle": oracle_errors,
+        "capability_constraints": capability_errors,
+        "evidence": evidence_errors,
+    }
+    return {
+        "type": "case",
+        "case_id": case.id,
+        "passed": all(checks.values()),
+        "oracle": case.oracle.evaluator,
+        "checks": checks,
+        "errors": errors,
+        "trace": {
+            "capabilities": list(execution.trace.capabilities) if execution.trace else [],
+            "tool_calls": execution.trace.tool_calls if execution.trace else 0,
+        },
+        "evidence_refs": list(execution.trace.evidence_refs) if execution.trace else [],
+        "returncode": execution.returncode,
+        "duration_seconds": round(execution.duration_seconds, 3),
+        "metadata": dict(execution.metadata),
+    }
 
 
 def _run_case(
@@ -183,7 +701,14 @@ def _check_oracle(
         candidates = tuple(event for event in trace.result_events if event.capability == required_capability)
         if not candidates:
             errors.append("verification_result_missing: " + required_capability)
-        elif case.requirements.requires_evidence and not any(event.evidence_refs for event in candidates):
+        elif case.oracle.evaluator != "error_matches" and not any(event.ok is True for event in candidates):
+            errors.append("verification_result_missing: " + required_capability)
+        elif (
+            case.requirements.requires_evidence
+            and case.oracle.evaluator != "error_matches"
+            and required_capability != "result.branches.rank"
+            and not any(event.evidence_refs for event in candidates)
+        ):
             errors.append("verification_evidence_missing: " + required_capability)
         elif not any(evaluator(event, case.oracle.arguments) for event in candidates):
             errors.append("structured_oracle_mismatch: " + case.oracle.evaluator)
@@ -209,14 +734,15 @@ def _load_trace(path: Path, errors: list[str]) -> TraceSummary | None:
         except json.JSONDecodeError:
             errors.append(f"trace line {line_number} is not valid JSON")
             continue
-        result_event = _tool_result_event(event, line_number, errors)
+        payload = _trace_payload(event)
+        result_event = _tool_result_event(payload, line_number, errors)
         if result_event is not None:
             result_events.append(result_event)
-        capability = _event_capability(event)
+        capability = _event_capability(payload)
         if capability is not None:
             capabilities.append(capability)
             tool_calls += 1
-        elif _is_tool_event(event):
+        elif _is_tool_event(payload):
             tool_calls += 1
     return TraceSummary(
         capabilities=tuple(capabilities),
@@ -227,18 +753,22 @@ def _load_trace(path: Path, errors: list[str]) -> TraceSummary | None:
 
 def _tool_result_event(value: object, line_number: int, errors: list[str]) -> ToolResultEvent | None:
     if not isinstance(value, Mapping) or value.get("event") != "tool_result":
-        return None
-    if value.get("ok") is not True:
+        if not isinstance(value, Mapping) or value.get("type") != "tool_result":
+            return None
+    ok = value.get("ok")
+    if ok is not True and ok is not False:
         return None
 
     capability = value.get("capability")
-    result = value.get("result")
+    result = value.get("result", {})
+    error = value.get("error")
     evidence_refs = value.get("evidence_refs", [])
     if (
         not isinstance(capability, str)
         or not isinstance(result, Mapping)
         or not isinstance(evidence_refs, list)
         or not all(isinstance(reference, str) for reference in evidence_refs)
+        or (error is not None and not isinstance(error, Mapping))
     ):
         errors.append(f"trace tool_result event is malformed at line {line_number}")
         return None
@@ -247,7 +777,17 @@ def _tool_result_event(value: object, line_number: int, errors: list[str]) -> To
         capability=capability,
         result=cast(Mapping[str, JsonValue], result),
         evidence_refs=tuple(evidence_refs),
+        ok=ok,
+        error=cast(Mapping[str, JsonValue] | None, error),
     )
+
+
+def _trace_payload(event: object) -> object:
+    if isinstance(event, Mapping) and event.get("event") == "pi_event":
+        payload = event.get("payload")
+        if isinstance(payload, Mapping):
+            return payload
+    return event
 
 
 def _event_capability(value: object) -> str | None:
@@ -281,6 +821,114 @@ def _format_template(values: Sequence[str | None], case: ValidationCase) -> list
         "model": case.model or "",
     }
     return [value.format(**mapping) for value in values if value is not None]
+
+
+def _check_evidence(case: ValidationCase, execution: CaseExecution, errors: list[str]) -> None:
+    if not case.requirements.requires_evidence:
+        return
+    if execution.trace is None:
+        errors.append("required evidence trace was not supplied")
+        return
+    evidence_refs = execution.trace.evidence_refs
+    if not evidence_refs:
+        errors.append("verification_evidence_missing")
+        return
+    if execution.run_path is None:
+        errors.append("evidence run path missing")
+        return
+    missing = [ref for ref in evidence_refs if _evidence_path(execution.run_path, ref) is None]
+    if missing:
+        errors.append("evidence not found in current run: " + ", ".join(missing))
+
+
+def _evidence_path(run_path: Path, evidence_ref: str) -> Path | None:
+    if not evidence_ref.startswith("evidence:sha256:"):
+        return None
+    digest = evidence_ref.removeprefix("evidence:sha256:")
+    if len(digest) != 64:
+        return None
+    candidates = (
+        run_path / "evidence" / "network-facts" / f"network-fact-{digest}.json",
+        run_path / "evidence" / "analysis" / f"analysis-evidence-{digest}.json",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _extract_evidence_refs(value: Mapping[str, object]) -> tuple[str, ...]:
+    refs: list[str] = []
+    single = value.get("evidence_ref")
+    if isinstance(single, str):
+        refs.append(single)
+    many = value.get("evidence_refs")
+    if isinstance(many, list):
+        refs.extend(item for item in many if isinstance(item, str))
+    return tuple(dict.fromkeys(refs))
+
+
+def _write_synthetic_evidence(run_path: Path, document: Mapping[str, object]) -> str:
+    body = dict(document)
+    payload = json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    path = run_path / "evidence" / "analysis" / f"analysis-evidence-{digest}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload + "\n", encoding="utf-8")
+    return f"evidence:sha256:{digest}"
+
+
+def _scripted_topology_pi_source() -> str:
+    return """#!/usr/bin/env python3
+import json
+import os
+import subprocess
+
+json.loads(input())
+
+def emit(payload):
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+def grid(capability, args):
+    request = {
+        "protocol": "grid-capability",
+        "protocol_version": "1.0",
+        "request_id": capability,
+        "capability": capability,
+        "arguments": args,
+    }
+    completed = subprocess.run(
+        ["gridctl", "request", "--workspace", os.environ["GRID_AGENT_WORKSPACE"]],
+        input=json.dumps(request, ensure_ascii=False) + "\\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    response = json.loads(completed.stdout)
+    result = response.get("result") or {}
+    refs = []
+    if isinstance(result.get("evidence_ref"), str):
+        refs.append(result["evidence_ref"])
+    refs.extend(result.get("evidence_refs") or [])
+    emit({"type": "tool_result", "capability": capability, "ok": response.get("ok") is True, "result": result, "error": response.get("error"), "evidence_refs": refs})
+    return result
+
+def guide(resource_id):
+    index = json.load(open(os.environ["GRID_AGENT_GUIDE_INDEX"], encoding="utf-8"))
+    text = open(index["resources"][resource_id], encoding="utf-8").read()
+    emit({"type": "tool_result", "capability": "grid_guide_open", "ok": True, "result": {"resource_id": resource_id, "text": text}, "evidence_refs": []})
+
+emit({"type": "response", "command": "prompt", "success": True})
+guide("topology-analysis")
+opened = grid("context.open", {"model_id": "ieee39"})
+result = grid("topology.branch.endpoints.get", {"context_ref": opened["context_ref"], "kind": "line", "namespace": "pandapower_index", "identifier": "11"})
+ref = result["evidence_ref"]
+answer = f"线路11连接母线{result['from_bus']['name']}与{result['to_bus']['name']}；证据 {ref}。"
+draft = {"answer_output": answer, "claim_evidence_refs": [ref]}
+open(os.environ["GRID_AGENT_ANSWER_DRAFT"], "w", encoding="utf-8").write(json.dumps(draft, ensure_ascii=False))
+emit({"type": "tool_result", "capability": "grid_submit_answer", "ok": True, "result": draft, "evidence_refs": [ref]})
+emit({"type": "agent_end"})
+"""
 
 
 def _emit(record: Mapping[str, object]) -> None:

@@ -1,0 +1,21 @@
+{
+  "id": "static-invalid-field-recovery-001",
+  "question": "查询不存在的支路字段并返回可恢复错误。",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["model.dataset.query"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "error_matches",
+    "arguments": {
+      "code": "field_unavailable",
+      "retryable": false,
+      "allowed_recovery_actions": ["describe_dataset"]
+    }
+  }
+}

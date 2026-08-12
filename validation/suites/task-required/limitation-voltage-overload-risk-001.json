@@ -1,0 +1,18 @@
+{
+  "id": "limitation-voltage-overload-risk-001",
+  "question": "根据仿真结果输出母线低电压、线路过载等风险及其证据。",
+  "suites": ["task-required"],
+  "requirements": {
+    "required_capabilities": [],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 0,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "limitation",
+    "evaluator": "truthful_limitation",
+    "arguments": {
+      "unavailable_scope": "WP-B risk evaluation"
+    }
+  }
+}

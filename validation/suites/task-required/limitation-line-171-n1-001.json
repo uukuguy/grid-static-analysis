@@ -1,0 +1,21 @@
+{
+  "id": "limitation-line-171-n1-001",
+  "question": "对IEEE-39节点系统线路171开展N-1校核；",
+  "suites": ["task-required"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": [],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run"],
+    "max_tool_calls": 0,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "limitation",
+    "evaluator": "truthful_limitation",
+    "arguments": {
+      "element_kind": "line",
+      "namespace": "pandapower_index",
+      "identifier": "171"
+    }
+  }
+}

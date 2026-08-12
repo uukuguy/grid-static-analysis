@@ -1,0 +1,28 @@
+{
+  "id": "analysis-top-five-line-loading-001",
+  "question": "筛选IEEE-39节点系统负载率最高的5条线路；",
+  "suites": ["task-required"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["result.branches.rank"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 3,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "metric": "loading_percent",
+      "metric_unit": "percent",
+      "direction": "descending",
+      "branches": [
+        {"element_kind": "line", "pandapower_index": 21},
+        {"element_kind": "line", "pandapower_index": 11},
+        {"element_kind": "line", "pandapower_index": 26},
+        {"element_kind": "line", "pandapower_index": 2},
+        {"element_kind": "line", "pandapower_index": 29}
+      ]
+    }
+  }
+}

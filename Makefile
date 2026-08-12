@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm test test-agent test-simulator test-tools test-e2e
+.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm test test-agent test-simulator test-tools test-e2e validate validate-provider
 
 help:
 	@echo "Grid Static Analysis commands"
@@ -13,6 +13,8 @@ help:
 	@echo "  make auth-login            Log in to Pi Codex OAuth for this project"
 	@echo "  make test                  Run all offline verification"
 	@echo "  make test-e2e              Run offline command-line scenarios"
+	@echo "  make validate              Run deterministic WP-A validation"
+	@echo "  make validate-provider PROVIDER=... [MODEL=...]  Run optional billed provider validation"
 
 setup: setup-agent setup-simulator setup-tools
 
@@ -60,4 +62,11 @@ test-tools:
 	npm test --prefix packages/pi-grid-tools
 
 test-e2e:
-	uv run --project packages/grid-agent pytest packages/grid-agent/tests/e2e/test_offline_walking_skeleton.py -q
+	uv run --project packages/grid-agent pytest packages/grid-agent/tests/e2e -q
+
+validate:
+	uv run --project packages/grid-agent python validation/run.py --mode offline --suite task-required --report runs/validation-offline.json
+	uv run --project packages/grid-agent python validation/run.py --mode scripted-pi --suite static-analysis-core --report runs/validation-scripted.json
+
+validate-provider:
+	uv run --project packages/grid-agent python validation/run.py --mode provider --suite task-required --provider "$(PROVIDER)" $(if $(MODEL),--model "$(MODEL)") --report runs/validation-provider.json

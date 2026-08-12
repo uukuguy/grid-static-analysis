@@ -63,9 +63,10 @@ def test_pi_launch_exposes_only_project_tools(tmp_path: Path) -> None:
     launch = build_pi_launch(resolved, _runtime_paths(tmp_path))
 
     joined = " ".join(launch.argv)
+    legacy_query = "grid" + "_query"
     assert "domain-tools.mjs" in joined
     assert "hardened-bash.mjs" not in joined
-    assert "grid_query" not in joined
+    assert legacy_query not in joined
     assert "--no-builtin-tools" in launch.argv
     assert "--tools" not in launch.argv
 

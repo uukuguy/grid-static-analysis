@@ -1,0 +1,20 @@
+{
+  "id": "analysis-ac-loss-001",
+  "question": "对IEEE-39节点系统运行交流潮流，并输出有功网损；",
+  "suites": ["task-required"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["analysis.powerflow.ac.run"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 2,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "converged": true,
+      "total_active_loss": {"value": 43.6411257608517, "unit": "MW"}
+    }
+  }
+}

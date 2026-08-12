@@ -31,7 +31,8 @@ test("registers catalog tools, guide, and answer submission only", async () => {
       "grid_topology_branch_endpoints",
     ],
   );
-  for (const forbidden of ["bash", "read", "write", "edit", "grid_query"]) {
+  const legacyQuery = "grid" + "_query";
+  for (const forbidden of ["bash", "read", "write", "edit", legacyQuery]) {
     assert.equal(registered.some((tool) => tool.name === forbidden), false);
   }
   assert.deepEqual(

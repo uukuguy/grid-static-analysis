@@ -1,0 +1,24 @@
+{
+  "id": "static-n1-partial-failure-001",
+  "question": "注入N-1部分失败并保留成功场景证据。",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["analysis.contingency.n_minus_one.run"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "policy": "static-analysis-v1",
+      "status": "partial",
+      "scenarios": [
+        {"status": "succeeded", "pandapower_index": 11},
+        {"status": "non_converged", "pandapower_index": 21}
+      ]
+    }
+  }
+}

@@ -305,3 +305,80 @@ def test_run_harness_reports_missing_executable_and_summary_without_crashing() -
         "command_os_error: executable not found: missing-grid-agent-executable-for-validation-test"
     ]
     assert records[1] == {"type": "summary", "total": 1, "passed": 0, "failed": 1}
+
+
+def test_validation_runner_supports_exact_offline_mode_and_report(tmp_path: Path) -> None:
+    report_path = tmp_path / "validation-offline.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(RUNNER),
+            "--mode",
+            "offline",
+            "--suite",
+            "task-required",
+            "--case-id",
+            "knowledge-voltage-range-001",
+            "--report",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["mode"] == "offline"
+    assert report["suite"] == "task-required"
+    assert report["summary"] == {"total": 1, "passed": 1, "failed": 0}
+    assert report["cases"][0]["checks"] == {
+        "envelope": True,
+        "oracle": True,
+        "capability_constraints": True,
+        "evidence": True,
+    }
+
+
+def test_validation_runner_supports_scripted_pi_mode_with_wrapped_trace(tmp_path: Path) -> None:
+    report_path = tmp_path / "validation-scripted.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(RUNNER),
+            "--mode",
+            "scripted-pi",
+            "--suite",
+            "static-analysis-core",
+            "--case-id",
+            "topology-line-endpoints-001",
+            "--report",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=90,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    case = report["cases"][0]
+    assert case["checks"] == {
+        "envelope": True,
+        "oracle": True,
+        "capability_constraints": True,
+        "evidence": True,
+    }
+    assert case["trace"]["capabilities"] == [
+        "grid_guide_open",
+        "context.open",
+        "topology.branch.endpoints.get",
+        "grid_submit_answer",
+    ]
+    assert case["trace"]["tool_calls"] == 4
+    assert case["evidence_refs"]

@@ -1,0 +1,20 @@
+{
+  "id": "analysis-critical-line-outage-ordering-001",
+  "question": "对IEEE-39节点系统关键线路逐一进行故障分析并排序；",
+  "suites": ["task-required"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["analysis.contingency.n_minus_one.run"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "policy": "static-analysis-v1",
+      "status": "succeeded"
+    }
+  }
+}

@@ -27,12 +27,12 @@ class DiagnosticPlan:
 _ENTRIES = (
     KnowledgeEntry(
         concept_id="static-analysis-v1.voltage-normal-range",
-        source_id="knowledge/policies/static-analysis-v1.md",
+        source_id="skills/grid-static-analysis/references/contingency-analysis.md",
         answer="静态分析策略 static-analysis-v1 中，母线电压正常运行范围为 0.95–1.05 p.u.。",
     ),
     KnowledgeEntry(
         concept_id="static-analysis-v1.n-minus-one-violation-types",
-        source_id="knowledge/analyses/n-minus-one.md",
+        source_id="skills/grid-static-analysis/references/contingency-analysis.md",
         answer=(
             "N-1 静态安全校核检查潮流不收敛、母线低电压、母线高电压，"
             "以及线路/变压器等支路过载。"
@@ -175,7 +175,7 @@ def _diagnostic_intent(
 ) -> Literal["line_endpoints", "powerflow", "ranking", "n_minus_one", "fault_ranking"] | None:
     if _asks_line_endpoints(question):
         return "line_endpoints"
-    if "故障" in question and "排序" in question:
+    if ("故障" in question or "风险" in question) and "排序" in question:
         return "fault_ranking"
     if "负载率最高" in question:
         return "ranking"

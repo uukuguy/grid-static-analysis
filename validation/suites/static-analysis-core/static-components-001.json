@@ -1,0 +1,19 @@
+{
+  "id": "static-components-001",
+  "question": "IEEE-39拓扑有几个连通分量？",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["topology.components.get"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "component_count": 1
+    }
+  }
+}

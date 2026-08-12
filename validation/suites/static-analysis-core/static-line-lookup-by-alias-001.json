@@ -1,0 +1,19 @@
+{
+  "id": "static-line-lookup-by-alias-001",
+  "question": "用别名 pandapower:line:11 查询线路。",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["model.element.get"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "element": {"kind": "line", "index": 11, "alias": "pandapower:line:11"}
+    }
+  }
+}

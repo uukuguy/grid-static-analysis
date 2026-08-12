@@ -102,6 +102,7 @@ def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() 
         for line in completed.stdout.splitlines()
         if line
         and Path(line) != Path("packages/grid-agent/tests/contract/test_repository_boundaries.py")
+        and (ROOT / line).exists()
         and (ROOT / line).suffix in TEXT_SUFFIXES
     ]
     legacy_var = "v" + "ar"
@@ -134,3 +135,27 @@ def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() 
         ROOT / approved_redesign
     ).read_text(encoding="utf-8")
     assert tracked_files
+
+
+def test_legacy_runtime_paths_are_absent() -> None:
+    forbidden = [
+        ROOT / "configs/prompts/grid-agent-system.md",
+        ROOT / "packages/pi-grid-tools/src/hardened-bash.mjs",
+        ROOT / "runtime/pi-runtime.lock.json",
+        ROOT / "knowledge/index.json",
+    ]
+
+    assert [str(path) for path in forbidden if path.exists()] == []
+
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "packages").rglob("*.*")
+        if path.suffix in {".py", ".mjs", ".json"}
+        and not any(part in {"node_modules", ".venv", "__pycache__"} for part in path.parts)
+    )
+    legacy_request_class = "class " + "SimulatorRequest"
+    legacy_operation_access = "request" + "." + "operation"
+    legacy_query = "grid" + "_query"
+    assert legacy_request_class not in source
+    assert legacy_operation_access not in source
+    assert legacy_query not in source

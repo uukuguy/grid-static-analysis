@@ -24,7 +24,9 @@ make run QUESTION="对IEEE-39节点系统运行交流潮流，并输出有功网
 make run QUESTION="筛选负载率最高的5条线路;"
 ```
 
-标准输出始终是一个 JSON 对象，仅含 `question_id` 与 `answer_output`。数值计算通过独立的 `gridctl` JSONL 进程完成；运行证据写入当前目录的 `runs/<question_id>/`。
+标准输出始终是一个 JSON 对象，仅含 `question_id` 与 `answer_output`。数值计算和模型事实通过独立的 `gridctl` JSONL 进程完成，仿真边界固定为 pandapower 3.4.0；运行证据写入当前目录的 `runs/<question_id>/`。纯信息回答不会创建运行目录，也不会声称仿真证据。
+
+`runs/` 是操作者可检查的运行记录，已被 Git 忽略。`.grid-agent/` 只存放项目内部 Pi OAuth、托管 Pi runtime、会话状态等内部状态，同样被 Git 忽略。版本化运行配置位于 `configs/runtime/`，例如 `configs/runtime/pi-runtime.lock.json`。
 
 ## LLM 配置与 Pi RPC 路径
 
@@ -62,11 +64,38 @@ make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪
 
 若日志出现 `401 ... authentication_error`，表示当前 provider 的 API key 无效、过期或与所选 provider 不匹配；更新 `.env` 中对应的密钥后重新运行。该错误不会重试。若出现 `Request timed out`，先确认日志首行的超时和重试参数，再检查 provider 服务状态或提高 `GRID_AGENT_LLM_TIMEOUT_SECONDS`；运行原始事件保存在 `runs/<question_id>/events.jsonl`，可用于进一步诊断。
 
+## Skill 与工具边界
+
+Pi 只能访问项目发布的 grid domain tools、`grid_guide_open` 和 `grid_submit_answer`。工具描述说明某个 capability 如何调用；`skills/grid-static-analysis/` 是操作手册，说明何时使用 capability、如何组合上下文、结果和证据，以及哪些请求属于 WP-B 或后续范围。
+
+WP-A 可执行能力包括：运行时/模型发现、打开 IEEE-39 上下文、数据集描述与查询、元素解析、线路端点、拓扑连通分量、交流潮流、有功网损、支路负载率排序、`static-analysis-v1` 单支路 N-1 校核，以及拓扑证据读取。WP-B 范围包括多注册网络、DC 潮流、更丰富的策略/风险引擎和更广泛结果查询；当前请求触及这些范围时必须返回明确限制，不能编造输出。
+
+## 证据检查
+
+每个 simulator-backed run 可检查：
+
+- `runs/<question_id>/events.jsonl`：Pi 事件、工具调用和结果 trace。
+- `runs/<question_id>/tool-results/`：工具侧结果暂存目录。
+- `runs/<question_id>/evidence/`：当前运行的 context、model、network-fact、analysis 和 result 证据。
+- `runs/<question_id>/answer.json` 或 `answer-draft.json`：最终或提交草稿。
+
+最终答案只能引用当前运行中实际存在的 `evidence:sha256:*` 或 `result:sha256:*`。迁移和清理不会删除用户主工作树中的既有 `var/` 数据；本分支只使用新的 ignored `runs/` 和 `.grid-agent/` 布局。
+
 ## 验证
 
 ```sh
 make test
 make test-e2e
+make validate
 ```
 
 `make test` 运行 agent、pandapower simulator 和 Node 扩展测试；`make test-e2e` 运行离线命令行样例及脚本化 Pi → gridctl 路径。
+`make validate` 运行 WP-A 必需的 deterministic validation：offline `task-required` 和 scripted-Pi `static-analysis-core`，报告写入 ignored `runs/validation-offline.json` 与 `runs/validation-scripted.json`。
+
+可选 provider validation 会产生真实模型调用，必须显式给出 provider 且环境中已有对应凭证：
+
+```sh
+make validate-provider PROVIDER=openai MODEL=gpt-5.5
+```
+
+报告写入 `runs/validation-provider.json`，记录 provider/model、trace、延迟以及可用的 token/cost 元数据，不写入密钥。

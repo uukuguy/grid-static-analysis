@@ -1,0 +1,21 @@
+{
+  "id": "static-ac-non-convergence-001",
+  "question": "注入交流潮流不收敛并返回类型化错误。",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["analysis.powerflow.ac.run"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "error_matches",
+    "arguments": {
+      "code": "powerflow_non_converged",
+      "retryable": false,
+      "allowed_recovery_actions": ["inspect_network_diagnostics", "change_solver_profile", "report_non_convergence"]
+    }
+  }
+}

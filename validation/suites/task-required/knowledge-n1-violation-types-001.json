@@ -1,6 +1,6 @@
 {
-  "id": "knowledge-voltage-range-001",
-  "question": "母线电压正常运行范围是多少？",
+  "id": "knowledge-n1-violation-types-001",
+  "question": "N-1静态安全校核需要检查哪些越限类型？",
   "suites": ["task-required"],
   "requirements": {
     "required_capabilities": [],
@@ -12,7 +12,7 @@
     "kind": "knowledge",
     "evaluator": "contains_all",
     "arguments": {
-      "values": ["0.95", "1.05", "p.u."]
+      "values": ["潮流不收敛", "低电压", "高电压", "过载"]
     }
   }
 }

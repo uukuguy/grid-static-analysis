@@ -1,6 +1,6 @@
 {
-  "id": "knowledge-voltage-range-001",
-  "question": "母线电压正常运行范围是多少？",
+  "id": "knowledge-ac-tool-inputs-001",
+  "question": "某个潮流计算工具需要输入哪些参数？",
   "suites": ["task-required"],
   "requirements": {
     "required_capabilities": [],
@@ -12,7 +12,7 @@
     "kind": "knowledge",
     "evaluator": "contains_all",
     "arguments": {
-      "values": ["0.95", "1.05", "p.u."]
+      "values": ["analysis.powerflow.ac.run", "context_ref", "solver_profile"]
     }
   }
 }

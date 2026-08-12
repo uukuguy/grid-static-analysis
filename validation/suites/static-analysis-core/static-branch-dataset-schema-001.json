@@ -1,0 +1,35 @@
+{
+  "id": "static-branch-dataset-schema-001",
+  "question": "IEEE-39支路数据集有哪些字段？",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["model.dataset.describe"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "dataset": "network.branches",
+      "fields": [
+        {"name": "asset_ref"},
+        {"name": "kind"},
+        {"name": "index"},
+        {"name": "name"},
+        {"name": "alias"},
+        {"name": "from_bus_ref"},
+        {"name": "to_bus_ref"},
+        {"name": "from_bus_index"},
+        {"name": "to_bus_index"},
+        {"name": "from_bus_name"},
+        {"name": "to_bus_name"},
+        {"name": "in_service"},
+        {"name": "length_km", "unit": "km"},
+        {"name": "max_i_ka", "unit": "kA"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "static-bus-listing-001",
+  "question": "列出IEEE-39节点系统前三个母线。",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["model.dataset.query"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_matches",
+    "arguments": {
+      "dataset": "network.buses",
+      "returned_row_count": 3,
+      "rows": [
+        {"kind": "bus", "index": 0, "name": "1"},
+        {"kind": "bus", "index": 1, "name": "2"},
+        {"kind": "bus", "index": 2, "name": "3"}
+      ]
+    }
+  }
+}

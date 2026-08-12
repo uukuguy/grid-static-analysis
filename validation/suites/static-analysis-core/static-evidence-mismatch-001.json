@@ -1,0 +1,20 @@
+{
+  "id": "static-evidence-mismatch-001",
+  "question": "读取不属于当前运行的证据引用。",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["evidence.get"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 3,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "error_matches",
+    "arguments": {
+      "code": "unknown_evidence",
+      "retryable": false
+    }
+  }
+}
