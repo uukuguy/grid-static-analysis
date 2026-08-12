@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from grid_simulator.operations import dispatch
 from grid_simulator.protocol import GridCapabilityRequest
 
@@ -18,22 +16,19 @@ def _request(capability: str, arguments: dict[str, object]) -> GridCapabilityReq
     )
 
 
-def _result(capability: str, arguments: dict[str, object], workspace: Path) -> dict[str, object]:
-    response = dispatch(_request(capability, arguments), workspace)
-    assert response.ok, response.error
-    assert response.result is not None
-    return response.result
-
-
-def test_ieee39_ac_golden(tmp_path: Path) -> None:
-    context_ref = _result("context.open", {"model": "ieee39"}, tmp_path)["context_ref"]
-    result = _result("analysis.powerflow.ac.run", {"context_ref": context_ref}, tmp_path)
-
-    assert result["converged"] is True
-    assert result["total_active_loss_mw"] == pytest.approx(43.64112576084923, abs=1e-8)
-    ranked = _result(
-        "result.branches.rank",
-        {"result_ref": result["result_ref"], "metric": "loading_percent", "limit": 5},
+def test_semantic_powerflow_and_ranking_ids_are_unsupported_until_contract_payloads_exist(tmp_path: Path) -> None:
+    powerflow = dispatch(
+        _request("analysis.powerflow.ac.run", {"context_ref": "context:sha256:" + "a" * 64}),
         tmp_path,
     )
-    assert [line["index"] for line in ranked["branches"]] == [21, 11, 26, 2, 29]
+    ranking = dispatch(
+        _request("result.branches.rank", {"result_ref": "result:sha256:" + "b" * 64}),
+        tmp_path,
+    )
+
+    assert powerflow.ok is False
+    assert powerflow.error is not None
+    assert powerflow.error.code == "unsupported_capability"
+    assert ranking.ok is False
+    assert ranking.error is not None
+    assert ranking.error.code == "unsupported_capability"

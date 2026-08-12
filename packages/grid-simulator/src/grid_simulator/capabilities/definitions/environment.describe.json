@@ -20,13 +20,13 @@
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["protocol", "protocol_version", "simulator", "pandapower_version", "capabilities"],
+    "required": ["protocol", "protocol_version", "simulator", "pandapower_version", "executable_capabilities"],
     "properties": {
       "protocol": {"type": "string", "enum": ["grid-capability"]},
       "protocol_version": {"type": "string", "enum": ["1.0"]},
       "simulator": {"type": "string", "enum": ["grid-simulator"]},
       "pandapower_version": {"type": "string", "enum": ["3.4.0"]},
-      "capabilities": {
+      "executable_capabilities": {
         "type": "array",
         "items": {
           "type": "object",

@@ -65,7 +65,13 @@
         }
       }
     ],
-    "properties": {}
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "dataset": {"type": "string", "enum": ["network.buses", "network.branches"]},
+      "fields": {"type": "array"},
+      "filter": {},
+      "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+    }
   },
   "output_schema": {
     "type": "object",

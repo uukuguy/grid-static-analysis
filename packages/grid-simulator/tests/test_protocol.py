@@ -68,17 +68,37 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
 
     assert response.ok is True
     assert response.result is not None
-    ids = {item["id"] for item in response.result["capabilities"]}
-    assert {
-        "context.open",
-        "model.element.get",
-        "analysis.powerflow.ac.run",
-        "result.branches.rank",
-        "analysis.contingency.n_minus_one.run",
-    } <= ids
+    ids = {item["id"] for item in response.result["executable_capabilities"]}
+    assert ids == {"environment.describe", "model.list", "context.open"}
+    assert "capabilities" not in response.result
 
 
-def test_line_index_11_resolves_user_bus_names(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "capability,arguments",
+    (
+        ("analysis.powerflow.ac.run", {"context_ref": "context:sha256:" + "a" * 64}),
+        ("result.branches.rank", {"result_ref": "result:sha256:" + "b" * 64}),
+        (
+            "analysis.contingency.n_minus_one.run",
+            {
+                "context_ref": "context:sha256:" + "a" * 64,
+                "line_ids": ["line:index:11"],
+                "policy": "static-analysis-v1",
+            },
+        ),
+    ),
+)
+def test_non_conformant_semantic_analysis_ids_are_unsupported(
+    capability: str, arguments: dict[str, object], tmp_path: Path
+) -> None:
+    response = dispatch(request(capability, arguments), tmp_path)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "unsupported_capability"
+
+
+def test_model_element_get_is_unsupported_until_contract_payload_exists(tmp_path: Path) -> None:
     opened = dispatch(request("context.open", {"model": "ieee39"}), tmp_path)
     assert opened.result is not None
     resolved = dispatch(
@@ -94,11 +114,9 @@ def test_line_index_11_resolves_user_bus_names(tmp_path: Path) -> None:
         tmp_path,
     )
 
-    assert resolved.ok is True
-    assert resolved.result is not None
-    assert resolved.result["element_id"] == "line:index:11"
-    assert resolved.result["from_bus"]["name"] == "6"
-    assert resolved.result["to_bus"]["name"] == "11"
+    assert resolved.ok is False
+    assert resolved.error is not None
+    assert resolved.error.code == "unsupported_capability"
 
 
 def test_cli_writes_exactly_one_json_response(monkeypatch, capsys, tmp_path: Path) -> None:

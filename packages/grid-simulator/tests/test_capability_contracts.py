@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pytest
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
 from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.capabilities.schema import CapabilityContract
@@ -90,6 +92,22 @@ def test_dataset_query_uses_dataset_specific_selectable_field_enums() -> None:
         assert "enum" in fields
         assert fields["enum"]
         assert fields.get("type") != "string"
+
+
+def test_dataset_query_schema_validates_bus_payload_and_rejects_unknown_properties() -> None:
+    contract = CapabilityRegistry.load_packaged().require("model.dataset.query")
+    validator = Draft202012Validator(contract.input_schema)
+    valid_bus_query = {
+        "context_ref": "context:sha256:" + "a" * 64,
+        "dataset": "network.buses",
+        "fields": ["index", "name", "vn_kv"],
+        "filter": {"name": "16"},
+        "limit": 10,
+    }
+
+    validator.validate(valid_bus_query)
+    with pytest.raises(JsonSchemaValidationError):
+        validator.validate({**valid_bus_query, "unexpected": True})
 
 
 def test_analysis_contracts_bind_to_pandapower_340() -> None:
