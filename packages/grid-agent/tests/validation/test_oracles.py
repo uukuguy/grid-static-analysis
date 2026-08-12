@@ -20,3 +20,9 @@ def test_branch_endpoints_uses_only_bus_context_numbers() -> None:
     assert not branch_endpoints("线路11连接母线6与母线12。", {"bus_names": ["6", "11"]})
     assert branch_endpoints("线路11连接母线6与母线11。", {"bus_names": ["6", "11"]})
     assert branch_endpoints("Line 11 connects bus 6 and bus 11.", {"bus_names": ["6", "11"]})
+
+
+def test_branch_endpoints_accepts_bounded_endpoint_phrases() -> None:
+    assert branch_endpoints("线路 line:index:11 连接母线 6 与 11。", {"bus_names": ["6", "11"]})
+    assert branch_endpoints("Line 11 connects buses 6 and 11.", {"bus_names": ["6", "11"]})
+    assert not branch_endpoints("线路 line:index:11 连接母线 6，额定电压为 11 kV。", {"bus_names": ["6", "11"]})
