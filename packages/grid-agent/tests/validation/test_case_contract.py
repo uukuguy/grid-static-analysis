@@ -25,6 +25,16 @@ def test_topology_case_forbids_unnecessary_powerflow() -> None:
     assert case.requirements.requires_evidence is True
 
 
+def test_wp_a_plan_assigns_entities_to_the_model_and_facts_to_structured_results() -> None:
+    plan = (
+        ROOT / "docs/superpowers/plans/2026-08-12-wp-a-semantic-foundation-validation.md"
+    ).read_text(encoding="utf-8")
+
+    assert "topology_branch_endpoints" in plan
+    assert "answer_output is never parsed for electrical entities" in plan
+    assert "branch_endpoints(answer" not in plan
+
+
 def test_structured_validation_case_requires_exactly_one_capability() -> None:
     payload = {
         "id": "invalid-structured-capabilities",
