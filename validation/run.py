@@ -8,12 +8,13 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from grid_agent.contracts import AnswerEnvelope
 from grid_agent.validation.cases import ValidationCase, load_cases
-from grid_agent.validation.oracles import ORACLES
+from grid_agent.validation.oracles import ORACLES, ToolResultEvent
 
 
 _OPERATION_CAPABILITIES = {
@@ -26,6 +27,7 @@ _OPERATION_CAPABILITIES = {
 class TraceSummary:
     capabilities: tuple[str, ...]
     tool_calls: int
+    result_events: tuple[ToolResultEvent, ...]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -105,15 +107,11 @@ def _run_case(
     if answer is not None:
         if answer.question_id != case.id:
             errors.append(f"answer question_id mismatch: expected {case.id}, got {answer.question_id}")
-        evaluator = ORACLES.get(case.oracle.evaluator)
-        if evaluator is None:
-            errors.append(f"unknown oracle evaluator: {case.oracle.evaluator}")
-        elif not evaluator(answer.answer_output, case.oracle.arguments):
-            errors.append(f"oracle failed: {case.oracle.evaluator}")
 
     trace_path = Path(_format_template([trace_template], case)[0]) if trace_template else None
     trace = _load_trace(trace_path, errors) if trace_path is not None else None
     _check_requirements(case, trace, errors)
+    _check_oracle(case, answer, trace, errors)
 
     return {
         "type": "case",
@@ -148,6 +146,8 @@ def _parse_answer(stdout: str, errors: list[str]) -> AnswerEnvelope | None:
 def _check_requirements(case: ValidationCase, trace: TraceSummary | None, errors: list[str]) -> None:
     requirements = case.requirements
     if trace is None:
+        if case.oracle.kind == "structured":
+            return
         if requirements.requires_evidence:
             errors.append("required evidence trace was not supplied")
         return
@@ -163,12 +163,43 @@ def _check_requirements(case: ValidationCase, trace: TraceSummary | None, errors
         errors.append(f"tool call limit exceeded: {trace.tool_calls} > {requirements.max_tool_calls}")
 
 
+def _check_oracle(
+    case: ValidationCase,
+    answer: AnswerEnvelope | None,
+    trace: TraceSummary | None,
+    errors: list[str],
+) -> None:
+    evaluator = ORACLES.get(case.oracle.evaluator)
+    if evaluator is None:
+        errors.append(f"unknown oracle evaluator: {case.oracle.evaluator}")
+        return
+
+    if case.oracle.kind == "structured":
+        required_capability = case.requirements.required_capabilities[0]
+        if trace is None:
+            errors.append("verification_trace_missing: " + required_capability)
+            return
+
+        candidates = tuple(event for event in trace.result_events if event.capability == required_capability)
+        if not candidates:
+            errors.append("verification_result_missing: " + required_capability)
+        elif case.requirements.requires_evidence and not any(event.evidence_refs for event in candidates):
+            errors.append("verification_evidence_missing: " + required_capability)
+        elif not any(evaluator(event, case.oracle.arguments) for event in candidates):
+            errors.append("structured_oracle_mismatch: " + case.oracle.evaluator)
+        return
+
+    if answer is not None and not evaluator(answer.answer_output, case.oracle.arguments):
+        errors.append(f"oracle failed: {case.oracle.evaluator}")
+
+
 def _load_trace(path: Path, errors: list[str]) -> TraceSummary | None:
     if not path.exists():
         errors.append(f"trace file not found: {path}")
         return None
 
     capabilities: list[str] = []
+    result_events: list[ToolResultEvent] = []
     tool_calls = 0
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
@@ -178,13 +209,45 @@ def _load_trace(path: Path, errors: list[str]) -> TraceSummary | None:
         except json.JSONDecodeError:
             errors.append(f"trace line {line_number} is not valid JSON")
             continue
+        result_event = _tool_result_event(event, line_number, errors)
+        if result_event is not None:
+            result_events.append(result_event)
         capability = _event_capability(event)
         if capability is not None:
             capabilities.append(capability)
             tool_calls += 1
         elif _is_tool_event(event):
             tool_calls += 1
-    return TraceSummary(capabilities=tuple(capabilities), tool_calls=tool_calls)
+    return TraceSummary(
+        capabilities=tuple(capabilities),
+        tool_calls=tool_calls,
+        result_events=tuple(result_events),
+    )
+
+
+def _tool_result_event(value: object, line_number: int, errors: list[str]) -> ToolResultEvent | None:
+    if not isinstance(value, Mapping) or value.get("event") != "tool_result":
+        return None
+    if value.get("ok") is not True:
+        return None
+
+    capability = value.get("capability")
+    result = value.get("result")
+    evidence_refs = value.get("evidence_refs", [])
+    if (
+        not isinstance(capability, str)
+        or not isinstance(result, Mapping)
+        or not isinstance(evidence_refs, list)
+        or not all(isinstance(reference, str) for reference in evidence_refs)
+    ):
+        errors.append(f"trace tool_result event is malformed at line {line_number}")
+        return None
+
+    return ToolResultEvent(
+        capability=capability,
+        result=cast(Mapping[str, JsonValue], result),
+        evidence_refs=tuple(evidence_refs),
+    )
 
 
 def _event_capability(value: object) -> str | None:

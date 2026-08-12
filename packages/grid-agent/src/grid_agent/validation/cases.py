@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 
 class StrictModel(BaseModel):
@@ -31,6 +31,12 @@ class ValidationCase(StrictModel):
     model: str | None = None
     requirements: CaseRequirements
     oracle: OracleSpec
+
+    @model_validator(mode="after")
+    def require_one_capability_for_structured_oracle(self) -> "ValidationCase":
+        if self.oracle.kind == "structured" and len(self.requirements.required_capabilities) != 1:
+            raise ValueError("structured validation cases require exactly one capability")
+        return self
 
 
 def load_cases(root: Path) -> tuple[ValidationCase, ...]:

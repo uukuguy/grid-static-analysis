@@ -11,12 +11,11 @@
   },
   "oracle": {
     "kind": "structured",
-    "evaluator": "branch_endpoints",
+    "evaluator": "topology_branch_endpoints",
     "arguments": {
-      "element_kind": "line",
-      "namespace": "pandapower_index",
-      "identifier": "11",
-      "bus_names": ["6", "11"]
+      "branch": {"kind": "line", "namespace": "pandapower_index", "identifier": "11"},
+      "from_bus": {"name": "6"},
+      "to_bus": {"name": "11"}
     }
   }
 }

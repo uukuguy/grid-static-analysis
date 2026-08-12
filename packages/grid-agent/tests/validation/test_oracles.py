@@ -1,4 +1,4 @@
-from grid_agent.validation.oracles import branch_endpoints, contains_all, truthful_limitation
+from grid_agent.validation.oracles import ToolResultEvent, contains_all, topology_branch_endpoints, truthful_limitation
 
 
 def test_contains_all_matches_required_values_case_insensitively() -> None:
@@ -11,36 +11,28 @@ def test_truthful_limitation_matches_known_limitation_terms() -> None:
     assert not truthful_limitation("线路 line:index:171 的最大负载率为 30%。", {})
 
 
-def test_branch_endpoints_matches_bus_number_tokens_only() -> None:
-    assert branch_endpoints("线路11连接母线6与母线11。", {"bus_names": ["6", "11"]})
-    assert not branch_endpoints("线路11连接母线16与母线21。", {"bus_names": ["6", "11"]})
+def test_topology_oracle_matches_declared_result_fields() -> None:
+    event = ToolResultEvent(
+        capability="topology.branch.endpoints.get",
+        result={
+            "branch": {"kind": "line", "namespace": "pandapower_index", "identifier": "11"},
+            "from_bus": {"name": "6", "asset_ref": "asset:bus:sha256:" + "a" * 64},
+            "to_bus": {"name": "11", "asset_ref": "asset:bus:sha256:" + "b" * 64},
+        },
+        evidence_refs=("evidence:sha256:" + "c" * 64,),
+    )
+    expected = {
+        "branch": {"kind": "line", "namespace": "pandapower_index", "identifier": "11"},
+        "from_bus": {"name": "6"},
+        "to_bus": {"name": "11"},
+    }
+    assert topology_branch_endpoints(event, expected) is True
 
 
-def test_branch_endpoints_uses_only_bus_context_numbers() -> None:
-    assert not branch_endpoints("线路11连接母线6与母线12。", {"bus_names": ["6", "11"]})
-    assert branch_endpoints("线路11连接母线6与母线11。", {"bus_names": ["6", "11"]})
-    assert branch_endpoints("Line 11 connects bus 6 and bus 11.", {"bus_names": ["6", "11"]})
-
-
-def test_branch_endpoints_accepts_bounded_endpoint_phrases() -> None:
-    assert branch_endpoints("线路 line:index:11 连接母线 6 与 11。", {"bus_names": ["6", "11"]})
-    assert branch_endpoints("Line 11 connects buses 6 and 11.", {"bus_names": ["6", "11"]})
-    assert not branch_endpoints("线路 line:index:11 连接母线 6，额定电压为 11 kV。", {"bus_names": ["6", "11"]})
-
-
-def test_branch_endpoints_rejects_english_comma_unit_descriptor() -> None:
-    assert not branch_endpoints("Line 11 connects bus 6, 11 kV base.", {"bus_names": ["6", "11"]})
-
-
-def test_branch_endpoints_rejects_chinese_comma_unit_descriptor() -> None:
-    assert not branch_endpoints("线路11连接母线6，11 kV基准电压。", {"bus_names": ["6", "11"]})
-
-
-def test_branch_endpoints_rejects_unit_descriptors_after_endpoint_separators() -> None:
-    assert not branch_endpoints("Line 11 connects bus 6 and 11 kV base.", {"bus_names": ["6", "11"]})
-    assert not branch_endpoints("线路11连接母线6与11基准电压。", {"bus_names": ["6", "11"]})
-
-
-def test_branch_endpoints_accepts_repeated_bus_markers_after_commas() -> None:
-    assert branch_endpoints("Line 11 connects bus 6, bus 11.", {"bus_names": ["6", "11"]})
-    assert branch_endpoints("线路11连接母线6，母线11。", {"bus_names": ["6", "11"]})
+def test_topology_oracle_rejects_wrong_structured_endpoint_even_when_prose_is_polished() -> None:
+    event = ToolResultEvent(
+        capability="topology.branch.endpoints.get",
+        result={"from_bus": {"name": "6"}, "to_bus": {"name": "12"}},
+        evidence_refs=("evidence:sha256:" + "d" * 64,),
+    )
+    assert topology_branch_endpoints(event, {"from_bus": {"name": "6"}, "to_bus": {"name": "11"}}) is False
