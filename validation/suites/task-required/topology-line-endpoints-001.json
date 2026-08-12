@@ -1,0 +1,22 @@
+{
+  "id": "topology-line-endpoints-001",
+  "question": "IEEE-39节点系统中线路11连接哪两个母线？",
+  "suites": ["task-required", "static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["topology.branch.endpoints.get"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "branch_endpoints",
+    "arguments": {
+      "element_kind": "line",
+      "namespace": "pandapower_index",
+      "identifier": "11",
+      "bus_names": ["6", "11"]
+    }
+  }
+}

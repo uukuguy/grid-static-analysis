@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "suites": {
+    "task-required": {
+      "description": "docs/TASK.md mandatory questions and truthful boundary cases"
+    },
+    "static-analysis-core": {
+      "description": "growing semantic capability, recovery, and evidence regression set"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "knowledge-voltage-range-001",
+  "question": "母线电压正常运行范围是多少？",
+  "suites": ["task-required"],
+  "requirements": {
+    "required_capabilities": [],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 0,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "knowledge",
+    "evaluator": "contains_all",
+    "arguments": {
+      "values": ["0.95", "1.05", "pu"]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "unknown-line-001",
+  "question": "对线路171开展N-1校核；",
+  "suites": ["static-analysis-core"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["model.element.get"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "limitation",
+    "evaluator": "truthful_limitation",
+    "arguments": {
+      "element_kind": "line",
+      "namespace": "pandapower_index",
+      "identifier": "171"
+    }
+  }
+}
