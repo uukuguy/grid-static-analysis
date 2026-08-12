@@ -11,7 +11,19 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError as JsonSchemaSchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pandapower.topology import create_nxgraph
+from pandapower.auxiliary import LoadflowNotConverged
 
+from grid_simulator.analyses import (
+    RECOVERY_ACTIONS_NON_CONVERGENCE,
+    PowerflowExecutionError,
+    UnknownBranchError,
+    UnknownResultError,
+    evidence_path,
+    persist_non_convergence_diagnostics,
+    rank_branches,
+    run_ac_powerflow,
+    run_n_minus_one,
+)
 from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.capabilities.schema import CapabilityContract
 from grid_simulator.engine import Pandapower340Engine
@@ -36,8 +48,6 @@ from grid_simulator.queries import (
     field_metadata,
     find_branch,
     find_bus,
-    list_bus_records,
-    list_branch_records,
     records_for_dataset,
 )
 from grid_simulator.workspace import SimulatorWorkspace
@@ -55,6 +65,9 @@ EXECUTABLE_CAPABILITIES = frozenset(
         "topology.branch.endpoints.get",
         "topology.components.get",
         "evidence.get",
+        "analysis.powerflow.ac.run",
+        "result.branches.rank",
+        "analysis.contingency.n_minus_one.run",
     }
 )
 MODEL_VIEW_LIMIT = 50
@@ -106,6 +119,12 @@ def _dispatch(
         return _topology_components_get(workspace, services.engine, request.arguments)
     if request.capability == "evidence.get":
         return _evidence_get(workspace, request.arguments)
+    if request.capability == "analysis.powerflow.ac.run":
+        return _analysis_powerflow_ac_run(workspace, services.engine, request.arguments)
+    if request.capability == "result.branches.rank":
+        return _result_branches_rank(workspace, request.arguments)
+    if request.capability == "analysis.contingency.n_minus_one.run":
+        return _analysis_contingency_n_minus_one_run(workspace, services.engine, request.arguments)
     raise _unsupported_capability(request.capability)
 
 
@@ -308,7 +327,7 @@ def _topology_components_get(
 def _evidence_get(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
     evidence_ref = str(arguments["evidence_ref"])
     digest = _parse_evidence_ref(evidence_ref)
-    path = workspace.root / "evidence" / "network-facts" / f"network-fact-{digest}.json"
+    path = evidence_path(workspace, evidence_ref) or workspace.root / "evidence" / "network-facts" / f"network-fact-{digest}.json"
     if not path.is_file():
         raise _failure(
             "unknown_evidence",
@@ -324,6 +343,84 @@ def _evidence_get(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> d
     except json.JSONDecodeError as exc:
         raise _failure("artifact_unreadable", "Evidence content is not valid JSON", phase="resolve") from exc
     return {"evidence_ref": evidence_ref, "document": document}
+
+
+def _analysis_powerflow_ac_run(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    try:
+        return run_ac_powerflow(workspace=workspace, engine=engine, context=context, net=net, arguments=arguments)
+    except LoadflowNotConverged:
+        diagnostics = persist_non_convergence_diagnostics(
+            workspace=workspace,
+            engine=engine,
+            context=context,
+            capability_id="analysis.powerflow.ac.run",
+        )
+        raise _failure(
+            "powerflow_non_converged",
+            "Pandapower AC power flow did not converge",
+            phase="execute",
+            allowed_recovery_actions=RECOVERY_ACTIONS_NON_CONVERGENCE,
+            evidence_refs=(diagnostics.evidence_ref,),
+            artifact_refs=(diagnostics.artifact_ref,),
+        )
+    except PowerflowExecutionError as exc:
+        raise _failure(
+            "powerflow_failed",
+            "Pandapower AC power flow failed before producing a valid result",
+            phase="execute",
+            allowed_recovery_actions=("inspect_network_diagnostics", "report_failure"),
+        ) from exc
+    except OSError as exc:
+        raise _failure(
+            "persist_failed",
+            "Power-flow result evidence could not be persisted",
+            phase="persist",
+            allowed_recovery_actions=("retry",),
+        ) from exc
+
+
+def _result_branches_rank(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return rank_branches(workspace=workspace, arguments=arguments)
+    except UnknownResultError as exc:
+        raise _failure(
+            "unknown_result",
+            "Power-flow result reference is unavailable in this workspace",
+            phase="resolve",
+            allowed_recovery_actions=("run_powerflow",),
+        ) from exc
+
+
+def _analysis_contingency_n_minus_one_run(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    try:
+        return run_n_minus_one(workspace=workspace, engine=engine, context=context, net=net, arguments=arguments)
+    except UnknownBranchError as exc:
+        raise _failure(
+            "unknown_branch",
+            "Branch reference does not resolve to a model branch in this context revision",
+            phase="resolve",
+            allowed_recovery_actions=("resolve_element",),
+        ) from exc
+    except PowerflowExecutionError as exc:
+        raise _failure(
+            "powerflow_failed",
+            "N-1 contingency execution failed before producing a valid aggregate result",
+            phase="execute",
+            allowed_recovery_actions=("inspect_network_diagnostics", "report_failure"),
+        ) from exc
+    except OSError as exc:
+        raise _failure(
+            "persist_failed",
+            "N-1 contingency evidence could not be persisted",
+            phase="persist",
+            allowed_recovery_actions=("retry",),
+        ) from exc
 
 
 def _load_context_and_network(workspace: SimulatorWorkspace, engine: Pandapower340Engine, context_ref: str):
@@ -539,6 +636,8 @@ def _failure(
     *,
     phase: Literal["parse", "resolve", "validate", "execute", "persist"] = "execute",
     allowed_recovery_actions: tuple[str, ...] = (),
+    evidence_refs: tuple[str, ...] = (),
+    artifact_refs: tuple[str, ...] = (),
     details: dict[str, Any] | None = None,
 ) -> _OperationFailure:
     return _OperationFailure(
@@ -547,6 +646,8 @@ def _failure(
             phase=phase,
             message=message,
             allowed_recovery_actions=allowed_recovery_actions,
+            evidence_refs=evidence_refs,
+            artifact_refs=artifact_refs,
             details=details or {},
         )
     )

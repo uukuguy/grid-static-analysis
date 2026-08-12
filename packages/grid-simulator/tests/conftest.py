@@ -17,8 +17,10 @@ class ControllablePandapowerEngine(Pandapower340Engine):
     def __init__(self) -> None:
         self.force_non_convergence = False
         self.non_convergent_outages: set[int] = set()
+        self.ac_run_count = 0
 
     def run_ac(self, net, *args, **kwargs) -> None:
+        self.ac_run_count += 1
         outaged = {int(index) for index in net.line.index if not bool(net.line.at[index, "in_service"])}
         if self.force_non_convergence or outaged & self.non_convergent_outages:
             raise LoadflowNotConverged("injected test non-convergence")
@@ -62,3 +64,20 @@ def grid(tmp_path: Path) -> GridTestClient:
 @pytest.fixture
 def context_ref(grid: GridTestClient) -> str:
     return str(grid.call("context.open", {"model_id": "ieee39"})["context_ref"])
+
+
+@pytest.fixture
+def line_refs(grid: GridTestClient, context_ref: str) -> list[str]:
+    references = []
+    for identifier in ("0", "1"):
+        result = grid.call(
+            "model.element.get",
+            {
+                "context_ref": context_ref,
+                "kind": "line",
+                "namespace": "pandapower_index",
+                "identifier": identifier,
+            },
+        )
+        references.append(str(result["element"]["asset_ref"]))
+    return references

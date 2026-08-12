@@ -80,6 +80,9 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
         "topology.branch.endpoints.get",
         "topology.components.get",
         "evidence.get",
+        "analysis.powerflow.ac.run",
+        "result.branches.rank",
+        "analysis.contingency.n_minus_one.run",
     }
     assert "capabilities" not in response.result
 
@@ -131,12 +134,12 @@ def test_context_open_valid_arguments_pass_schema_gate(tmp_path: Path) -> None:
     assert response.result["context_ref"].startswith("context:sha256:")
 
 
-def test_unsupported_semantic_id_is_not_reported_as_invalid_arguments(tmp_path: Path) -> None:
+def test_executable_semantic_id_validates_arguments_before_execution(tmp_path: Path) -> None:
     response = dispatch(request("analysis.powerflow.ac.run", {"unexpected": True}), tmp_path)
 
     assert response.ok is False
     assert response.error is not None
-    assert response.error.code == "unsupported_capability"
+    assert response.error.code == "invalid_arguments"
 
 
 @pytest.mark.parametrize(
@@ -154,14 +157,14 @@ def test_unsupported_semantic_id_is_not_reported_as_invalid_arguments(tmp_path: 
         ),
     ),
 )
-def test_non_conformant_semantic_analysis_ids_are_unsupported(
+def test_non_conformant_semantic_analysis_requests_hit_schema_or_reference_gates(
     capability: str, arguments: dict[str, object], tmp_path: Path
 ) -> None:
     response = dispatch(request(capability, arguments), tmp_path)
 
     assert response.ok is False
     assert response.error is not None
-    assert response.error.code == "unsupported_capability"
+    assert response.error.code in {"invalid_arguments", "unknown_context"}
 
 
 def test_model_element_get_executes_after_context_open(tmp_path: Path) -> None:

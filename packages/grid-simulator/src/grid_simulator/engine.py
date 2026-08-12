@@ -40,5 +40,5 @@ class Pandapower340Engine:
     def network_ref(self, net) -> str:
         return f"network:ieee39:{fingerprint(self.serialize(net))}"
 
-    def run_ac(self, net) -> None:
-        pp.runpp(net, **self.ac_options)
+    def run_ac(self, net, options: dict | None = None) -> None:
+        pp.runpp(net, **(options or self.ac_options))

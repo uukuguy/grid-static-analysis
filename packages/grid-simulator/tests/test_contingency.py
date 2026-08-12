@@ -1,36 +1,59 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from grid_simulator.operations import dispatch
-from grid_simulator.protocol import GridCapabilityRequest
+import pytest
 
 
-def _response(capability: str, arguments: dict[str, object], workspace: Path):
-    response = dispatch(
-        GridCapabilityRequest(
-            protocol="grid-capability",
-            protocol_version="1.0",
-            request_id="contingency",
-            capability=capability,
-            arguments=arguments,
-        ),
-        workspace,
-    )
-    return response
+GOLDEN = json.loads(
+    (Path(__file__).parent / "golden" / "ieee39-pandapower-3.4.0.json").read_text(encoding="utf-8")
+)["ieee39"]
 
 
-def test_semantic_contingency_id_is_unsupported_until_contract_payload_exists(tmp_path: Path) -> None:
-    result = _response(
-        "analysis.contingency.n_minus_one.run",
+def _line_ref(grid, context_ref: str, index: int) -> str:
+    result = grid.call(
+        "model.element.get",
         {
-            "context_ref": "context:sha256:" + "a" * 64,
-            "line_ids": ["line:index:11"],
-            "policy": "static-analysis-v1",
+            "context_ref": context_ref,
+            "kind": "line",
+            "namespace": "pandapower_index",
+            "identifier": str(index),
         },
-        tmp_path,
+    )
+    return str(result["element"]["asset_ref"])
+
+
+def test_n_minus_one_preserves_partial_scenario_failure(grid, context_ref: str, line_refs: list[str]) -> None:
+    grid.engine.non_convergent_outages.add(1)
+
+    result = grid.call(
+        "analysis.contingency.n_minus_one.run",
+        {"context_ref": context_ref, "branch_refs": line_refs[:2], "policy": "static-analysis-v1"},
     )
 
-    assert result.ok is False
-    assert result.error is not None
-    assert result.error.code == "unsupported_capability"
+    assert result["status"] == "partial"
+    assert [item["status"] for item in result["scenarios"]] == ["succeeded", "non_converged"]
+    assert all(item["evidence_ref"].startswith("evidence:sha256:") for item in result["scenarios"])
+
+
+def test_n_minus_one_uses_stable_branch_ref_and_reports_overload_evidence(grid, context_ref: str) -> None:
+    line_11_ref = _line_ref(grid, context_ref, 11)
+
+    result = grid.call(
+        "analysis.contingency.n_minus_one.run",
+        {"context_ref": context_ref, "branch_refs": [line_11_ref], "policy": "static-analysis-v1"},
+    )
+
+    assert result["status"] == "succeeded"
+    assert result["result_ref"].startswith("result:sha256:")
+    assert len(result["scenarios"]) == 1
+    scenario = result["scenarios"][0]
+    assert scenario["branch_ref"] == line_11_ref
+    assert scenario["status"] == "succeeded"
+    assert scenario["converged"] is True
+    assert scenario["max_loading_percent"] == pytest.approx(GOLDEN["line_11_outage_max_loading_percent"])
+    overloaded_line_indices = [
+        item["pandapower_index"] for item in scenario["violations"] if item["kind"] == "line_overload"
+    ]
+    assert overloaded_line_indices == GOLDEN["line_11_outage_overloaded_line_indices"]

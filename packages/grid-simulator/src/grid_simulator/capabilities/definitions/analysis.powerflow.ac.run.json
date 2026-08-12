@@ -4,7 +4,7 @@
   "package": "grid_simulator",
   "tool_name": "grid_analysis_powerflow_ac",
   "title": "Run AC power flow",
-  "purpose": "Run pandapower 3.4.0 AC load flow for an opened network context and persist a result artifact.",
+  "purpose": "Run pandapower 3.4.0 AC load flow for an immutable opened network context and persist a normalized result artifact.",
   "applies_to": ["AC steady-state load flow", "active loss calculation", "branch loading calculation"],
   "not_for": ["DC approximation", "dynamic simulation", "answering numeric results without a simulator run"],
   "terms": {
@@ -14,42 +14,73 @@
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["context_ref", "solver"],
+    "required": ["context_ref"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "solver": {"type": "string", "enum": ["pandapower.runpp"]},
+      "solver_profile": {"type": "string", "enum": ["ac-default-v1"]},
+      "algorithm": {"type": "string", "enum": ["nr", "iwamoto_nr", "bfsw"]},
       "calculate_voltage_angles": {"type": "boolean"},
-      "init": {"type": "string", "enum": ["auto", "flat", "dc", "results"]}
+      "init": {"type": "string", "enum": ["auto", "flat", "dc", "results"]},
+      "max_iteration": {"type": "integer", "minimum": 1, "maximum": 100},
+      "tolerance_mva": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+      "trafo_model": {"type": "string", "enum": ["t", "pi"]},
+      "trafo_loading": {"type": "string", "enum": ["current", "power"]},
+      "enforce_q_lims": {"type": "boolean"},
+      "check_connectivity": {"type": "boolean"}
     }
   },
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["result_ref", "context_ref", "converged", "total_active_loss_mw", "units"],
+    "required": ["result_ref", "context_ref", "revision_ref", "converged", "solver", "total_active_loss", "evidence_refs"],
     "properties": {
       "result_ref": {"type": "string", "pattern": "^result:sha256:[0-9a-f]{64}$"},
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
       "converged": {"type": "boolean"},
-      "total_active_loss_mw": {"type": "number"},
-      "units": {
+      "solver": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["total_active_loss_mw", "loading_percent"],
+        "required": ["profile", "operation", "algorithm", "calculate_voltage_angles", "init", "max_iteration", "tolerance_mva", "trafo_model", "trafo_loading", "enforce_q_lims", "check_connectivity"],
         "properties": {
-          "total_active_loss_mw": {"type": "string", "enum": ["MW"]},
-          "loading_percent": {"type": "string", "enum": ["percent"]}
+          "profile": {"type": "string", "enum": ["ac-default-v1"]},
+          "operation": {"type": "string", "enum": ["pandapower.runpp"]},
+          "algorithm": {"type": "string", "enum": ["nr", "iwamoto_nr", "bfsw"]},
+          "calculate_voltage_angles": {"type": "boolean"},
+          "init": {"type": "string", "enum": ["auto", "flat", "dc", "results"]},
+          "max_iteration": {"type": "integer", "minimum": 1, "maximum": 100},
+          "tolerance_mva": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+          "trafo_model": {"type": "string", "enum": ["t", "pi"]},
+          "trafo_loading": {"type": "string", "enum": ["current", "power"]},
+          "enforce_q_lims": {"type": "boolean"},
+          "check_connectivity": {"type": "boolean"}
         }
+      },
+      "total_active_loss": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "unit"],
+        "properties": {
+          "value": {"type": "number"},
+          "unit": {"type": "string", "enum": ["MW"]}
+        }
+      },
+      "evidence_refs": {
+        "type": "array",
+        "minItems": 1,
+        "items": {"type": "string", "pattern": "^evidence:sha256:[0-9a-f]{64}$"}
       }
     }
   },
   "requires": ["context.open"],
   "consumes": ["network.context", "network.parameters"],
-  "produces": ["analysis.powerflow.result", "network.branch.loading", "network.losses"],
+  "produces": ["analysis.powerflow.result", "network.branch.loading", "network.losses", "evidence.record"],
   "common_next": ["result.branches.rank", "analysis.contingency.n_minus_one.run", "evidence.get"],
-  "errors": ["unknown_context", "powerflow_failed", "persist_failed"],
+  "errors": ["unknown_context", "powerflow_non_converged", "powerflow_failed", "persist_failed"],
   "recovery": {
     "unknown_context": ["call context.open for a supported model"],
-    "powerflow_failed": ["report non-convergence instead of estimating numeric values"],
+    "powerflow_non_converged": ["inspect_network_diagnostics", "change_solver_profile", "report_non_convergence"],
+    "powerflow_failed": ["report failure instead of estimating numeric values"],
     "persist_failed": ["retry after checking run workspace permissions"]
   },
   "state_effect": "creates_result",
@@ -57,7 +88,7 @@
   "risk": "read_only_analysis",
   "pandapower": {
     "version": "3.4.0",
-    "operation": "pandapower.runpp",
-    "limitations": ["Uses the configured pandapower AC solver defaults unless arguments override allowed options"]
+    "operation": "pandapower.runpp using ac-default-v1 unless contract-enumerated overrides are supplied",
+    "limitations": ["AC steady-state only", "all numerical results are persisted outside model output"]
   }
 }
