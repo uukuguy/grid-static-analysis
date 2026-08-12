@@ -31,6 +31,10 @@ class ProjectAuthStore:
         self.path = Path(path)
         self.lock_path = self.path.with_name(f"{self.path.name}.grid-agent.lock")
 
+    @classmethod
+    def from_pi_agent_dir(cls, directory: Path) -> "ProjectAuthStore":
+        return cls(Path(directory) / "auth.json")
+
     def import_provider(self, source: Path, provider: str) -> AuthStatus:
         self._require_codex(provider)
         source = Path(source)

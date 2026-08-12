@@ -15,6 +15,7 @@ from dotenv import dotenv_values
 from grid_agent.contracts import AnswerEnvelope, RunRequest
 from grid_agent.simulator.client import GridctlClient
 from grid_agent.simulator.locator import GridctlLocator
+from grid_agent.application.paths import ProjectPaths
 from grid_agent.application.workspace import RunWorkspace
 from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.locator import PiRuntimeLocator
@@ -184,14 +185,14 @@ def run(
 ) -> None:
     request = RunRequest(question_id=question_id, question=question.strip()) if question_id else RunRequest.from_text(question)
     progress = _ProgressReporter(request.question)
+    project_paths = ProjectPaths.from_root(Path.cwd())
     try:
         if not offline:
-            workspace = RunWorkspace.create(Path.cwd() / "var/runs", run_id=request.question_id)
+            workspace = RunWorkspace.create(project_paths.runs_dir, run_id=request.question_id)
             trace = JsonlTraceWriter(workspace.events_path)
-            state_dir = Path.cwd()
-            runtime_environment = _runtime_environment(state_dir)
-            project_pi_dir = state_dir / "var/pi/agent"
-            auth_store = ProjectAuthStore(project_pi_dir / "auth.json")
+            runtime_environment = _runtime_environment(project_paths.root)
+            project_pi_dir = project_paths.pi_agent_dir
+            auth_store = ProjectAuthStore.from_pi_agent_dir(project_pi_dir)
             resolved = resolve_llm(
                 catalog=ProviderCatalog.load(),
                 cli=CliLLMOptions(
@@ -210,7 +211,8 @@ def run(
                 timeout_seconds=resolved.config.timeout_seconds,
                 max_retries=resolved.config.max_retries,
             )
-            command = PiRuntimeLocator(state_dir, runtime_environment).resolve()
+            runtime_lock = PiRuntimeLock.load(project_paths.runtime_lock)
+            command = PiRuntimeLocator(project_paths.pi_runtime_dir, runtime_environment, runtime_lock=runtime_lock).resolve()
             _install_gridctl(workspace)
             PiConfigMaterializer(project_pi_dir).materialize(resolved)
             launch = build_pi_launch(
@@ -241,7 +243,7 @@ def run(
             typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
             return
         executable = GridctlLocator(_repo_root()).resolve()
-        client = GridctlClient(executable=executable, workspace=Path.cwd() / "var/runs" / request.question_id, timeout_seconds=60)
+        client = GridctlClient(executable=executable, workspace=project_paths.runs_dir / request.question_id, timeout_seconds=60)
         answer = _answer(request.question, client)
         envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
         typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
@@ -259,15 +261,16 @@ def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
 
 @app.command("install-pi")
 def install_pi() -> None:
-    """Install the pinned Pi runtime under ./var/runtime/pi."""
-    command = PiRuntimeInstaller(PiRuntimeLock.load(), Path.cwd()).install()
+    """Install the pinned Pi runtime under the project internal state directory."""
+    project_paths = ProjectPaths.from_root(Path.cwd())
+    command = PiRuntimeInstaller(PiRuntimeLock.load(project_paths.runtime_lock), project_paths.pi_runtime_dir).install()
     typer.echo(str(command.path))
 
 
 @app.command("auth-import-pi")
 def auth_import_pi() -> None:
     """Copy the local Pi Codex OAuth profile into project-owned storage."""
-    store = ProjectAuthStore(Path.cwd() / "var/pi/agent/auth.json")
+    store = ProjectAuthStore.from_pi_agent_dir(ProjectPaths.from_root(Path.cwd()).pi_agent_dir)
     # Importing an existing local Pi credential is a file operation; it must not
     # require the managed Pi runtime to have been installed first.
     status = store.import_provider(Path.home() / ".pi/agent/auth.json", CODEX_PROVIDER)
@@ -277,8 +280,13 @@ def auth_import_pi() -> None:
 @app.command("auth-login")
 def auth_login() -> None:
     """Log into the pinned Pi Codex OAuth helper for this project."""
-    store = ProjectAuthStore(Path.cwd() / "var/pi/agent/auth.json")
-    helper = PiRuntimeLocator.from_cwd().resolve_oauth_helper()
+    project_paths = ProjectPaths.from_root(Path.cwd())
+    store = ProjectAuthStore.from_pi_agent_dir(project_paths.pi_agent_dir)
+    helper = PiRuntimeLocator(
+        project_paths.pi_runtime_dir,
+        _runtime_environment(project_paths.root),
+        runtime_lock=PiRuntimeLock.load(project_paths.runtime_lock),
+    ).resolve_oauth_helper()
     status = AuthService(store, helper).login(CODEX_PROVIDER)
     typer.echo(json.dumps({"provider": status.provider, "configured": status.configured}))
 

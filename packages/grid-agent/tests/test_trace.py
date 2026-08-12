@@ -15,11 +15,11 @@ def test_workspace_create_sets_expected_paths(tmp_path) -> None:
     assert workspace.answer_path == workspace.root_path / "answer.json"
     assert workspace.pi_path == workspace.root_path / "pi"
     assert workspace.evidence_path == workspace.root_path / "evidence"
-    assert workspace.corpus_path == workspace.root_path / "corpus"
+    assert workspace.tool_results_path == workspace.root_path / "tool-results"
     assert workspace.bin_path == workspace.root_path / "bin"
     assert workspace.pi_path.is_dir()
     assert workspace.evidence_path.is_dir()
-    assert workspace.corpus_path.is_dir()
+    assert workspace.tool_results_path.is_dir()
     assert workspace.bin_path.is_dir()
 
 

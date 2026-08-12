@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from grid_agent.application.paths import ProjectPaths
+
 
 EXPECTED_SCHEMA_VERSION = 1
 
@@ -130,4 +132,4 @@ class PiRuntimeLock:
 
 
 def default_lock_path() -> Path:
-    return Path(__file__).resolve().parents[5] / "runtime/pi-runtime.lock.json"
+    return ProjectPaths.from_root(Path(__file__).resolve().parents[5]).runtime_lock

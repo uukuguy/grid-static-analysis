@@ -13,7 +13,7 @@ class RunWorkspace:
     answer_path: Path
     pi_path: Path
     evidence_path: Path
-    corpus_path: Path
+    tool_results_path: Path
     bin_path: Path
 
     @classmethod
@@ -22,12 +22,12 @@ class RunWorkspace:
         root_path = root / resolved_run_id
 
         root_path.mkdir(parents=True, exist_ok=True)
+        tool_results_path = root_path / "tool-results"
         pi_path = root_path / "pi"
         evidence_path = root_path / "evidence"
-        corpus_path = root_path / "corpus"
         bin_path = root_path / "bin"
 
-        for path in (pi_path, evidence_path, corpus_path, bin_path):
+        for path in (tool_results_path, evidence_path, pi_path, bin_path):
             path.mkdir(parents=True, exist_ok=True)
 
         return cls(
@@ -39,6 +39,6 @@ class RunWorkspace:
             answer_path=root_path / "answer.json",
             pi_path=pi_path,
             evidence_path=evidence_path,
-            corpus_path=corpus_path,
+            tool_results_path=tool_results_path,
             bin_path=bin_path,
         )

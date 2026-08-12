@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -48,6 +49,42 @@ def test_unknown_line_returns_a_truthful_limitation_envelope() -> None:
     envelope = json.loads(completed.stdout)
     assert set(envelope) == {"question_id", "answer_output"}
     assert "limitation" in envelope["answer_output"]
+
+
+def test_offline_runs_write_operator_visible_runs_layout() -> None:
+    question_id = "path-layout-e2e"
+    runs_path = ROOT / "runs" / question_id
+    legacy_path = ROOT / "var/runs" / question_id
+    shutil.rmtree(runs_path, ignore_errors=True)
+    shutil.rmtree(legacy_path, ignore_errors=True)
+
+    try:
+        completed = subprocess.run(
+            [
+                "uv",
+                "run",
+                "--project",
+                "packages/grid-agent",
+                "grid-agent",
+                "run",
+                "--offline",
+                "--question-id",
+                question_id,
+                "对IEEE-39节点系统运行交流潮流，并输出有功网损;",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "43.641" in json.loads(completed.stdout)["answer_output"]
+        assert runs_path.is_dir()
+        assert not legacy_path.exists()
+    finally:
+        shutil.rmtree(runs_path, ignore_errors=True)
+        shutil.rmtree(legacy_path, ignore_errors=True)
 
 
 def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:

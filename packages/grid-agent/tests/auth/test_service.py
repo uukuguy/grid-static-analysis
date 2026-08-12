@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Sequence
 
+from grid_agent.application.paths import ProjectPaths
 from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import ProjectAuthStore
 from grid_agent.runtime.lock import PiOAuthHelper, PiRuntimeIdentity
@@ -32,13 +33,14 @@ def test_login_uses_project_owned_auth_path_and_redacts_status(tmp_path: Path) -
             lock_sha256="lock",
         ),
     )
-    store = ProjectAuthStore(tmp_path / "var/pi/agent/auth.json")
+    paths = ProjectPaths.from_root(tmp_path)
+    store = ProjectAuthStore.from_pi_agent_dir(paths.pi_agent_dir)
     service = AuthService(store, helper, runner=runner)
 
     status = service.login("openai-codex")
 
     assert status.configured is True
     assert runner.calls[0][0] == ["node", "/pinned/pi-ai.js", "login", "openai-codex"]
-    assert runner.calls[0][1]["cwd"] == tmp_path / "var/pi/agent"
+    assert runner.calls[0][1]["cwd"] == paths.pi_agent_dir
     assert "secret" not in repr(status)
     assert json.loads(store.path.read_text(encoding="utf-8"))["openai-codex"]["access"] == "secret"

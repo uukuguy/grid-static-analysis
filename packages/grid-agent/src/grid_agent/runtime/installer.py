@@ -18,23 +18,23 @@ class PiRuntimeInstaller:
     def __init__(
         self,
         runtime_lock: PiRuntimeLock,
-        state_dir: Path,
+        pi_runtime_dir: Path,
         *,
         runner: Runner | None = None,
         timeout_seconds: int = 120,
     ) -> None:
         self.runtime_lock = runtime_lock
-        self.state_dir = Path(state_dir)
+        self.pi_runtime_dir = Path(pi_runtime_dir)
         self.runner = runner or subprocess.run
         self.timeout_seconds = timeout_seconds
 
     @property
     def source_dir(self) -> Path:
-        return self.state_dir / "var/runtime/pi/source"
+        return self.pi_runtime_dir / "source"
 
     @property
     def active_marker(self) -> Path:
-        return self.state_dir / "var/runtime/pi/active"
+        return self.pi_runtime_dir / "active"
 
     def install(self) -> PiCommand:
         source = self.source_dir

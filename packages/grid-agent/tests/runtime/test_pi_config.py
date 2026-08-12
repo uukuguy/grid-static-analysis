@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from grid_agent.config.models import ResolvedLLM, ResolvedLLMConfig, SecretValue
+from grid_agent.application.paths import ProjectPaths
 from grid_agent.runtime.pi_config import PiConfigMaterializer
 
 
@@ -17,7 +18,7 @@ def test_materializer_writes_no_api_key(tmp_path: Path) -> None:
         secret=SecretValue("super-secret"),
     )
 
-    paths = PiConfigMaterializer(tmp_path / "var/pi/agent").materialize(resolved)
+    paths = PiConfigMaterializer(ProjectPaths.from_root(tmp_path).pi_agent_dir).materialize(resolved)
 
     content = paths.settings_path.read_text() + paths.models_path.read_text()
     assert "super-secret" not in content
@@ -43,7 +44,7 @@ def test_materializer_passes_timeout_and_retry_budget_to_pi(tmp_path: Path) -> N
         secret=SecretValue("super-secret"),
     )
 
-    paths = PiConfigMaterializer(tmp_path / "var/pi/agent").materialize(resolved)
+    paths = PiConfigMaterializer(ProjectPaths.from_root(tmp_path).pi_agent_dir).materialize(resolved)
 
     assert json.loads(paths.settings_path.read_text()) == {
         "httpIdleTimeoutMs": 180_000,

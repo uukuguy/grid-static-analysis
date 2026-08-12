@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
+from grid_agent.application.paths import ProjectPaths
 from grid_agent.runtime.lock import PiCommand, PiOAuthHelper, PiRuntimeIdentity, PiRuntimeLock
 
 
@@ -21,24 +22,24 @@ class PiRuntimeLocatorError(RuntimeError):
 class PiRuntimeLocator:
     def __init__(
         self,
-        state_dir: Path,
+        pi_runtime_dir: Path,
         environ: Mapping[str, str] | None = None,
         *,
         runtime_lock: PiRuntimeLock | None = None,
         runner: Runner | None = None,
     ) -> None:
-        self.state_dir = Path(state_dir)
+        self.pi_runtime_dir = Path(pi_runtime_dir)
         self.environ = dict(environ or {})
         self.runtime_lock = runtime_lock or PiRuntimeLock.load()
         self.runner = runner or subprocess.run
 
     @classmethod
     def from_cwd(cls) -> PiRuntimeLocator:
-        return cls(Path.cwd(), os.environ)
+        return cls(ProjectPaths.from_root(Path.cwd()).pi_runtime_dir, os.environ)
 
     @property
     def source_dir(self) -> Path:
-        return self.state_dir / "var/runtime/pi/source"
+        return self.pi_runtime_dir / "source"
 
     def resolve(self) -> PiCommand:
         explicit = self.environ.get(ENV_PI_COMMAND)
@@ -104,10 +105,11 @@ class PiRuntimeLocator:
 
     def _run(self, argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
         command = list(argv)
+        self.pi_runtime_dir.mkdir(parents=True, exist_ok=True)
         try:
             result = self.runner(
                 command,
-                cwd=self.state_dir,
+                cwd=self.pi_runtime_dir,
                 timeout=15,
                 shell=False,
                 capture_output=True,

@@ -33,6 +33,7 @@ packages/rust/**/target/
 /datasets/
 /paper-full/
 /outputs/
+/.grid-agent/
 /runs/
 /logs/
 
