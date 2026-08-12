@@ -26,3 +26,21 @@ def test_branch_endpoints_accepts_bounded_endpoint_phrases() -> None:
     assert branch_endpoints("线路 line:index:11 连接母线 6 与 11。", {"bus_names": ["6", "11"]})
     assert branch_endpoints("Line 11 connects buses 6 and 11.", {"bus_names": ["6", "11"]})
     assert not branch_endpoints("线路 line:index:11 连接母线 6，额定电压为 11 kV。", {"bus_names": ["6", "11"]})
+
+
+def test_branch_endpoints_rejects_english_comma_unit_descriptor() -> None:
+    assert not branch_endpoints("Line 11 connects bus 6, 11 kV base.", {"bus_names": ["6", "11"]})
+
+
+def test_branch_endpoints_rejects_chinese_comma_unit_descriptor() -> None:
+    assert not branch_endpoints("线路11连接母线6，11 kV基准电压。", {"bus_names": ["6", "11"]})
+
+
+def test_branch_endpoints_rejects_unit_descriptors_after_endpoint_separators() -> None:
+    assert not branch_endpoints("Line 11 connects bus 6 and 11 kV base.", {"bus_names": ["6", "11"]})
+    assert not branch_endpoints("线路11连接母线6与11基准电压。", {"bus_names": ["6", "11"]})
+
+
+def test_branch_endpoints_accepts_repeated_bus_markers_after_commas() -> None:
+    assert branch_endpoints("Line 11 connects bus 6, bus 11.", {"bus_names": ["6", "11"]})
+    assert branch_endpoints("线路11连接母线6，母线11。", {"bus_names": ["6", "11"]})
