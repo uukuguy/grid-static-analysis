@@ -43,3 +43,20 @@ def test_runtime_sources_have_no_research_checkout_reference() -> None:
     for path in checked:
         assert sentinel not in path.read_text(encoding="utf-8")
     assert checked
+
+
+def test_operator_docs_use_current_state_paths() -> None:
+    docs = {
+        "README.md": (ROOT / "README.md").read_text(encoding="utf-8"),
+        "docs/RUNBOOK.md": (ROOT / "docs/RUNBOOK.md").read_text(encoding="utf-8"),
+    }
+    combined = "\n".join(docs.values())
+
+    for path, text in docs.items():
+        assert "var/runs" not in text, path
+        assert "var/pi/agent" not in text, path
+        assert "var/runtime" not in text, path
+
+    assert "runs/<question_id>/" in combined
+    assert ".grid-agent/auth/pi" in combined
+    assert ".grid-agent/runtime/pi" in combined

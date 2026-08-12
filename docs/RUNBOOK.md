@@ -24,7 +24,7 @@ make run QUESTION="对IEEE-39节点系统运行交流潮流，并输出有功网
 make run QUESTION="筛选负载率最高的5条线路;"
 ```
 
-标准输出始终是一个 JSON 对象，仅含 `question_id` 与 `answer_output`。数值计算通过独立的 `gridctl` JSONL 进程完成；运行证据写入当前目录的 `var/runs/`。
+标准输出始终是一个 JSON 对象，仅含 `question_id` 与 `answer_output`。数值计算通过独立的 `gridctl` JSONL 进程完成；运行证据写入当前目录的 `runs/<question_id>/`。
 
 ## LLM 配置与 Pi RPC 路径
 
@@ -39,7 +39,7 @@ cp .env.example .env
 
 DeepSeek 官方 OpenAI API 的 V4 model 参数为 `deepseek-v4-flash` 或 `deepseek-v4-pro`，不要填发行日期后缀；项目会在启动 Pi 前拒绝其他 DeepSeek model id。
 
-Pi 运行时按以下顺序发现：`GRID_AGENT_PI_COMMAND`、项目托管版本、`PATH` 中的 `pi`。因此 Pi 已在 `PATH` 时无需配置 `GRID_AGENT_PI_COMMAND`；否则可在 `.env` 设置该绝对路径，或在仓库根目录执行 `make install-pi` 安装本项目锁定版本。模型密钥会仅在启动 Pi 子进程时通过环境变量传递，不写入 `var/pi/agent` 的配置文件或命令行。
+Pi 运行时按以下顺序发现：`GRID_AGENT_PI_COMMAND`、项目托管版本、`PATH` 中的 `pi`。因此 Pi 已在 `PATH` 时无需配置 `GRID_AGENT_PI_COMMAND`；否则可在 `.env` 设置该绝对路径，或在仓库根目录执行 `make install-pi` 安装本项目锁定版本到 `.grid-agent/runtime/pi`。模型密钥会仅在启动 Pi 子进程时通过环境变量传递，不写入 `.grid-agent/auth/pi` 的配置文件或命令行。
 
 当 `GRID_AGENT_LLM_PROVIDER=openai-codex` 时，不填写 API key。先从已经登录的本地 Pi 导入 OAuth 凭证，或登录到项目自己的 Pi OAuth 配置：
 
@@ -60,7 +60,7 @@ make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪
 
 `make run-llm` 的 stdout 仍只输出最终 JSON；实时进度写到 stderr，包括运行耗时、provider/model、生效的超时与重试参数、输入与输出前 200 字摘要、Pi 工具事件、重试事件，以及超过 10 秒无事件时的等待提示。密钥字段会被隐藏。
 
-若日志出现 `401 ... authentication_error`，表示当前 provider 的 API key 无效、过期或与所选 provider 不匹配；更新 `.env` 中对应的密钥后重新运行。该错误不会重试。若出现 `Request timed out`，先确认日志首行的超时和重试参数，再检查 provider 服务状态或提高 `GRID_AGENT_LLM_TIMEOUT_SECONDS`；运行原始事件保存在 `var/runs/<question_id>/events.jsonl`，可用于进一步诊断。
+若日志出现 `401 ... authentication_error`，表示当前 provider 的 API key 无效、过期或与所选 provider 不匹配；更新 `.env` 中对应的密钥后重新运行。该错误不会重试。若出现 `Request timed out`，先确认日志首行的超时和重试参数，再检查 provider 服务状态或提高 `GRID_AGENT_LLM_TIMEOUT_SECONDS`；运行原始事件保存在 `runs/<question_id>/events.jsonl`，可用于进一步诊断。
 
 ## 验证
 
