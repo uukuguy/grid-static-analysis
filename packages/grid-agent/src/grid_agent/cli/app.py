@@ -162,15 +162,21 @@ def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
         raise RuntimeError("grid_submit_answer draft must be a JSON object")
     answer = draft.get("answer_output")
     claimed = draft.get("claim_evidence_refs")
+    result_refs = draft.get("result_refs")
     if not isinstance(answer, str) or not answer.strip():
         raise RuntimeError("grid_submit_answer draft must include answer_output")
     if not isinstance(claimed, list) or not all(isinstance(item, str) for item in claimed):
         raise RuntimeError("grid_submit_answer draft must include claim_evidence_refs")
-    _verify_evidence_refs(workspace, tuple(claimed))
+    if not isinstance(result_refs, list) or not all(isinstance(item, str) for item in result_refs):
+        raise RuntimeError("grid_submit_answer draft must include result_refs")
+    evidence_documents = _verify_evidence_refs(workspace, tuple(claimed))
+    result_documents = _verify_result_refs(workspace, tuple(result_refs))
+    _verify_result_evidence_links(tuple(result_refs), result_documents, tuple(claimed), evidence_documents)
     return answer
 
 
-def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...]) -> None:
+def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
+    documents: list[dict[str, Any]] = []
     for evidence_ref in evidence_refs:
         if not evidence_ref.startswith("evidence:sha256:"):
             raise RuntimeError(f"claimed evidence ref is invalid: {evidence_ref}")
@@ -182,6 +188,8 @@ def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...
             raise RuntimeError(f"claimed evidence ref is not in the current run: {evidence_ref}")
         document = _load_json_document(document_path)
         _verify_evidence_document(evidence_ref, digest, document_path, document)
+        documents.append(document)
+    return tuple(documents)
 
 
 def _allowed_evidence_document_path(workspace: RunWorkspace, digest: str) -> Path | None:
@@ -227,6 +235,85 @@ def _verify_evidence_document(evidence_ref: str, digest: str, path: Path, docume
         raise RuntimeError(f"claimed evidence document type is not allowed: {evidence_ref}")
     if evidence_type in {"analysis_result", "contingency_scenario"} and not isinstance(document.get("result_ref"), str):
         raise RuntimeError(f"claimed analysis evidence is not linked to a result document: {evidence_ref}")
+
+
+def _verify_result_refs(workspace: RunWorkspace, result_refs: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    documents: dict[str, dict[str, Any]] = {}
+    for result_ref in result_refs:
+        digest = _result_digest(result_ref)
+        document_path = _allowed_result_document_path(workspace, digest)
+        if document_path is None:
+            raise RuntimeError(f"declared result_ref is not in the current run: {result_ref}")
+        document = _load_json_document(document_path)
+        if not isinstance(document, dict):
+            raise RuntimeError(f"declared result document is malformed: {result_ref}")
+        if document.get("result_ref") != result_ref:
+            raise RuntimeError(f"declared result document reference does not match: {result_ref}")
+        body = {key: value for key, value in document.items() if key != "result_ref"}
+        if _sha256_canonical_json(body) != digest:
+            raise RuntimeError(f"declared result document content does not match reference: {result_ref}")
+        if not isinstance(document.get("context_ref"), str) or not isinstance(document.get("revision_ref"), str):
+            raise RuntimeError(f"declared result document is missing context references: {result_ref}")
+        documents[result_ref] = document
+    return documents
+
+
+def _result_digest(result_ref: str) -> str:
+    if not result_ref.startswith("result:sha256:"):
+        raise RuntimeError(f"declared result_ref is invalid: {result_ref}")
+    digest = result_ref.removeprefix("result:sha256:")
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise RuntimeError(f"declared result_ref is invalid: {result_ref}")
+    return digest
+
+
+def _allowed_result_document_path(workspace: RunWorkspace, digest: str) -> Path | None:
+    candidates = (
+        workspace.evidence_path / "results" / f"powerflow-{digest}.json",
+        workspace.evidence_path / "results" / f"contingency-{digest}.json",
+        workspace.evidence_path / "results" / f"contingency-scenario-{digest}.json",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _verify_result_evidence_links(
+    result_refs: tuple[str, ...],
+    result_documents: Mapping[str, Mapping[str, Any]],
+    claimed_evidence_refs: tuple[str, ...],
+    evidence_documents: tuple[Mapping[str, Any], ...],
+) -> None:
+    declared = set(result_refs)
+    linked: set[str] = set()
+    claimed = set(claimed_evidence_refs)
+    for document in evidence_documents:
+        evidence_type = document.get("evidence_type")
+        evidence_result_ref = document.get("result_ref")
+        if isinstance(evidence_result_ref, str):
+            if evidence_type in {"analysis_result", "contingency_scenario"} and evidence_result_ref not in declared:
+                raise RuntimeError(f"analysis evidence requires a declared result_ref: {evidence_result_ref}")
+            if evidence_result_ref in declared:
+                _verify_matching_context(evidence_result_ref, result_documents[evidence_result_ref], document)
+                linked.add(evidence_result_ref)
+
+    for result_ref, result_document in result_documents.items():
+        result_evidence_refs = result_document.get("evidence_refs")
+        if isinstance(result_evidence_refs, list) and any(ref in claimed for ref in result_evidence_refs):
+            linked.add(result_ref)
+
+    for result_ref in result_refs:
+        if result_ref not in linked:
+            raise RuntimeError(f"declared result_ref is not linked to claimed evidence: {result_ref}")
+
+
+def _verify_matching_context(result_ref: str, result_document: Mapping[str, Any], evidence_document: Mapping[str, Any]) -> None:
+    if (
+        evidence_document.get("context_ref") != result_document.get("context_ref")
+        or evidence_document.get("revision_ref") != result_document.get("revision_ref")
+    ):
+        raise RuntimeError(f"declared result_ref context does not match claimed evidence: {result_ref}")
 
 
 def _sha256_canonical_json(document: object) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -139,6 +140,60 @@ def test_rpc_collects_text_from_current_pi_message_updates(tmp_path: Path) -> No
         assert client.prompt_and_wait("question") == "answer"
     finally:
         client.stop()
+
+
+def test_rpc_persists_canonical_tool_result_from_extension_tool_end_event(tmp_path: Path) -> None:
+    evidence_ref = "evidence:sha256:" + "a" * 64
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json\njson.loads(input())\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}), flush=True)\n"
+        "print(json.dumps({"
+        "'type':'tool_execution_start',"
+        "'toolName':'grid_topology_branch_endpoints',"
+        "'args':{'identifier':'11'}"
+        "}), flush=True)\n"
+        "print(json.dumps({"
+        "'type':'tool_execution_end',"
+        "'toolName':'grid_topology_branch_endpoints',"
+        "'isError':False,"
+        "'result':{'details':{"
+        "'event':'tool_result',"
+        "'capability':'topology.branch.endpoints.get',"
+        "'ok':True,"
+        "'result':{'branch':{'identifier':'11'},'evidence_ref':'" + evidence_ref + "'},"
+        "'evidence_refs':['" + evidence_ref + "']"
+        "}}"
+        "}), flush=True)\n"
+        "print(json.dumps({'type':'text_delta','text':'answer'}), flush=True)\n"
+        "print(json.dumps({'type':'agent_end','messages':[]}), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+
+    client.start()
+    try:
+        assert client.prompt_and_wait("question") == "answer"
+    finally:
+        client.stop()
+
+    traced_payloads = [
+        json.loads(line)["payload"]
+        for line in workspace.events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert {
+        "event": "tool_result",
+        "capability": "topology.branch.endpoints.get",
+        "ok": True,
+        "result": {"branch": {"identifier": "11"}, "evidence_ref": evidence_ref},
+        "evidence_refs": [evidence_ref],
+    } in traced_payloads
+    assert not any(payload.get("type") == "tool_execution_start" for payload in traced_payloads)
 
 
 def test_rpc_rejects_successful_agent_end_without_answer_text(tmp_path: Path) -> None:

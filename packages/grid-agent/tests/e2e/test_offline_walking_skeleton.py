@@ -213,7 +213,7 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         f"gridctl={str(gridctl)!r}\n"
         "def call(capability,args):\n r=subprocess.run([gridctl,'request','--workspace',os.environ['GRID_AGENT_WORKSPACE']],input=json.dumps({'protocol':'grid-capability','protocol_version':'1.0','request_id':capability,'capability':capability,'arguments':args})+'\\n',text=True,capture_output=True,check=True); return json.loads(r.stdout)['result']\n"
         "opened=call('context.open',{'model_id':'ieee39'})\nresult=call('topology.branch.endpoints.get',{'context_ref':opened['context_ref'],'kind':'line','namespace':'pandapower_index','identifier':'11'})\n"
-        "draft={'answer_output':result['from_bus']['name']+'-'+result['to_bus']['name']+' '+result['evidence_ref'],'claim_evidence_refs':[result['evidence_ref']]}\n"
+        "draft={'answer_output':result['from_bus']['name']+'-'+result['to_bus']['name']+' '+result['evidence_ref'],'result_refs':[],'claim_evidence_refs':[result['evidence_ref']]}\n"
         "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft))\n"
         "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':'ignored free text'}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
         encoding="utf-8",
@@ -274,7 +274,7 @@ def test_online_path_accepts_submit_answer_without_free_text(tmp_path: Path) -> 
     pi = tmp_path / "scripted-pi-draft-only"
     pi.write_text(
         "#!/usr/bin/env python3\nimport json, os\njson.loads(input())\n"
-        "draft={'answer_output':'执行限制 / execution limitation: scripted draft','claim_evidence_refs':[]}\n"
+        "draft={'answer_output':'执行限制 / execution limitation: scripted draft','result_refs':[],'claim_evidence_refs':[]}\n"
         "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft))\n"
         "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\n"
         "print(json.dumps({'type':'agent_end'}),flush=True)\n",

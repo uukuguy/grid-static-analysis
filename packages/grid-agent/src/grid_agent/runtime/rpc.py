@@ -63,7 +63,11 @@ class PiRpcClient:
                 event = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise PiProtocolError("Pi RPC returned invalid JSONL") from exc
-            self.trace.append("pi_event", event)
+            canonical_tool_result = _canonical_tool_result_event(event)
+            if canonical_tool_result is not None:
+                self.trace.append("pi_event", canonical_tool_result)
+            elif not _skip_trace_event(event):
+                self.trace.append("pi_event", event)
             if on_event is not None:
                 on_event(event)
             if event.get("type") == "prompt_ack" and event.get("ok") is True:
@@ -123,4 +127,54 @@ def _provider_error(event: dict[str, Any]) -> str | None:
             error = message.get("errorMessage")
             if isinstance(error, str) and error:
                 return error
+    return None
+
+
+def _skip_trace_event(event: dict[str, Any]) -> bool:
+    return event.get("type") == "tool_execution_start"
+
+
+def _canonical_tool_result_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    if event.get("type") != "tool_execution_end":
+        return None
+    details = _tool_result_details(event)
+    if not isinstance(details, dict):
+        return None
+    capability = details.get("capability")
+    if not isinstance(capability, str):
+        return None
+    ok = details.get("ok")
+    if ok is not True and ok is not False:
+        ok = event.get("isError") is not True
+    result = details.get("result", {})
+    error = details.get("error")
+    evidence_refs = details.get("evidence_refs", [])
+    if not isinstance(result, dict):
+        result = {}
+    if error is not None and not isinstance(error, dict):
+        error = {"message": str(error)}
+    if not isinstance(evidence_refs, list):
+        evidence_refs = []
+    canonical: dict[str, Any] = {
+        "event": "tool_result",
+        "capability": capability,
+        "ok": ok,
+        "result": result,
+        "evidence_refs": [reference for reference in evidence_refs if isinstance(reference, str)],
+    }
+    if error is not None:
+        canonical["error"] = error
+    return canonical
+
+
+def _tool_result_details(event: dict[str, Any]) -> object:
+    result = event.get("result")
+    if isinstance(result, dict):
+        details = result.get("details")
+        if isinstance(details, dict):
+            return details
+        return result
+    details = event.get("details")
+    if isinstance(details, dict):
+        return details
     return None

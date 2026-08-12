@@ -51,16 +51,20 @@ export function createGridTool(contract, runner = runGridctl) {
           phase: "parse",
           message: "gridctl response did not match the request id",
           details: { expected_request_id: payload.request_id, response },
-        });
+        }, contract.capability);
       }
       if (response.ok !== true) {
+        const details = canonicalToolResult(contract.capability, response);
         return {
           content: [{ type: "text", text: JSON.stringify(response) }],
-          details: response,
+          details,
           isError: true,
         };
       }
-      return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
+      return {
+        content: [{ type: "text", text: JSON.stringify(response) }],
+        details: canonicalToolResult(contract.capability, response),
+      };
     },
   });
 }
@@ -120,7 +124,7 @@ function createGuideTool(guideIndexPath) {
           code: "guide_not_found",
           phase: "resolve",
           message: "guide resource is not published",
-        });
+        }, "grid_guide_open");
       }
       const guideIndex = await readJson(guideIndexPath);
       const root = await realpath(String(guideIndex.root));
@@ -130,7 +134,7 @@ function createGuideTool(guideIndexPath) {
           code: "guide_not_found",
           phase: "resolve",
           message: "guide resource is not published",
-        });
+        }, "grid_guide_open");
       }
       let resolvedPath;
       try {
@@ -140,18 +144,27 @@ function createGuideTool(guideIndexPath) {
           code: "guide_path_rejected",
           phase: "resolve",
           message: "guide resource path is unavailable",
-        });
+        }, "grid_guide_open");
       }
       if (!isInside(resolvedPath, root)) {
         return toolError({
           code: "guide_path_rejected",
           phase: "resolve",
           message: "guide resource path is outside the published guide root",
-        });
+        }, "grid_guide_open");
       }
       const text = await readFile(resolvedPath, "utf8");
       const result = { resource_id: params.resource_id, text };
-      return { content: [{ type: "text", text }], details: result };
+      return {
+        content: [{ type: "text", text }],
+        details: {
+          event: "tool_result",
+          capability: "grid_guide_open",
+          ok: true,
+          result,
+          evidence_refs: [],
+        },
+      };
     },
   });
 }
@@ -163,17 +176,25 @@ function createSubmitAnswerTool(answerDraftPath) {
     description: "Submit the final answer draft and claimed evidence references.",
     parameters: Type.Object({
       answer_output: Type.String(),
+      result_refs: Type.Array(Type.String()),
       claim_evidence_refs: Type.Array(Type.String()),
     }),
     async execute(_id, params) {
       const payload = {
         answer_output: params.answer_output,
+        result_refs: params.result_refs,
         claim_evidence_refs: params.claim_evidence_refs,
       };
       await writeJsonAtomic(answerDraftPath, payload);
       return {
         content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
-        details: { ok: true, path: answerDraftPath },
+        details: {
+          event: "tool_result",
+          capability: "grid_submit_answer",
+          ok: true,
+          result: payload,
+          evidence_refs: params.claim_evidence_refs,
+        },
       };
     },
   });
@@ -269,12 +290,47 @@ function gridctlTransportError(requestId, message) {
   };
 }
 
-function toolError(error) {
-  const details = {
-    protocol: "grid-capability",
-    protocol_version: "1.0",
+function canonicalToolResult(capability, response) {
+  if (response.ok === true) {
+    const result = response.result ?? {};
+    return {
+      event: "tool_result",
+      capability,
+      ok: true,
+      result,
+      evidence_refs: evidenceRefs(result),
+    };
+  }
+  const error = response.error ?? {};
+  return {
+    event: "tool_result",
+    capability,
     ok: false,
+    result: {},
     error,
+    evidence_refs: evidenceRefs(error),
+  };
+}
+
+function evidenceRefs(value) {
+  const refs = [];
+  if (typeof value?.evidence_ref === "string") {
+    refs.push(value.evidence_ref);
+  }
+  if (Array.isArray(value?.evidence_refs)) {
+    refs.push(...value.evidence_refs.filter((reference) => typeof reference === "string"));
+  }
+  return [...new Set(refs)];
+}
+
+function toolError(error, capability) {
+  const details = {
+    event: "tool_result",
+    capability,
+    ok: false,
+    result: {},
+    error,
+    evidence_refs: [],
   };
   return {
     content: [{ type: "text", text: JSON.stringify(details) }],

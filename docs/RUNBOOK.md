@@ -79,6 +79,8 @@ WP-A 可执行能力包括：运行时/模型发现、打开 IEEE-39 上下文�
 - `runs/<question_id>/evidence/`：当前运行的 context、model、network-fact、analysis 和 result 证据。
 - `runs/<question_id>/answer.json` 或 `answer-draft.json`：最终或提交草稿。
 
+在线答案草稿必须通过 `grid_submit_answer` 写入 `answer_output`、`result_refs` 和 `claim_evidence_refs`。验证器只检查这些结构化声明，不从 `answer_output` 文本中解析引用；拓扑事实可使用空 `result_refs`，AC、排序和 N-1 等结果型结论必须声明当前运行中存在且与证据相连的 `result:sha256:*`。
+
 最终答案只能引用当前运行中实际存在的 `evidence:sha256:*` 或 `result:sha256:*`。迁移和清理不会删除用户主工作树中的既有 `var/` 数据；本分支只使用新的 ignored `runs/` 和 `.grid-agent/` 布局。
 
 ## 验证

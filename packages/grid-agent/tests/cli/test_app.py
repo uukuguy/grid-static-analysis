@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from grid_agent.application.workspace import RunWorkspace
-from grid_agent.cli.app import _verify_evidence_refs
+from grid_agent.cli.app import _load_verified_answer_draft, _verify_evidence_refs
 from grid_agent.simulator.client import GridctlClient
 from grid_agent.simulator.locator import GridctlLocator
 
@@ -25,6 +25,39 @@ def _write_document(path: Path, document: object) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
     return f"evidence:sha256:{digest}"
+
+
+def _write_evidence_document(path: Path, document: object) -> str:
+    evidence_ref = _write_document(path, document)
+    digest = evidence_ref.removeprefix("evidence:sha256:")
+    path.rename(path.with_name(path.name.replace("placeholder", digest)))
+    return evidence_ref
+
+
+def _write_result_document(workspace: RunWorkspace, prefix: str, document: dict[str, object]) -> str:
+    payload = _canonical_json(document)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    result_ref = f"result:sha256:{digest}"
+    path = workspace.evidence_path / "results" / f"{prefix}-{digest}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_canonical_json({"result_ref": result_ref, **document}), encoding="utf-8")
+    return result_ref
+
+
+def _write_answer_draft(
+    workspace: RunWorkspace,
+    *,
+    answer_output: str = "answer",
+    claim_evidence_refs: list[str],
+    result_refs: list[str] | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "answer_output": answer_output,
+        "claim_evidence_refs": claim_evidence_refs,
+    }
+    if result_refs is not None:
+        payload["result_refs"] = result_refs
+    (workspace.root_path / "answer-draft.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_verify_evidence_refs_accepts_network_fact_and_analysis_documents(tmp_path: Path) -> None:
@@ -121,3 +154,125 @@ def test_verify_evidence_refs_rejects_tampered_allowed_document(tmp_path: Path) 
 
     with pytest.raises(RuntimeError, match="content does not match"):
         _verify_evidence_refs(workspace, (evidence_ref,))
+
+
+def test_answer_draft_accepts_topology_evidence_without_result_refs(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    network_fact = {
+        "evidence_type": "network_fact",
+        "capability_id": "topology.branch.endpoints.get",
+        "facts": {"from_bus_ref": "asset:bus:sha256:" + "1" * 64},
+    }
+    evidence_ref = _write_evidence_document(
+        workspace.evidence_path / "network-facts" / "network-fact-placeholder.json",
+        network_fact,
+    )
+    _write_answer_draft(workspace, claim_evidence_refs=[evidence_ref], result_refs=[])
+
+    assert _load_verified_answer_draft(workspace) == "answer"
+
+
+def test_answer_draft_requires_declared_result_refs_field(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    _write_answer_draft(workspace, claim_evidence_refs=[])
+
+    with pytest.raises(RuntimeError, match="must include result_refs"):
+        _load_verified_answer_draft(workspace)
+
+
+def test_answer_draft_requires_result_ref_for_analysis_evidence(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    result_ref = _write_result_document(
+        workspace,
+        "powerflow",
+        {
+            "result_type": "analysis.powerflow.ac",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "branch_results": [],
+        },
+    )
+    evidence_ref = _write_evidence_document(
+        workspace.evidence_path / "analysis" / "analysis-evidence-placeholder.json",
+        {
+            "evidence_type": "analysis_result",
+            "capability_id": "analysis.powerflow.ac.run",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "result_ref": result_ref,
+            "facts": {"converged": True},
+        },
+    )
+    _write_answer_draft(workspace, claim_evidence_refs=[evidence_ref], result_refs=[])
+
+    with pytest.raises(RuntimeError, match="analysis evidence requires a declared result_ref"):
+        _load_verified_answer_draft(workspace)
+
+
+def test_answer_draft_accepts_result_ref_linked_to_current_run_analysis_evidence(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    result_ref = _write_result_document(
+        workspace,
+        "powerflow",
+        {
+            "result_type": "analysis.powerflow.ac",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "branch_results": [],
+        },
+    )
+    evidence_ref = _write_evidence_document(
+        workspace.evidence_path / "analysis" / "analysis-evidence-placeholder.json",
+        {
+            "evidence_type": "analysis_result",
+            "capability_id": "analysis.powerflow.ac.run",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "result_ref": result_ref,
+            "facts": {"converged": True},
+        },
+    )
+    _write_answer_draft(workspace, claim_evidence_refs=[evidence_ref], result_refs=[result_ref])
+
+    assert _load_verified_answer_draft(workspace) == "answer"
+
+
+def test_answer_draft_rejects_tampered_result_document(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    result_ref = _write_result_document(
+        workspace,
+        "powerflow",
+        {
+            "result_type": "analysis.powerflow.ac",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "branch_results": [],
+        },
+    )
+    digest = result_ref.removeprefix("result:sha256:")
+    (workspace.evidence_path / "results" / f"powerflow-{digest}.json").write_text(
+        '{"result_ref":"' + result_ref + '","tampered":true}',
+        encoding="utf-8",
+    )
+    _write_answer_draft(workspace, claim_evidence_refs=[], result_refs=[result_ref])
+
+    with pytest.raises(RuntimeError, match="content does not match"):
+        _load_verified_answer_draft(workspace)
+
+
+def test_answer_draft_rejects_result_ref_not_linked_to_claimed_evidence(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    result_ref = _write_result_document(
+        workspace,
+        "powerflow",
+        {
+            "result_type": "analysis.powerflow.ac",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "branch_results": [],
+        },
+    )
+    _write_answer_draft(workspace, claim_evidence_refs=[], result_refs=[result_ref])
+
+    with pytest.raises(RuntimeError, match="declared result_ref is not linked to claimed evidence"):
+        _load_verified_answer_draft(workspace)

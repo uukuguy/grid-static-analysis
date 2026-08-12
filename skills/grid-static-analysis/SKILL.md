@@ -15,7 +15,7 @@ Separate answer types:
 
 - Knowledge answers explain policy or concepts without simulator evidence when no network-specific fact or numerical result is claimed.
 - Network facts come from registered model capabilities and require a current context. Topology facts that return `evidence_ref` must cite that evidence.
-- Calculation results come only from simulator analysis capabilities and must cite current-run `result_ref` or `evidence_refs`.
+- Calculation results come only from simulator analysis capabilities and must cite current-run `result_ref` and `evidence_refs`.
 
 `evidence.get` is topology/network-fact-only in WP-A. It retrieves `network_fact` documents produced by `topology.branch.endpoints.get`; AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs` rather than asking `evidence.get` for analysis result documents.
 
@@ -35,7 +35,7 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 
 Open a context with `context.open` before model-specific operations. Use the returned `context_ref` for every later call. Treat `revision_ref`, `asset_ref`, `dataset_ref`, `result_ref`, `artifact_ref`, and `evidence_ref` as opaque stable references. Source aliases such as `pandapower:line:11` help resolve user language, but stable refs are used for composition.
 
-Only cite evidence that exists in the current run. If a capability says `evidence_required: true`, final network-specific claims must include the returned evidence or result reference. Offline informational answers may not create run workspaces or imply simulator evidence.
+Only cite evidence that exists in the current run. If a capability says `evidence_required: true`, final network-specific claims must include the returned evidence or result reference. Submit final answers with `grid_submit_answer` using separate `result_refs` and `claim_evidence_refs` arrays; use `result_refs: []` only for topology-only or limitation answers with no persisted result. Offline informational answers may not create run workspaces or imply simulator evidence.
 
 ## Simple Questions
 
@@ -55,7 +55,7 @@ Plan from stable references:
 4. Run `analysis.powerflow.ac.run` for numerical AC steady-state values.
 5. Rank existing branch results with `result.branches.rank`; do not rerun power flow for ranking.
 6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context and policy.
-7. For topology endpoint facts only, call `evidence.get` when the final answer needs the `network_fact` document. For AC, ranking, and N-1, cite the returned `result_ref` and `evidence_refs`.
+7. For topology endpoint facts only, call `evidence.get` when the final answer needs the `network_fact` document. For AC, ranking, and N-1, cite the returned `result_ref` and `evidence_refs`, and declare those result refs in `grid_submit_answer.result_refs`.
 
 ## Failure Recovery
 

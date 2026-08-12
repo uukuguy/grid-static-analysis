@@ -97,6 +97,42 @@ test("maps typed gridctl errors to tool errors", async () => {
   });
 });
 
+test("returns canonical typed tool-result details for successful gridctl calls", async () => {
+  const evidenceRef = "evidence:sha256:" + "a".repeat(64);
+  const tool = createGridTool(
+    {
+      name: "grid_topology_branch_endpoints",
+      capability: "topology.branch.endpoints.get",
+      description: "Endpoints",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+    },
+    async (payload) => ({
+      protocol: "grid-capability",
+      protocol_version: "1.0",
+      request_id: payload.request_id,
+      ok: true,
+      result: {
+        branch: { identifier: "11" },
+        evidence_ref: evidenceRef,
+      },
+    }),
+  );
+
+  const result = await tool.execute("call-1", {});
+
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(result.details, {
+    event: "tool_result",
+    capability: "topology.branch.endpoints.get",
+    ok: true,
+    result: {
+      branch: { identifier: "11" },
+      evidence_ref: evidenceRef,
+    },
+    evidence_refs: [evidenceRef],
+  });
+});
+
 test("rejects mismatched gridctl response correlation", async () => {
   const tool = createGridTool(
     {
@@ -143,7 +179,7 @@ test("guide tool rejects traversal and opens published guides", async () => {
   const escaped = await guide.execute("guide-3", { resource_id: "escape" });
 
   assert.equal(opened.isError, undefined);
-  assert.match(opened.details.text, /endpoint capability/);
+  assert.match(opened.details.result.text, /endpoint capability/);
   assert.equal(rejected.isError, true);
   assert.equal(escaped.isError, true);
 });
@@ -236,12 +272,42 @@ test("answer submission atomically writes the configured draft path", async () =
   const submit = registered.find((tool) => tool.name === "grid_submit_answer");
   const result = await submit.execute("submit-1", {
     answer_output: "线路11连接母线6与母线11。",
+    result_refs: [],
     claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
   });
 
   assert.equal(result.isError, undefined);
   assert.deepEqual(JSON.parse(await readFile(draftPath, "utf8")), {
     answer_output: "线路11连接母线6与母线11。",
+    result_refs: [],
+    claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
+  });
+});
+
+test("answer submission atomically writes declared result refs", async () => {
+  const root = await makeFixtureRoot();
+  const draftPath = join(root, "run/answer-draft.json");
+  const registered = [];
+  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
+  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
+  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
+  process.env.GRID_AGENT_ANSWER_DRAFT = draftPath;
+  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
+  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
+
+  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
+  const submit = registered.find((tool) => tool.name === "grid_submit_answer");
+  const resultRef = "result:sha256:" + "b".repeat(64);
+  const result = await submit.execute("submit-result-refs", {
+    answer_output: "交流潮流已收敛。",
+    result_refs: [resultRef],
+    claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
+  });
+
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(JSON.parse(await readFile(draftPath, "utf8")), {
+    answer_output: "交流潮流已收敛。",
+    result_refs: [resultRef],
     claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
   });
 });

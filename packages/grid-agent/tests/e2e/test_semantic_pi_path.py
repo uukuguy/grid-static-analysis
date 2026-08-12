@@ -47,7 +47,7 @@ def test_scripted_pi_uses_catalog_guides_topology_result_and_current_run_evidenc
         "result=grid('topology.branch.endpoints.get',{'context_ref':opened['context_ref'],'kind':'line','namespace':'pandapower_index','identifier':'11'})\n"
         "ref=result['evidence_ref']\n"
         "answer=f\"线路11连接母线{result['from_bus']['name']}与{result['to_bus']['name']}；证据 {ref}。\"\n"
-        "draft={'answer_output':answer,'claim_evidence_refs':[ref]}\n"
+        "draft={'answer_output':answer,'result_refs':[],'claim_evidence_refs':[ref]}\n"
         "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft,ensure_ascii=False))\n"
         "emit({'type':'tool_result','capability':'grid_submit_answer','ok':True,'result':draft,'evidence_refs':[ref]})\n"
         "emit({'type':'agent_end'})\n",
