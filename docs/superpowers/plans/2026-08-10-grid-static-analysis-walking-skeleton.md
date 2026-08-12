@@ -1,3 +1,10 @@
+> **SUPERSEDED: Historical archive only; non-operative path details.**
+>
+> This plan is preserved as an archival implementation record. The current approved sources are
+> `docs/superpowers/specs/2026-08-12-pandapower-semantic-capability-redesign.md`
+> and its WP-A plan in Section 17.2. Any path layout, runtime-state, evidence-directory,
+> or command details below are historical and must not be used as operative project guidance.
+
 # Grid Static Analysis Walking Skeleton Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

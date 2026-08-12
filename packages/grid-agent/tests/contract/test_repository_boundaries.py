@@ -65,18 +65,30 @@ def test_operator_docs_use_current_state_paths() -> None:
 
 
 def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() -> None:
-    source_roots = (
+    historical_plan = Path(
+        "docs/superpowers/plans/2026-08-10-grid-static-analysis-walking-skeleton.md"
+    )
+    approved_redesign = Path(
+        "docs/superpowers/specs/2026-08-12-pandapower-semantic-capability-redesign.md"
+    )
+    superseded_marker = (
+        "SUPERSEDED: Historical archive only; non-operative path details."
+    )
+    excluded_historical_plans = {historical_plan}
+    checked_paths = (
         "packages/",
         "configs/",
         "knowledge/",
         "README.md",
         "docs/RUNBOOK.md",
         "docs/TASK.md",
+        str(approved_redesign),
+        "docs/superpowers/plans/",
         "Makefile",
         ".env.example",
     )
     completed = subprocess.run(
-        ["git", "ls-files", *source_roots],
+        ["git", "ls-files", *checked_paths],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -91,17 +103,27 @@ def test_tracked_operational_files_do_not_construct_legacy_active_state_paths() 
     ]
     legacy_var = "v" + "ar"
     forbidden_patterns = (
-        re.compile(rf"['\"]{legacy_var}/(?:pi|runs)(?:/|['\"])"),
+        re.compile(rf"\b{legacy_var}/(?:pi|runs|runtime)(?:/|\b)"),
         re.compile(rf"['\"]{legacy_var}['\"]\s*/\s*['\"](?:pi|runs|runtime)['\"]"),
     )
 
     offenders: list[str] = []
     for path in tracked_files:
+        relative_path = path.relative_to(ROOT)
         text = path.read_text(encoding="utf-8")
+        if relative_path in excluded_historical_plans:
+            assert superseded_marker in text, relative_path
+            continue
         for pattern in forbidden_patterns:
             if pattern.search(text):
-                offenders.append(str(path.relative_to(ROOT)))
+                offenders.append(str(relative_path))
                 break
 
     assert offenders == []
+    checked_relative_paths = {path.relative_to(ROOT) for path in tracked_files}
+    assert approved_redesign in checked_relative_paths
+    assert historical_plan in checked_relative_paths
+    assert "### 17.2 WP-A: semantic foundation and validation baseline" in (
+        ROOT / approved_redesign
+    ).read_text(encoding="utf-8")
     assert tracked_files
