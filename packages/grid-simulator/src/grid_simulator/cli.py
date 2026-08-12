@@ -32,6 +32,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 code="invalid_request",
                 phase="parse",
                 message="Request must be a valid grid-capability 1.0 JSON object",
+                retryable=False,
+                allowed_recovery_actions=("correct_request",),
             ),
         )
         _write_response(response)

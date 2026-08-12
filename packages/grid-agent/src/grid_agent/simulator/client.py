@@ -14,6 +14,12 @@ class SimulatorOperationError(GridctlClientError):
     pass
 
 
+class SimulatorCapabilityError(GridctlClientError):
+    def __init__(self, error: dict[str, object]) -> None:
+        super().__init__(str(error.get("message", "Grid capability failed")))
+        self.error = error
+
+
 class GridctlClient:
     def __init__(self, *, executable: Path, workspace: Path, timeout_seconds: float = 60) -> None:
         self.executable = Path(executable)
@@ -21,9 +27,15 @@ class GridctlClient:
         self.timeout_seconds = timeout_seconds
         self.last_diagnostics = ""
 
-    def call(self, capability: str, arguments: dict[str, object]) -> dict[str, object]:
+    def invoke(self, capability: str, arguments: dict[str, object]) -> dict[str, object]:
         request_id = f"sim-{uuid4().hex}"
-        request = {"protocol_version": "1.0", "request_id": request_id, "capability": capability, "arguments": arguments}
+        request = {
+            "protocol": "grid-capability",
+            "protocol_version": "1.0",
+            "request_id": request_id,
+            "capability": capability,
+            "arguments": arguments,
+        }
         try:
             completed = subprocess.run(
                 [str(self.executable), "request", "--workspace", str(self.workspace)],
@@ -44,12 +56,21 @@ class GridctlClient:
             response = json.loads(lines[0])
         except json.JSONDecodeError as exc:
             raise GridctlClientError("Grid simulator returned non-JSON stdout") from exc
-        if response.get("protocol_version") != "1.0" or response.get("request_id") != request_id:
+        if (
+            response.get("protocol") != "grid-capability"
+            or response.get("protocol_version") != "1.0"
+            or response.get("request_id") != request_id
+        ):
             raise GridctlClientError("Grid simulator response does not match its request")
         if response.get("ok") is not True:
             error = response.get("error") or {}
-            raise SimulatorOperationError(str(error.get("message", "Grid simulator operation failed")))
+            if isinstance(error, dict):
+                raise SimulatorCapabilityError(error)
+            raise SimulatorOperationError("Grid simulator operation failed")
         result = response.get("result")
         if not isinstance(result, dict):
             raise GridctlClientError("Grid simulator response has no result object")
         return result
+
+    def call(self, capability: str, arguments: dict[str, object]) -> dict[str, object]:
+        return self.invoke(capability, arguments)

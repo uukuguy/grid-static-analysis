@@ -12,6 +12,7 @@ import typer
 from dotenv import dotenv_values
 
 from grid_agent.contracts import AnswerEnvelope, RunRequest
+from grid_agent.knowledge.offline import answer_diagnostic, answer_information
 from grid_agent.simulator.client import GridctlClient
 from grid_agent.simulator.locator import GridctlLocator
 from grid_agent.application.paths import ProjectPaths
@@ -37,55 +38,6 @@ app = typer.Typer(add_completion=False)
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[5]
-
-
-def _answer(question: str, client: GridctlClient) -> str:
-    normalized = question.lower()
-    if "电压" in question and ("范围" in question or "正常" in question):
-        return "静态分析策略的母线电压正常范围为 0.95–1.05 pu。"
-    if "n-1" in normalized and ("哪些" in question or "什么" in question):
-        return "N-1 校核逐一退出一个元件，检查潮流是否收敛、母线低/高电压，以及线路和变压器过载。"
-    if "输入" in question and "潮流" in question:
-        return "交流潮流需要网络模型、运行方式以及明确的求解器/策略参数；本工具使用固定的 pandapower 3.4.0 AC 选项。"
-    task7_limitation = _task7_limitation(question)
-    if task7_limitation is not None:
-        return task7_limitation
-    context = client.call("context.open", {"model_id": "ieee39"})
-    context_ref = str(context["context_ref"])
-    if "线路11" in question and ("连接" in question or "哪两个" in question):
-        line = client.call(
-            "topology.branch.endpoints.get",
-            {"context_ref": context_ref, "kind": "line", "namespace": "pandapower_index", "identifier": "11"},
-        )
-        return (
-            f"线路 {line['branch']['alias']} 连接母线 {line['from_bus']['name']} 与 {line['to_bus']['name']}；"
-            f"证据 {line['evidence_ref']}。"
-        )
-    powerflow = client.call("analysis.powerflow.ac.run", {"context_ref": context_ref, "solver": "pandapower.runpp"})
-    return f"IEEE-39 交流潮流已收敛；总有功网损为 {powerflow['total_active_loss_mw']:.14f} MW，结果证据 {powerflow['result_ref']}。"
-
-
-def _task7_limitation(question: str) -> str | None:
-    normalized = question.lower()
-    if "负载率最高" in question:
-        return (
-            "执行限制 / execution limitation: Task7 result.branches.rank 负载率排序能力尚不可用；"
-            "当前离线路径不会运行交流潮流、排序或生成仿真证据。"
-        )
-    if "n-1" in normalized or "故障" in question:
-        capabilities = "analysis.contingency.n_minus_one.run"
-        if "排序" in question:
-            capabilities = f"{capabilities} 与 result.branches.rank"
-        return (
-            f"执行限制 / execution limitation: Task7 {capabilities} 故障分析/N-1 静态安全校核能力尚不可用；"
-            "当前离线路径不会执行故障校核、风险排序或生成仿真证据。"
-        )
-    if "潮流" in question and any(term in question for term in ("运行", "输出", "网损", "有功")):
-        return (
-            "执行限制 / execution limitation: Task7 analysis.powerflow.ac.run 交流潮流分析能力尚不可用；"
-            "当前离线路径不会运行潮流计算或生成仿真证据。"
-        )
-    return None
 
 
 def _install_gridctl(workspace: RunWorkspace) -> None:
@@ -197,6 +149,37 @@ def _message_text(message: Mapping[str, Any]) -> str:
     )
 
 
+def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
+    draft_path = workspace.root_path / "answer-draft.json"
+    if not draft_path.is_file():
+        raise RuntimeError("grid_submit_answer did not create an answer draft")
+    try:
+        draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("grid_submit_answer draft is not valid JSON") from exc
+    if not isinstance(draft, dict):
+        raise RuntimeError("grid_submit_answer draft must be a JSON object")
+    answer = draft.get("answer_output")
+    claimed = draft.get("claim_evidence_refs")
+    if not isinstance(answer, str) or not answer.strip():
+        raise RuntimeError("grid_submit_answer draft must include answer_output")
+    if not isinstance(claimed, list) or not all(isinstance(item, str) for item in claimed):
+        raise RuntimeError("grid_submit_answer draft must include claim_evidence_refs")
+    _verify_evidence_refs(workspace, tuple(claimed))
+    return answer
+
+
+def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...]) -> None:
+    for evidence_ref in evidence_refs:
+        if not evidence_ref.startswith("evidence:sha256:"):
+            raise RuntimeError(f"claimed evidence ref is invalid: {evidence_ref}")
+        digest = evidence_ref.removeprefix("evidence:sha256:")
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise RuntimeError(f"claimed evidence ref is invalid: {evidence_ref}")
+        if not any(path.is_file() for path in workspace.evidence_path.rglob(f"*{digest}.json")):
+            raise RuntimeError(f"claimed evidence ref is not in the current run: {evidence_ref}")
+
+
 @app.command()
 def run(
     question: str,
@@ -243,7 +226,7 @@ def run(
                 workspace=workspace.root_path,
                 timeout_seconds=60,
             )
-            environment_description = gridctl.call("environment.describe", {})
+            environment_description = gridctl.invoke("environment.describe", {})
             tool_catalog_path = ToolCatalog.from_environment(
                 load_packaged_capability_documents(_repo_root()),
                 environment_description,
@@ -264,27 +247,32 @@ def run(
                     tool_catalog_path=tool_catalog_path,
                     guide_index_path=guide_index_path,
                     answer_draft_path=workspace.root_path / "answer-draft.json",
-                    system_policy_path=_repo_root() / "configs/runtime/grid-agent-system-policy.md",
+                    system_policy_path=_repo_root() / "configs/agent/system-policy.md",
                 ),
                 base_environment=runtime_environment,
             )
             rpc = PiRpcClient(launch, workspace, trace)
             rpc.start()
             try:
-                answer = rpc.prompt_and_wait(
+                rpc.prompt_and_wait(
                     request.question,
                     on_event=progress.on_event,
                     on_heartbeat=progress.heartbeat,
+                    require_answer_text=False,
                 )
+                answer = _load_verified_answer_draft(workspace)
             finally:
                 rpc.stop()
             progress.completed(answer)
             envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
             typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
             return
-        executable = GridctlLocator(_repo_root()).resolve()
-        client = GridctlClient(executable=executable, workspace=project_paths.runs_dir / request.question_id, timeout_seconds=60)
-        answer = _answer(request.question, client)
+        answer = answer_information(request.question)
+        if answer is None:
+            executable = GridctlLocator(_repo_root()).resolve()
+            workspace = RunWorkspace.create(project_paths.runs_dir, run_id=request.question_id)
+            client = GridctlClient(executable=executable, workspace=workspace.root_path, timeout_seconds=60)
+            answer = answer_diagnostic(request.question, client)
         envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
         typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
     except Exception as exc:

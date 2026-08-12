@@ -34,32 +34,57 @@ def test_offline_examples_return_strict_envelopes(question: str, expected: tuple
     assert all(value in envelope["answer_output"] for value in expected)
 
 
+def test_information_answer_creates_no_run_directory() -> None:
+    question_id = "offline-info-no-run-e2e"
+    runs_path = ROOT / "runs" / question_id
+    shutil.rmtree(runs_path, ignore_errors=True)
+
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            "packages/grid-agent",
+            "grid-agent",
+            "run",
+            "--offline",
+            "--question-id",
+            question_id,
+            "母线电压正常运行范围是多少?",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert "0.95" in envelope["answer_output"] and "1.05" in envelope["answer_output"]
+    assert not runs_path.exists()
+
+
 @pytest.mark.parametrize(
     "question_id,question,expected",
     [
         (
-            "task7-powerflow-limitation-e2e",
+            "semantic-powerflow-e2e",
             "对IEEE-39节点系统运行交流潮流，并输出有功网损;",
-            ("Task7", "analysis.powerflow.ac.run", "交流潮流"),
+            ("交流潮流已收敛", "有功网损", "MW", "evidence:"),
         ),
         (
-            "task7-ranking-limitation-e2e",
+            "semantic-ranking-e2e",
             "筛选负载率最高的5条线路;",
-            ("Task7", "result.branches.rank", "负载率排序"),
+            ("负载率最高", "5", "线路", "%", "evidence:"),
         ),
         (
-            "task7-n1-limitation-e2e",
-            "对线路171开展N-1校核;",
-            ("Task7", "analysis.contingency.n_minus_one.run", "N-1"),
-        ),
-        (
-            "task7-fault-ranking-limitation-e2e",
-            "对关键线路逐一进行故障分析并排序;",
-            ("Task7", "analysis.contingency.n_minus_one.run", "result.branches.rank", "故障分析"),
+            "semantic-n1-e2e",
+            "对线路11开展N-1校核;",
+            ("N-1", "线路 11", "evidence:"),
         ),
     ],
 )
-def test_offline_task7_analysis_forms_return_limitation_without_run_artifacts(
+def test_offline_analysis_forms_use_semantic_capabilities_with_evidence(
     question_id: str, question: str, expected: tuple[str, ...]
 ) -> None:
     runs_path = ROOT / "runs" / question_id
@@ -90,8 +115,7 @@ def test_offline_task7_analysis_forms_return_limitation_without_run_artifacts(
         assert set(envelope) == {"question_id", "answer_output"}
         assert envelope["question_id"] == question_id
         assert all(value in envelope["answer_output"] for value in expected)
-        assert "execution limitation" in envelope["answer_output"]
-        assert not runs_path.exists()
+        assert list((runs_path / "evidence").rglob("*.json"))
     finally:
         shutil.rmtree(runs_path, ignore_errors=True)
 
@@ -135,9 +159,11 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         "#!/usr/bin/env python3\nimport json,subprocess,sys,os\n"
         "request=json.loads(sys.stdin.readline())\n"
         f"gridctl={str(gridctl)!r}\n"
-        "def call(capability,args):\n r=subprocess.run([gridctl,'request','--workspace',os.environ['GRID_AGENT_WORKSPACE']],input=json.dumps({'protocol_version':'1.0','request_id':capability,'capability':capability,'arguments':args})+'\\n',text=True,capture_output=True,check=True); return json.loads(r.stdout)['result']\n"
+        "def call(capability,args):\n r=subprocess.run([gridctl,'request','--workspace',os.environ['GRID_AGENT_WORKSPACE']],input=json.dumps({'protocol':'grid-capability','protocol_version':'1.0','request_id':capability,'capability':capability,'arguments':args})+'\\n',text=True,capture_output=True,check=True); return json.loads(r.stdout)['result']\n"
         "opened=call('context.open',{'model_id':'ieee39'})\nresult=call('topology.branch.endpoints.get',{'context_ref':opened['context_ref'],'kind':'line','namespace':'pandapower_index','identifier':'11'})\n"
-        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':result['from_bus']['name']+'-'+result['to_bus']['name']}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
+        "draft={'answer_output':result['from_bus']['name']+'-'+result['to_bus']['name']+' '+result['evidence_ref'],'claim_evidence_refs':[result['evidence_ref']]}\n"
+        "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft))\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':'ignored free text'}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
         encoding="utf-8",
     )
     pi.chmod(0o755)
@@ -158,3 +184,65 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
     assert "6-11" in json.loads(completed.stdout)["answer_output"]
     assert "模型请求已接收" in completed.stderr
     assert "已完成" in completed.stderr
+
+
+def test_online_path_requires_grid_submit_answer_draft(tmp_path: Path) -> None:
+    pi = tmp_path / "scripted-pi-no-draft"
+    pi.write_text(
+        "#!/usr/bin/env python3\nimport json\njson.loads(input())\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\n"
+        "print(json.dumps({'type':'text_delta','text':'free-form answer'}),flush=True)\n"
+        "print(json.dumps({'type':'agent_end'}),flush=True)\n",
+        encoding="utf-8",
+    )
+    pi.chmod(0o755)
+
+    completed = subprocess.run(
+        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "line 11 endpoints"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "GRID_AGENT_PI_COMMAND": str(pi),
+            "GRID_AGENT_LLM_PROVIDER": "openai",
+            "OPENAI_API_KEY": "test-only-secret",
+        },
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert completed.returncode == 1
+    envelope = json.loads(completed.stdout)
+    assert set(envelope) == {"question_id", "answer_output"}
+    assert envelope["answer_output"] == "执行限制 / execution limitation: RuntimeError"
+    assert "grid_submit_answer did not create an answer draft" in completed.stderr
+
+
+def test_online_path_accepts_submit_answer_without_free_text(tmp_path: Path) -> None:
+    pi = tmp_path / "scripted-pi-draft-only"
+    pi.write_text(
+        "#!/usr/bin/env python3\nimport json, os\njson.loads(input())\n"
+        "draft={'answer_output':'执行限制 / execution limitation: scripted draft','claim_evidence_refs':[]}\n"
+        "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft))\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\n"
+        "print(json.dumps({'type':'agent_end'}),flush=True)\n",
+        encoding="utf-8",
+    )
+    pi.chmod(0o755)
+
+    completed = subprocess.run(
+        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "unsupported scripted request"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "GRID_AGENT_PI_COMMAND": str(pi),
+            "GRID_AGENT_LLM_PROVIDER": "openai",
+            "OPENAI_API_KEY": "test-only-secret",
+        },
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["answer_output"] == "执行限制 / execution limitation: scripted draft"

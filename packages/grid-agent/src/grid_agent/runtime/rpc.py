@@ -37,6 +37,7 @@ class PiRpcClient:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         on_heartbeat: Callable[[], None] | None = None,
         heartbeat_seconds: float = 10.0,
+        require_answer_text: bool = True,
     ) -> str:
         if self.process is None or self.process.stdin is None or self.process.stdout is None:
             raise PiProtocolError("Pi RPC process is not started")
@@ -86,6 +87,8 @@ class PiRpcClient:
                     provider_error = _provider_error(event)
                     if provider_error:
                         raise PiProtocolError(f"Pi provider failure: {provider_error}")
+                    if not require_answer_text:
+                        return ""
                     raise PiProtocolError("Pi agent ended without answer text")
                 return answer
         raise PiProtocolError("Pi RPC ended before agent completion")

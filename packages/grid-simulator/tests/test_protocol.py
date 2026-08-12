@@ -209,6 +209,37 @@ def test_cli_writes_exactly_one_json_response(monkeypatch, capsys, tmp_path: Pat
     assert output.count("\n") == 1
 
 
+def test_cli_invalid_request_returns_exact_typed_parse_error(monkeypatch, capsys, tmp_path: Path) -> None:
+    from grid_simulator.cli import main
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        _TextInput('{"protocol_version":"1.0","request_id":"legacy","operation":"network.open","arguments":{}}\n'),
+    )
+
+    assert main(["request", "--workspace", str(tmp_path)]) == 2
+
+    response = json.loads(capsys.readouterr().out)
+    assert response == {
+        "protocol": "grid-capability",
+        "protocol_version": "1.0",
+        "request_id": "invalid-request",
+        "ok": False,
+        "result": None,
+        "error": {
+            "code": "invalid_request",
+            "phase": "parse",
+            "message": "Request must be a valid grid-capability 1.0 JSON object",
+            "retryable": False,
+            "state_effect": "none",
+            "allowed_recovery_actions": ["correct_request"],
+            "evidence_refs": [],
+            "artifact_refs": [],
+            "details": {},
+        },
+    }
+
+
 class _TextInput:
     def __init__(self, text: str) -> None:
         self.text = text
