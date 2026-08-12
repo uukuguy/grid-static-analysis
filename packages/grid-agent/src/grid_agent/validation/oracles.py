@@ -20,11 +20,12 @@ def truthful_limitation(answer: str, arguments: Mapping[str, object]) -> bool:
 
 def branch_endpoints(answer: str, arguments: Mapping[str, object]) -> bool:
     names = arguments.get("bus_names", [])
-    bus_tokens = set(re.findall(r"(?<!\d)\d+(?!\d)", answer))
+    bus_tokens = set(re.findall(r"母线\s*(\d+)|\bbus(?:es)?\b\s*(\d+)", answer, flags=re.IGNORECASE))
+    bus_names = {token for match in bus_tokens for token in match if token}
     return (
         isinstance(names, Sequence)
         and not isinstance(names, (str, bytes, bytearray))
-        and all(str(name) in bus_tokens for name in names)
+        and all(str(name) in bus_names for name in names)
     )
 
 

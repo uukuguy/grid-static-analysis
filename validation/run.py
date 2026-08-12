@@ -87,12 +87,21 @@ def _run_case(
 ) -> dict[str, object]:
     command = _format_template(command_template, case)
     errors: list[str] = []
-    completed = subprocess.run(command, text=True, capture_output=True, timeout=timeout_seconds)
+    stdout = ""
+    returncode: int | None = None
+    try:
+        completed = subprocess.run(command, text=True, capture_output=True, timeout=timeout_seconds)
+        stdout = completed.stdout
+        returncode = completed.returncode
+    except subprocess.TimeoutExpired:
+        errors.append(f"command_timeout: exceeded {timeout_seconds:g} seconds")
+    except OSError as exc:
+        errors.append(_classify_os_error(exc, command))
 
-    if completed.returncode != 0:
-        errors.append(f"command exited with return code {completed.returncode}")
+    if returncode is not None and returncode != 0:
+        errors.append(f"command exited with return code {returncode}")
 
-    answer = _parse_answer(completed.stdout, errors)
+    answer = _parse_answer(stdout, errors) if returncode is not None else None
     if answer is not None:
         if answer.question_id != case.id:
             errors.append(f"answer question_id mismatch: expected {case.id}, got {answer.question_id}")
@@ -110,10 +119,17 @@ def _run_case(
         "type": "case",
         "case_id": case.id,
         "passed": not errors,
-        "returncode": completed.returncode,
+        "returncode": returncode,
         "oracle": case.oracle.evaluator,
         "errors": errors,
     }
+
+
+def _classify_os_error(exc: OSError, command: Sequence[str]) -> str:
+    executable = command[0] if command else ""
+    if isinstance(exc, FileNotFoundError):
+        return f"command_os_error: executable not found: {executable}"
+    return f"command_os_error: {exc.__class__.__name__}: {exc.strerror or str(exc)}"
 
 
 def _parse_answer(stdout: str, errors: list[str]) -> AnswerEnvelope | None:

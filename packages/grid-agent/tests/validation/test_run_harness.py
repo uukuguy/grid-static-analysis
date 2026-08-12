@@ -139,3 +139,63 @@ def test_run_harness_reports_forbidden_capabilities_from_trace(tmp_path: Path) -
     records = [json.loads(line) for line in completed.stdout.splitlines()]
     assert records[0]["passed"] is False
     assert records[0]["errors"] == ["forbidden capabilities observed: analysis.powerflow.ac.run"]
+
+
+def test_run_harness_reports_timeout_and_summary_without_crashing() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(RUNNER),
+            "--cases-root",
+            str(ROOT / "validation"),
+            "--case-id",
+            "knowledge-voltage-range-001",
+            "--timeout-seconds",
+            "0.01",
+            "--",
+            sys.executable,
+            "-c",
+            "import time; time.sleep(1)",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 1
+    records = [json.loads(line) for line in completed.stdout.splitlines()]
+    assert records[0]["type"] == "case"
+    assert records[0]["passed"] is False
+    assert records[0]["returncode"] is None
+    assert records[0]["errors"] == ["command_timeout: exceeded 0.01 seconds"]
+    assert records[1] == {"type": "summary", "total": 1, "passed": 0, "failed": 1}
+
+
+def test_run_harness_reports_missing_executable_and_summary_without_crashing() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(RUNNER),
+            "--cases-root",
+            str(ROOT / "validation"),
+            "--case-id",
+            "knowledge-voltage-range-001",
+            "--",
+            "missing-grid-agent-executable-for-validation-test",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 1
+    records = [json.loads(line) for line in completed.stdout.splitlines()]
+    assert records[0]["type"] == "case"
+    assert records[0]["passed"] is False
+    assert records[0]["returncode"] is None
+    assert records[0]["errors"] == [
+        "command_os_error: executable not found: missing-grid-agent-executable-for-validation-test"
+    ]
+    assert records[1] == {"type": "summary", "total": 1, "passed": 0, "failed": 1}
