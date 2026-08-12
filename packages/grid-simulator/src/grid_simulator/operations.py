@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError as JsonSchemaSchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
 from grid_simulator.capabilities import CapabilityRegistry
@@ -20,8 +21,12 @@ EXECUTABLE_CAPABILITIES = frozenset({"environment.describe", "model.list", "cont
 def dispatch(request: GridCapabilityRequest, workspace_path: Path) -> GridCapabilityResponse:
     registry = CapabilityRegistry.load_packaged()
     try:
+        if request.capability not in EXECUTABLE_CAPABILITIES:
+            raise _unsupported_capability(request.capability)
+        contract = _require_contract(registry, request.capability)
+        _validate_arguments(contract, request.arguments)
         result = _dispatch(request, SimulatorWorkspace(workspace_path), registry)
-        _validate_result(registry.require(request.capability), result)
+        _validate_result(contract, result)
     except _OperationFailure as exc:
         return GridCapabilityResponse(request_id=request.request_id, ok=False, error=exc.error)
     return GridCapabilityResponse(request_id=request.request_id, ok=True, result=result)
@@ -31,7 +36,7 @@ def _dispatch(
     request: GridCapabilityRequest, workspace: SimulatorWorkspace, registry: CapabilityRegistry
 ) -> dict[str, Any]:
     if request.capability not in EXECUTABLE_CAPABILITIES:
-        raise _failure("unsupported_capability", f"Capability {request.capability!r} is not implemented")
+        raise _unsupported_capability(request.capability)
     if request.capability == "environment.describe":
         return {
             "protocol": "grid-capability",
@@ -63,7 +68,37 @@ def _dispatch(
             "semantic_sha256": network_hash,
             "counts": {"buses": int(len(net.bus)), "lines": int(len(net.line)), "transformers": int(len(net.trafo))},
         }
-    raise _failure("unsupported_capability", f"Capability {request.capability!r} is not implemented")
+    raise _unsupported_capability(request.capability)
+
+
+def _require_contract(registry: CapabilityRegistry, capability: str) -> CapabilityContract:
+    try:
+        return registry.require(capability)
+    except KeyError as exc:
+        raise _failure(
+            "capability_contract_unavailable",
+            f"Capability {capability!r} contract is unavailable",
+            phase="resolve",
+        ) from exc
+
+
+def _validate_arguments(contract: CapabilityContract, arguments: dict[str, Any]) -> None:
+    try:
+        Draft202012Validator.check_schema(contract.input_schema)
+        Draft202012Validator(contract.input_schema).validate(arguments)
+    except JsonSchemaSchemaError as exc:
+        raise _failure(
+            "capability_input_schema_invalid",
+            f"Capability {contract.id!r} has an invalid input contract",
+            phase="resolve",
+        ) from exc
+    except JsonSchemaValidationError as exc:
+        raise _failure(
+            "invalid_arguments",
+            "Capability arguments do not match the input contract",
+            phase="validate",
+            allowed_recovery_actions=("correct_arguments",),
+        ) from exc
 
 
 def _validate_result(contract: CapabilityContract, result: dict[str, Any]) -> None:
@@ -81,5 +116,22 @@ class _OperationFailure(Exception):
         self.error = error
 
 
-def _failure(code: str, message: str) -> _OperationFailure:
-    return _OperationFailure(CapabilityError(code=code, phase="execute", message=message))
+def _unsupported_capability(capability: str) -> _OperationFailure:
+    return _failure("unsupported_capability", f"Capability {capability!r} is not implemented")
+
+
+def _failure(
+    code: str,
+    message: str,
+    *,
+    phase: Literal["parse", "resolve", "validate", "execute", "persist"] = "execute",
+    allowed_recovery_actions: tuple[str, ...] = (),
+) -> _OperationFailure:
+    return _OperationFailure(
+        CapabilityError(
+            code=code,
+            phase=phase,
+            message=message,
+            allowed_recovery_actions=allowed_recovery_actions,
+        )
+    )

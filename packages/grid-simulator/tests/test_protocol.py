@@ -73,6 +73,48 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
     assert "capabilities" not in response.result
 
 
+def test_context_open_rejects_unexpected_arguments_before_persistence(tmp_path: Path) -> None:
+    response = dispatch(request("context.open", {"model": "ieee39", "unexpected": True}), tmp_path)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "invalid_arguments"
+    assert response.error.phase == "validate"
+    assert response.error.retryable is False
+    assert response.error.state_effect == "none"
+    assert response.error.allowed_recovery_actions == ("correct_arguments",)
+    assert response.error.details == {}
+    assert not (tmp_path / "evidence").exists()
+
+
+def test_model_list_rejects_forbidden_family_argument(tmp_path: Path) -> None:
+    response = dispatch(request("model.list", {"family": "other"}), tmp_path)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "invalid_arguments"
+    assert response.error.phase == "validate"
+    assert response.error.retryable is False
+    assert response.error.state_effect == "none"
+    assert response.error.allowed_recovery_actions == ("correct_arguments",)
+
+
+def test_context_open_valid_arguments_pass_schema_gate(tmp_path: Path) -> None:
+    response = dispatch(request("context.open", {"model": "ieee39"}), tmp_path)
+
+    assert response.ok is True
+    assert response.result is not None
+    assert response.result["context_ref"].startswith("context:sha256:")
+
+
+def test_unsupported_semantic_id_is_not_reported_as_invalid_arguments(tmp_path: Path) -> None:
+    response = dispatch(request("analysis.powerflow.ac.run", {"unexpected": True}), tmp_path)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "unsupported_capability"
+
+
 @pytest.mark.parametrize(
     "capability,arguments",
     (
