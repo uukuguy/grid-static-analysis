@@ -238,6 +238,10 @@ class UnknownResultError(Exception):
     pass
 
 
+class ResultIntegrityError(Exception):
+    pass
+
+
 class UnknownBranchError(Exception):
     pass
 
@@ -633,7 +637,45 @@ def _load_powerflow_result(workspace: SimulatorWorkspace, result_ref: str) -> di
     path = workspace.results_dir / f"powerflow-{match.group(1)}.json"
     if not path.is_file():
         raise UnknownResultError("powerflow result is unavailable in this workspace")
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ResultIntegrityError("powerflow result document is not valid JSON") from exc
+    _verify_powerflow_result_document(document, result_ref)
+    return document
+
+
+def _verify_powerflow_result_document(document: object, result_ref: str) -> None:
+    if not isinstance(document, dict):
+        raise ResultIntegrityError("powerflow result document is malformed")
+    if document.get("result_ref") != result_ref:
+        raise ResultIntegrityError("powerflow result document reference does not match requested reference")
+    body = {key: value for key, value in document.items() if key != "result_ref"}
+    try:
+        digest = fingerprint(canonical_json(body))
+    except (TypeError, ValueError) as exc:
+        raise ResultIntegrityError("powerflow result document is not canonical JSON") from exc
+    if result_ref != f"result:sha256:{digest}":
+        raise ResultIntegrityError("powerflow result document content does not match result reference")
+    if document.get("result_type") != "analysis.powerflow.ac":
+        raise ResultIntegrityError("powerflow result document has an unsupported result type")
+    if not isinstance(document.get("context_ref"), str) or not isinstance(document.get("revision_ref"), str):
+        raise ResultIntegrityError("powerflow result document is missing context references")
+    branch_results = document.get("branch_results")
+    if not isinstance(branch_results, list):
+        raise ResultIntegrityError("powerflow result document is missing branch results")
+    required_branch_fields = {
+        "branch_ref",
+        "element_kind",
+        "pandapower_index",
+        "loading_percent",
+        "p_from_mw",
+        "p_to_mw",
+        "pl_mw",
+    }
+    for row in branch_results:
+        if not isinstance(row, dict) or not required_branch_fields <= row.keys():
+            raise ResultIntegrityError("powerflow result document has malformed branch results")
 
 
 def _persist_result(directory: Path, prefix: str, document: dict[str, Any]) -> PersistedDocument:

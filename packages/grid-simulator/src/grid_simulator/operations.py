@@ -16,6 +16,7 @@ from pandapower.auxiliary import LoadflowNotConverged
 from grid_simulator.analyses import (
     RECOVERY_ACTIONS_NON_CONVERGENCE,
     PowerflowExecutionError,
+    ResultIntegrityError,
     UnknownBranchError,
     UnknownResultError,
     evidence_path,
@@ -385,6 +386,13 @@ def _analysis_powerflow_ac_run(
 def _result_branches_rank(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
     try:
         return rank_branches(workspace=workspace, arguments=arguments)
+    except ResultIntegrityError as exc:
+        raise _failure(
+            "result_integrity_failed",
+            "Power-flow result evidence failed integrity verification",
+            phase="resolve",
+            allowed_recovery_actions=("rerun_powerflow",),
+        ) from exc
     except UnknownResultError as exc:
         raise _failure(
             "unknown_result",

@@ -43,3 +43,28 @@ Ported AC power flow, branch result ranking, and N-1 contingency analysis to exe
 
 - The pandapower warnings are existing runtime deprecation warnings for `tap_dependency_table` in the packaged IEEE-39 network data path.
 - LSP-specific diagnostics tooling was not exposed in this session; `pyright` was available locally and was used as the diagnostics substitute on all modified Python files.
+
+## Review Fix Evidence
+
+- Review fix red run:
+  - `uv run --project packages/grid-simulator pytest packages/grid-simulator/tests/test_powerflow.py packages/grid-simulator/tests/test_contingency.py packages/grid-simulator/tests/test_analysis_errors.py -v`
+  - Result: 3 failed, 6 passed. Failures proved branch ranking accepted a tampered persisted `loading_percent=9999`, accepted a document missing `result_ref`, and leaked invalid JSON as an unsanitized exception.
+- Review fix focused green run:
+  - Same command.
+  - Result: 9 passed, 16 existing pandapower deprecation warnings.
+- Diagnostics:
+  - `pyright packages/grid-simulator/src/grid_simulator/analyses.py packages/grid-simulator/src/grid_simulator/operations.py packages/grid-simulator/tests/test_powerflow.py packages/grid-simulator/tests/test_contingency.py`
+  - Result: 0 errors, 0 warnings, 0 informations.
+- Lint and contract syntax:
+  - `ruff check packages/grid-simulator/src/grid_simulator/analyses.py packages/grid-simulator/src/grid_simulator/operations.py packages/grid-simulator/tests/test_powerflow.py packages/grid-simulator/tests/test_contingency.py`
+  - Result: all checks passed.
+  - `python -m json.tool packages/grid-simulator/src/grid_simulator/capabilities/definitions/result.branches.rank.json >/dev/null`
+  - Result: passed.
+- Full simulator suite:
+  - `uv run --project packages/grid-simulator pytest packages/grid-simulator/tests -v`
+  - Result: 76 passed, 16 existing pandapower deprecation warnings.
+- Compile/build:
+  - `uv run --project packages/grid-simulator python -m compileall -q packages/grid-simulator/src packages/grid-simulator/tests`
+  - Result: passed.
+  - `uv build --project packages/grid-simulator`
+  - Result: built source distribution and wheel successfully; generated archives were removed from the worktree afterward.
