@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-from grid_agent.cli.app import _question_boundary, _run_child_with_live_stderr
 from grid_agent.reporting import (
     AnalysisStep,
     AuditDiagnostic,
@@ -188,10 +186,6 @@ def test_append_jsonl_record_is_visible_before_the_next_question(tmp_path: Path)
     assert destination.read_text(encoding="utf-8") == '{"question_id": "q-1", "answer_output": "a"}\n'
 
 
-def test_question_boundary_scopes_live_child_logs_to_one_question() -> None:
-    assert _question_boundary(1, 2, "线路11连接哪两个母线?", "开始") == "========== 问题 1/2 开始：线路11连接哪两个母线? =========="
-
-
 def test_read_run_observations_pairs_tool_start_and_canonical_result(tmp_path: Path) -> None:
     events = tmp_path / "run/events.jsonl"
     events.parent.mkdir(parents=True)
@@ -212,19 +206,3 @@ def test_read_run_observations_pairs_tool_start_and_canonical_result(tmp_path: P
     assert observation.steps[0].duration_seconds == 2.0
     assert observation.evidence_sources[0].reference == "evidence:sha256:" + "a" * 64
     assert observation.result_refs == ()
-
-
-def test_batch_child_forwards_stderr_lines_before_process_completion(tmp_path: Path) -> None:
-    script = (
-        "import json,sys,time\n"
-        "print('模型推理: 正在识别线路', file=sys.stderr, flush=True)\n"
-        "time.sleep(0.03)\n"
-        "print('工具开始: topology.branch.endpoints.get', file=sys.stderr, flush=True)\n"
-        "print(json.dumps({'question_id':'q-1','answer_output':'答案'}), flush=True)\n"
-    )
-    observed: list[str] = []
-
-    completed = _run_child_with_live_stderr([sys.executable, "-c", script], tmp_path, observed.append)
-
-    assert observed == ["模型推理: 正在识别线路", "工具开始: topology.branch.endpoints.get"]
-    assert json.loads(completed.stdout)["answer_output"] == "答案"

@@ -33,3 +33,14 @@ Follow-up verification:
 
 - `uv run --project packages/grid-agent pyright packages/grid-agent/src/grid_agent/cli/app.py packages/grid-agent/src/grid_agent/runtime/rpc.py packages/grid-agent/src/grid_agent/analysis/runner.py` → 0 errors.
 - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/cli/test_app.py packages/grid-agent/tests/analysis/test_runner.py -q` → 27 passed.
+
+Collection-regression follow-up:
+
+- Removed obsolete reporting tests that imported private `grid_agent.cli.app` batch child-run helpers removed by the continuous analysis migration.
+- Did not restore `_run_child_with_live_stderr` or any subprocess-per-question architecture.
+
+Collection-regression verification:
+
+- `uv run --project packages/grid-agent pytest packages/grid-agent/tests/reporting/test_batch_report.py -q` → 9 passed.
+- `uv run --project packages/grid-agent pytest packages/grid-agent/tests --collect-only -q` → 243 tests collected.
+- `make test` → agent 243 passed; simulator 79 passed; pi-grid-tools 14 passed.
