@@ -1,0 +1,337 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from grid_agent.analysis.integrity import SimulatorIntegrityError
+from grid_agent.analysis.models import ContextEventDraft
+from grid_agent.analysis.runner import AnalysisOutcome, AnalysisRequest, AnalysisRunner
+from grid_agent.analysis.store import AnalysisContextStore
+from grid_agent.analysis.turns import ActiveTurnHandle, TurnController
+from grid_agent.analysis.workspace import AnalysisWorkspace
+from grid_agent.runtime.rpc import PiProtocolError
+
+
+RESULT_REF = "result:sha256:" + "1" * 64
+BASELINE_REF = "context:sha256:" + "3" * 64
+REVISION_REF = "revision:sha256:" + "4" * 64
+NO_DRAFT_AGENT_END = {"type": "agent_end", "stop_status": "no_answer"}
+TAMPERED_SUCCESSFUL_RESULT = {"type": "tool_result", "capability": "tampered.success", "ok": True}
+SHOULD_NOT_RUN = {"answer": "should not run"}
+
+
+@dataclass
+class FakePi:
+    workspace: AnalysisWorkspace
+    behavior: list[Any] = field(default_factory=list)
+    start_calls: int = 0
+    stop_calls: int = 0
+    prompts: list[str] = field(default_factory=list)
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+    def prompt_and_wait(self, prompt: str, **kwargs: Any) -> str:
+        self.prompts.append(prompt)
+        index = len(self.prompts) - 1
+        action = self.behavior[index] if index < len(self.behavior) else {"answer": f"answer {index + 1}"}
+        on_semantic_event = kwargs.get("on_semantic_event")
+        if isinstance(action, BaseException):
+            raise action
+        if action == NO_DRAFT_AGENT_END:
+            return ""
+        if action == TAMPERED_SUCCESSFUL_RESULT:
+            assert callable(on_semantic_event)
+            on_semantic_event(action)
+            return ""
+        if isinstance(action, dict) and action.get("tool_error"):
+            assert callable(on_semantic_event)
+            on_semantic_event({"type": "tool_result", "capability": "analysis.powerflow.ac.run", "ok": False})
+        if isinstance(action, dict) and "produce_result_ref" in action:
+            assert callable(on_semantic_event)
+            on_semantic_event({"type": "fake_result", "result_ref": action["produce_result_ref"]})
+        if isinstance(action, dict) and "consume_result_ref" in action:
+            assert callable(on_semantic_event)
+            on_semantic_event({"type": "fake_consume", "result_ref": action["consume_result_ref"]})
+        if isinstance(action, dict) and action.get("write_draft", True):
+            handle = _read_active_turn(self.workspace)
+            _write_draft(
+                self.workspace.active_answer_draft_path,
+                handle,
+                answer=str(action.get("answer", f"answer {index + 1}")),
+                result_refs=[str(action["produce_result_ref"])] if "produce_result_ref" in action else [],
+            )
+        return str(action.get("answer", "")) if isinstance(action, dict) else ""
+
+
+class FakeProjector:
+    def __init__(self, store: AnalysisContextStore) -> None:
+        self.store = store
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def observe(self, event: dict[str, Any], *, turn_id: str) -> None:
+        self.events.append((turn_id, event))
+        if event.get("type") == "fake_result":
+            _append_baseline_if_missing(self.store, turn_id)
+            self.store.append(
+                ContextEventDraft(
+                    event_type="result.registered",
+                    turn_id=turn_id,
+                    capability="analysis.powerflow.ac.run",
+                    payload={
+                        "result_ref": event["result_ref"],
+                        "revision_ref": REVISION_REF,
+                        "path": "evidence/results/powerflow.json",
+                        "evidence_refs": [],
+                        "solver_summary": {"converged": True},
+                        "producer_observation": {"tool_name": "grid_analysis_powerflow_ac"},
+                    },
+                )
+            )
+        if event.get("type") == "fake_consume":
+            self.store.append(
+                ContextEventDraft(
+                    event_type="tool.observation.recorded",
+                    turn_id=turn_id,
+                    capability="result.branches.rank",
+                    payload={
+                        "observation_ref": "observation:sha256:" + "5" * 64,
+                        "path": "tool-results/ranking.json",
+                        "summary": {"ok": True},
+                        "producer_observation": {"tool_name": "grid_result_branches_rank"},
+                        "consumed_refs": [event["result_ref"]],
+                        "produced_refs": [],
+                    },
+                )
+            )
+        if event == TAMPERED_SUCCESSFUL_RESULT:
+            raise SimulatorIntegrityError("tampered result")
+        if event.get("ok") is False:
+            self.store.append(
+                ContextEventDraft(
+                    event_type="limitation.recorded",
+                    turn_id=turn_id,
+                    capability=str(event.get("capability", "unknown")),
+                    payload={
+                        "limitation_ref": "limitation:normal-gridctl-error",
+                        "message": "normal gridctl error",
+                        "refs": [],
+                    },
+                ),
+                integrity="diagnostic",
+            )
+            self.store.append(
+                ContextEventDraft(
+                    event_type="tool.failed",
+                    turn_id=turn_id,
+                    capability=str(event.get("capability", "unknown")),
+                    payload={"message": "normal gridctl error"},
+                ),
+                integrity="diagnostic",
+            )
+
+
+@dataclass
+class RunnerHarness:
+    workspace: AnalysisWorkspace
+    store: AnalysisContextStore
+    pi: FakePi
+    projector: FakeProjector
+    runner: AnalysisRunner
+
+
+@pytest.fixture
+def runner_harness(tmp_path: Path) -> RunnerHarness:
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
+    store = AnalysisContextStore.initialize(
+        workspace,
+        input_record={
+            "copied_path": "input/instructions.md.txt",
+            "source_path": "task.md.txt",
+            "sha256": "a" * 64,
+            "instruction_count": 3,
+        },
+        runtime_record={
+            "provider": "test-provider",
+            "model": "test-model",
+            "grid_capability_protocol": "1.0",
+            "pandapower_version": "3.4.0",
+        },
+    )
+    pi = FakePi(workspace)
+    projector = FakeProjector(store)
+    runner = AnalysisRunner(
+        workspace=workspace,
+        store=store,
+        turn_controller=TurnController(workspace, store, audit_callback=lambda _claimed, _results: ()),
+        pi_client=pi,
+        projector=projector,
+        environment={"provider": "test-provider", "model": "test-model"},
+    )
+    return RunnerHarness(workspace=workspace, store=store, pi=pi, projector=projector, runner=runner)
+
+
+def test_runner_reuses_one_pi_process_and_injects_finalized_prior_context(runner_harness: RunnerHarness) -> None:
+    runner_harness.pi.behavior = [
+        {"answer": "运行完成", "produce_result_ref": RESULT_REF},
+        {"answer": "排序完成", "consume_result_ref": RESULT_REF},
+    ]
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(
+            analysis_id="analysis-test",
+            instructions=("运行交流潮流", "按负载率排序"),
+        )
+    )
+
+    assert runner_harness.pi.start_calls == 1
+    assert runner_harness.pi.stop_calls == 1
+    assert len(runner_harness.pi.prompts) == 2
+    assert "运行交流潮流" in runner_harness.pi.prompts[0]
+    assert RESULT_REF in runner_harness.pi.prompts[1]
+    assert outcome.status == "completed"
+    assert runner_harness.store.snapshot.turns[1].consumed_refs == [RESULT_REF]
+
+
+def test_runner_continues_after_missing_answer_but_stops_on_integrity_failure(
+    runner_harness: RunnerHarness,
+) -> None:
+    runner_harness.pi.behavior = [NO_DRAFT_AGENT_END, TAMPERED_SUCCESSFUL_RESULT, SHOULD_NOT_RUN]
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二", "三"))
+    )
+
+    assert len(runner_harness.pi.prompts) == 2
+    assert outcome.status == "failed"
+    assert runner_harness.store.snapshot.turns[0].status == "failed"
+    assert runner_harness.store.snapshot.status == "failed"
+
+
+def test_runner_keeps_normal_gridctl_error_nonterminal_and_checkpoints_report(
+    runner_harness: RunnerHarness,
+) -> None:
+    runner_harness.pi.behavior = [
+        {"answer": "工具失败但已说明", "tool_error": True},
+        {"answer": "后续继续"},
+    ]
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("潮流不收敛", "继续整理"))
+    )
+
+    assert outcome.status == "completed"
+    assert len(runner_harness.pi.prompts) == 2
+    assert "normal gridctl error" in runner_harness.workspace.report_path.read_text(encoding="utf-8")
+    assert runner_harness.store.snapshot.diagnostics[-1].event_type == "tool.failed"
+
+
+def test_runner_stops_on_pi_protocol_error_and_still_stops_process(
+    runner_harness: RunnerHarness,
+) -> None:
+    runner_harness.pi.behavior = [PiProtocolError("provider died"), SHOULD_NOT_RUN]
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二"))
+    )
+
+    assert outcome.status == "failed"
+    assert "provider died" in (outcome.error or "")
+    assert runner_harness.pi.start_calls == 1
+    assert runner_harness.pi.stop_calls == 1
+    assert len(runner_harness.pi.prompts) == 1
+    assert runner_harness.store.snapshot.status == "failed"
+
+
+def test_runner_replays_final_ledger_and_writes_manifest(runner_harness: RunnerHarness) -> None:
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
+    )
+
+    replayed = AnalysisContextStore.replay(runner_harness.workspace.context_events_path)
+    manifest = json.loads(runner_harness.workspace.manifest_path.read_text(encoding="utf-8"))
+
+    assert isinstance(outcome, AnalysisOutcome)
+    assert replayed == runner_harness.store.snapshot
+    assert replayed.status == "completed"
+    assert manifest["status"] == "completed"
+    assert manifest["report_path"] == "report.md"
+    assert outcome.report_path == runner_harness.workspace.report_path
+
+
+def test_runner_terminally_fails_when_final_replay_verification_fails(
+    runner_harness: RunnerHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_materialized_snapshot(self: AnalysisContextStore) -> Any:
+        raise RuntimeError("durable state mismatch")
+
+    monkeypatch.setattr(AnalysisContextStore, "verify_materialized_snapshot", fail_materialized_snapshot)
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
+    )
+
+    assert outcome.status == "failed"
+    assert "durable state mismatch" in (outcome.error or "")
+    assert runner_harness.store.snapshot.status == "failed"
+
+
+def _read_active_turn(workspace: AnalysisWorkspace) -> ActiveTurnHandle:
+    payload = json.loads(workspace.active_turn_path.read_text(encoding="utf-8"))
+    return ActiveTurnHandle(
+        ordinal=payload["ordinal"],
+        turn_id=payload["turn_id"],
+        instruction=payload["instruction"],
+        instruction_sha256=payload["instruction_sha256"],
+        turn_nonce=payload["turn_nonce"],
+        started_monotonic=payload["started_monotonic"],
+    )
+
+
+def _write_draft(
+    path: Path,
+    turn: ActiveTurnHandle,
+    *,
+    answer: str,
+    result_refs: list[str] | None = None,
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "turn_id": turn.turn_id,
+                "turn_nonce": turn.turn_nonce,
+                "answer_output": answer,
+                "claim_evidence_refs": [],
+                "result_refs": result_refs or [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _append_baseline_if_missing(store: AnalysisContextStore, turn_id: str) -> None:
+    if BASELINE_REF in store.snapshot.baselines:
+        return
+    store.append(
+        ContextEventDraft(
+            event_type="simulator.context.opened",
+            turn_id=turn_id,
+            capability="context.open",
+            payload={
+                "context_ref": BASELINE_REF,
+                "revision_ref": REVISION_REF,
+                "path": "evidence/contexts/context.json",
+                "source": {"model": "ieee39", "source": "test"},
+                "network": {"pandapower_version": "3.4.0"},
+            },
+        )
+    )
