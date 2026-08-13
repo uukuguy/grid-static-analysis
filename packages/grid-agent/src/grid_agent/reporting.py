@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -153,6 +154,16 @@ def write_jsonl(path: Path, records: Sequence[BatchRecord]) -> None:
         "".join(json.dumps({"question_id": record.question_id, "answer_output": record.answer_output}, ensure_ascii=False) + "\n" for record in records),
         encoding="utf-8",
     )
+
+
+def append_jsonl_record(path: Path, record: BatchRecord) -> None:
+    """Durably expose one completed envelope without waiting for the batch."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps({"question_id": record.question_id, "answer_output": record.answer_output}, ensure_ascii=False) + "\n"
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(line)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def read_run_observations(run_path: Path) -> RunObservation:

@@ -34,7 +34,7 @@ from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
 from grid_agent.tools.catalog import ToolCatalog, load_packaged_capability_documents
 from grid_agent.tools.guide import GuideIndex
-from grid_agent.reporting import BatchRecord, load_questions, read_run_observations, render_markdown, write_jsonl
+from grid_agent.reporting import BatchRecord, append_jsonl_record, load_questions, read_run_observations, render_markdown, write_jsonl
 
 
 app = typer.Typer(add_completion=False)
@@ -354,6 +354,16 @@ def _run_child_with_live_stderr(
     return subprocess.CompletedProcess(list(command), returncode, stdout, "".join(stderr_lines))
 
 
+def _question_boundary(ordinal: int, total: int, question: str, phase: str) -> str:
+    return f"========== 问题 {ordinal}/{total} {phase}：{question} =========="
+
+
+def _write_report_checkpoint(destination: Path, *, batch_id: str, source_name: str, environment: Mapping[str, str], records: Sequence[BatchRecord]) -> None:
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    temporary.write_text(render_markdown(batch_id=batch_id, source_name=source_name, environment=environment, records=records), encoding="utf-8")
+    temporary.replace(destination)
+
+
 @app.command()
 def report(
     questions: Path = typer.Option(_repo_root() / "validation/questions/task.md.txt", "--questions", exists=True, readable=True),
@@ -373,11 +383,26 @@ def report(
         oauth_configured=lambda profile: ProjectAuthStore(project_paths.state_dir / "auth").status(profile).configured,
     ).config
     batch_id = f"batch-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    total = len(load_questions(questions))
     records: list[BatchRecord] = []
+    destination = report_path or project_paths.runs_dir / "reports" / f"{batch_id}-系统仿真分析报告.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    environment = {
+        "执行时间（UTC）": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "LLM Provider": resolved.provider,
+        "LLM 模型": resolved.model,
+        "单次请求时限": f"{resolved.timeout_seconds:g} 秒",
+        "SDK 自动重试": f"{resolved.max_retries} 次",
+        "仿真器边界": "pandapower 3.4.0（经 gridctl）",
+        "gridctl": str(GridctlLocator(_repo_root()).resolve()),
+    }
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("", encoding="utf-8")
     typer.echo(f"开始批量系统仿真分析 batch={batch_id} 问题文件={questions}")
     for ordinal, question in enumerate(load_questions(questions), start=1):
         question_id = f"{batch_id}-q{ordinal:03d}"
-        typer.echo(f"\n[{ordinal}] 开始：{question}")
+        typer.echo(f"\n{_question_boundary(ordinal, total, question, '开始')}", err=True)
         command = ["grid-agent", "run", "--question-id", question_id]
         command.extend(["--provider", resolved.provider, "--model", resolved.model])
         command.append(question)
@@ -397,21 +422,14 @@ def report(
         status = "success" if completed.returncode == 0 else "failed"
         error = None if status == "success" else _summary(completed.stderr or completed.stdout)
         records.append(BatchRecord(ordinal, question, returned_id, answer, status, duration, str(run_path) if run_path.exists() else None, observation, error))
-        typer.echo(f"[{ordinal}] {'完成' if status == 'success' else '失败'}：{duration:.2f}s；工具步骤 {len(observation.steps)}；证据 {len(observation.evidence_sources)}")
-    destination = report_path or project_paths.runs_dir / "reports" / f"{batch_id}-系统仿真分析报告.md"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    environment = {
-        "执行时间（UTC）": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "LLM Provider": resolved.provider,
-        "LLM 模型": resolved.model,
-        "单次请求时限": f"{resolved.timeout_seconds:g} 秒",
-        "SDK 自动重试": f"{resolved.max_retries} 次",
-        "仿真器边界": "pandapower 3.4.0（经 gridctl）",
-        "gridctl": str(GridctlLocator(_repo_root()).resolve()),
-    }
-    destination.write_text(render_markdown(batch_id=batch_id, source_name=str(questions), environment=environment, records=records), encoding="utf-8")
-    if output:
-        write_jsonl(output, records)
+        _write_report_checkpoint(destination, batch_id=batch_id, source_name=str(questions), environment=environment, records=records)
+        if output:
+            append_jsonl_record(output, records[-1])
+        typer.echo(f"[{ordinal}] {'完成' if status == 'success' else '失败'}：{duration:.2f}s；工具步骤 {len(observation.steps)}；证据 {len(observation.evidence_sources)}", err=True)
+        typer.echo(f"报告检查点：{destination}", err=True)
+        if output:
+            typer.echo(f"标准结果检查点：{output}", err=True)
+        typer.echo(_question_boundary(ordinal, total, question, "结束"), err=True)
     typer.echo(f"\n报告已写入：{destination}")
     if output:
         typer.echo(f"标准结果 JSONL 已写入：{output}")

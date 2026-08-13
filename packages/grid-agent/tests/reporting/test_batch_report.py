@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from grid_agent.cli.app import _run_child_with_live_stderr
+from grid_agent.cli.app import _question_boundary, _run_child_with_live_stderr
 from grid_agent.reporting import (
     AnalysisStep,
     BatchRecord,
@@ -15,6 +15,7 @@ from grid_agent.reporting import (
     read_run_observations,
     render_markdown,
     write_jsonl,
+    append_jsonl_record,
 )
 
 
@@ -83,6 +84,19 @@ def test_write_jsonl_contains_only_answer_envelopes(tmp_path: Path) -> None:
         {"question_id": "q-1", "answer_output": "a"},
         {"question_id": "q-2", "answer_output": "b"},
     ]
+
+
+def test_append_jsonl_record_is_visible_before_the_next_question(tmp_path: Path) -> None:
+    destination = tmp_path / "answers.jsonl"
+    record = BatchRecord(1, "q", "q-1", "a", "success", 1.0, None, RunObservation(None, (), (), ()), None)
+
+    append_jsonl_record(destination, record)
+
+    assert destination.read_text(encoding="utf-8") == '{"question_id": "q-1", "answer_output": "a"}\n'
+
+
+def test_question_boundary_scopes_live_child_logs_to_one_question() -> None:
+    assert _question_boundary(1, 2, "线路11连接哪两个母线?", "开始") == "========== 问题 1/2 开始：线路11连接哪两个母线? =========="
 
 
 def test_read_run_observations_pairs_tool_start_and_canonical_result(tmp_path: Path) -> None:
