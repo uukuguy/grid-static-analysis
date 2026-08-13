@@ -1,0 +1,594 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from grid_agent.analysis.integrity import ContentReferenceVerifier, SimulatorIntegrityError
+from grid_agent.analysis.models import ContextEventDraft, VerifiedFact
+from grid_agent.analysis.projector import AnalysisContextProjector
+from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
+from grid_agent.analysis.workspace import AnalysisWorkspace
+
+
+INPUT = {
+    "copied_path": "input/instructions.md.txt",
+    "source_path": "task.md.txt",
+    "sha256": "a" * 64,
+    "instruction_count": 1,
+}
+RUNTIME = {
+    "provider": "test",
+    "model": "scripted",
+    "grid_capability_protocol": "1.0",
+    "pandapower_version": "3.4.0",
+}
+
+
+@dataclass(frozen=True)
+class ContextHarness:
+    workspace: AnalysisWorkspace
+    store: AnalysisContextStore
+    projector: AnalysisContextProjector
+
+    def start_turn(self, turn_id: str, *, ordinal: int) -> None:
+        self.store.append(
+            ContextEventDraft(
+                event_type="turn.started",
+                turn_id=turn_id,
+                payload={
+                    "ordinal": ordinal,
+                    "instruction": f"analysis instruction {ordinal}",
+                    "instruction_sha256": f"{ordinal:x}" * 64,
+                    "nonce_sha256": f"{ordinal + 1:x}" * 64,
+                },
+            )
+        )
+
+    def complete_turn(self, turn_id: str) -> None:
+        self.store.append(
+            ContextEventDraft(
+                event_type="turn.completed",
+                turn_id=turn_id,
+                payload={
+                    "status": "success",
+                    "answer_path": f"turns/{turn_id}/answer.json",
+                    "answer_sha256": "d" * 64,
+                    "duration_seconds": 0.1,
+                },
+            )
+        )
+
+
+@dataclass(frozen=True)
+class OpenedContext:
+    context_ref: str
+    revision_ref: str
+    context_path: Path
+
+
+@pytest.fixture
+def context_harness(tmp_path: Path) -> ContextHarness:
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
+    store = AnalysisContextStore.initialize(workspace, input_record=INPUT, runtime_record=RUNTIME)
+    return ContextHarness(
+        workspace=workspace,
+        store=store,
+        projector=AnalysisContextProjector(store, ContentReferenceVerifier(workspace.root_path)),
+    )
+
+
+def test_projector_registers_powerflow_and_ranking_dependency(context_harness: ContextHarness) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        opened,
+        converged=True,
+        total_active_loss=1.25,
+        branch_results=[
+            {"branch_ref": "asset:line:11", "loading_percent": 91.2},
+            {"branch_ref": "asset:line:12", "loading_percent": 88.1},
+        ],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_analysis_powerflow_ac", {"context_ref": opened.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result("call-1", "analysis.powerflow.ac.run", powerflow_result, evidence_refs=[powerflow_evidence_ref]),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.complete_turn("analysis-test-t001")
+    context_harness.start_turn("analysis-test-t002", ordinal=2)
+    context_harness.projector.observe(
+        tool_start(
+            "call-2",
+            "grid_result_branches_rank",
+            {"result_ref": powerflow_result["result_ref"], "metric": "loading_percent", "limit": 5},
+        ),
+        turn_id="analysis-test-t002",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "call-2",
+            "result.branches.rank",
+            {
+                "branches": [
+                    {
+                        "branch_ref": "asset:line:11",
+                        "metric": "loading_percent",
+                        "value": 91.2,
+                        "unit": "%",
+                    }
+                ]
+            },
+        ),
+        turn_id="analysis-test-t002",
+    )
+
+    state = context_harness.store.snapshot
+    assert powerflow_result["result_ref"] in state.results
+    ranking = next(item for item in state.observations.values() if item.capability == "result.branches.rank")
+    assert ranking.consumed_refs == [powerflow_result["result_ref"]]
+    assert ranking.produced_refs == []
+    assert any(
+        fact_statement(fact)["predicate"] == "branch.loading_percent"
+        and fact_statement(fact)["source_observation_id"] == ranking.observation_ref
+        for fact in state.verified_facts.values()
+    )
+
+
+def test_projector_stops_on_integrity_failure_but_records_normal_tool_error(
+    context_harness: ContextHarness,
+) -> None:
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+
+    context_harness.projector.observe(
+        tool_result(
+            "call-1",
+            "analysis.powerflow.ac.run",
+            {},
+            ok=False,
+            error={"code": "powerflow_non_convergence"},
+        ),
+        turn_id="analysis-test-t001",
+    )
+    assert context_harness.store.snapshot.unresolved_limitations
+
+    with pytest.raises(SimulatorIntegrityError):
+        context_harness.projector.observe(
+            tool_result(
+                "call-2",
+                "analysis.powerflow.ac.run",
+                {"context_ref": "context:sha256:" + "9" * 64, "result_ref": "result:sha256:" + "8" * 64},
+            ),
+            turn_id="analysis-test-t001",
+        )
+
+
+def test_projector_opens_context_and_promotes_topology_endpoint_facts(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    endpoint_evidence_ref = write_topology_evidence(
+        context_harness.workspace,
+        opened,
+        branch_ref="asset:line:11",
+        from_bus="asset:bus:6",
+        to_bus="asset:bus:11",
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_context_open", {"model_id": "ieee39"}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "call-1",
+            "context.open",
+            {
+                "context_ref": opened.context_ref,
+                "revision_ref": opened.revision_ref,
+                "model": "ieee39",
+                "source": "registered",
+                "engine": "pandapower",
+                "pandapower_version": "3.4.0",
+                "counts": {"bus": 39, "line": 35, "trafo": 11},
+            },
+        ),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_start(
+            "call-2",
+            "grid_topology_branch_endpoints",
+            {
+                "context_ref": opened.context_ref,
+                "kind": "line",
+                "namespace": "pandapower_index",
+                "identifier": "11",
+            },
+        ),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "call-2",
+            "topology.branch.endpoints.get",
+            {
+                "context_ref": opened.context_ref,
+                "revision_ref": opened.revision_ref,
+                "branch_ref": "asset:line:11",
+                "from_bus": "asset:bus:6",
+                "to_bus": "asset:bus:11",
+                "evidence_ref": endpoint_evidence_ref,
+            },
+            evidence_refs=[endpoint_evidence_ref],
+        ),
+        turn_id="analysis-test-t001",
+    )
+
+    state = context_harness.store.snapshot
+    assert state.active_context_ref == opened.context_ref
+    predicates = {fact_statement(fact)["predicate"] for fact in state.verified_facts.values()}
+    assert {"topology.branch.from_bus", "topology.branch.to_bus"} <= predicates
+
+
+def test_projector_promotes_n_minus_one_aggregate_and_scenario_facts(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    n1_result, n1_evidence_ref = write_n1_result(
+        context_harness.workspace,
+        opened,
+        scenarios=[
+            {
+                "scenario_result_ref": "result:sha256:" + "6" * 64,
+                "status": "succeeded",
+                "max_loading_percent": 103.4,
+                "violations": [{"branch_ref": "asset:line:11"}],
+            },
+            {
+                "scenario_result_ref": "result:sha256:" + "7" * 64,
+                "status": "succeeded",
+                "max_loading_percent": 87.2,
+                "violations": [],
+            },
+        ],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start(
+            "call-1",
+            "grid_analysis_contingency_n_minus_one",
+            {"context_ref": opened.context_ref, "branch_refs": ["asset:line:11"], "policy": "static-analysis-v1"},
+        ),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "call-1",
+            "analysis.contingency.n_minus_one.run",
+            n1_result,
+            evidence_refs=[n1_evidence_ref],
+        ),
+        turn_id="analysis-test-t001",
+    )
+
+    facts = [fact_statement(fact) for fact in context_harness.store.snapshot.verified_facts.values()]
+    assert {"n1.status", "n1.scenario_count", "n1.max_loading_percent", "n1.violation_count"} <= {
+        fact["predicate"] for fact in facts
+    }
+    assert next(fact for fact in facts if fact["predicate"] == "n1.scenario_count")["value"] == 2
+    assert next(fact for fact in facts if fact["predicate"] == "n1.max_loading_percent")["value"] == 103.4
+    assert next(fact for fact in facts if fact["predicate"] == "n1.violation_count")["value"] == 1
+
+
+def test_projector_deduplicates_references_and_ignores_unknown_fields(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        opened,
+        converged=True,
+        total_active_loss=0.5,
+        branch_results=[],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_analysis_powerflow_ac", {"context_ref": opened.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "call-1",
+            "analysis.powerflow.ac.run",
+            {**powerflow_result, "untrusted_extra_loss": 9999},
+            evidence_refs=[powerflow_evidence_ref, powerflow_evidence_ref],
+        ),
+        turn_id="analysis-test-t001",
+    )
+
+    state = context_harness.store.snapshot
+    result = state.results[powerflow_result["result_ref"]]
+    assert result.evidence_refs == [powerflow_evidence_ref]
+    assert not any("untrusted_extra_loss" in fact.statement for fact in state.verified_facts.values())
+
+
+def test_projector_rejects_successful_result_that_does_not_match_started_context(
+    context_harness: ContextHarness,
+) -> None:
+    requested = write_context(context_harness.workspace, model_id="ieee39")
+    returned = write_context(context_harness.workspace, model_id="case14")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        returned,
+        converged=True,
+        total_active_loss=0.5,
+        branch_results=[],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_analysis_powerflow_ac", {"context_ref": requested.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+
+    with pytest.raises(SimulatorIntegrityError, match="context_ref"):
+        context_harness.projector.observe(
+            tool_result(
+                "call-1",
+                "analysis.powerflow.ac.run",
+                powerflow_result,
+                evidence_refs=[powerflow_evidence_ref],
+            ),
+            turn_id="analysis-test-t001",
+        )
+
+
+def test_projector_surfaces_store_rejection_for_mismatched_active_baseline(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        opened,
+        converged=True,
+        total_active_loss=0.5,
+        branch_results=[],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_result(
+            "call-1",
+            "context.open",
+            {"context_ref": opened.context_ref, "revision_ref": "revision:sha256:" + "9" * 64},
+        ),
+        turn_id="analysis-test-t001",
+    )
+
+    with pytest.raises(ContextStoreError, match="revision_ref"):
+        context_harness.projector.observe(
+            tool_result(
+                "call-2",
+                "analysis.powerflow.ac.run",
+                powerflow_result,
+                evidence_refs=[powerflow_evidence_ref],
+            ),
+            turn_id="analysis-test-t001",
+        )
+
+
+def tool_start(call_id: str, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "tool_execution_start",
+        "tool_call_id": call_id,
+        "tool_name": tool_name,
+        "toolName": tool_name,
+        "args": args,
+    }
+
+
+def tool_result(
+    call_id: str,
+    capability: str,
+    result: dict[str, Any],
+    *,
+    ok: bool = True,
+    error: dict[str, Any] | None = None,
+    evidence_refs: list[str] | None = None,
+) -> dict[str, Any]:
+    event: dict[str, Any] = {
+        "type": "tool_result",
+        "event": "tool_result",
+        "tool_call_id": call_id,
+        "capability": capability,
+        "ok": ok,
+        "result": result,
+        "evidence_refs": evidence_refs or [],
+    }
+    if error is not None:
+        event["error"] = error
+    return event
+
+
+def write_context(workspace: AnalysisWorkspace, *, model_id: str) -> OpenedContext:
+    revision = {"model_id": model_id, "pandapower_version": "3.4.0", "bus": [1, 2]}
+    revision_payload = canonical_json(revision)
+    revision_digest = hashlib.sha256(revision_payload.encode("utf-8")).hexdigest()
+    revision_ref = "revision:sha256:" + revision_digest
+    (workspace.evidence_path / "models").mkdir(parents=True, exist_ok=True)
+    (workspace.evidence_path / "models" / f"{revision_digest}.json").write_text(revision_payload, encoding="utf-8")
+
+    context = {
+        "revision_ref": revision_ref,
+        "model_id": model_id,
+        "source": "registered",
+        "engine": "pandapower",
+        "pandapower_version": "3.4.0",
+        "counts": {"bus": 39, "line": 35, "trafo": 11},
+    }
+    context_ref = "context:sha256:" + hashlib.sha256(canonical_json(context).encode("utf-8")).hexdigest()
+    context_path = workspace.evidence_path / "contexts" / f"{context_ref.removeprefix('context:sha256:')}.json"
+    context_path.write_text(canonical_json(context), encoding="utf-8")
+    return OpenedContext(context_ref=context_ref, revision_ref=revision_ref, context_path=context_path)
+
+
+def write_powerflow_result(
+    workspace: AnalysisWorkspace,
+    opened: OpenedContext,
+    *,
+    converged: bool,
+    total_active_loss: float,
+    branch_results: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str]:
+    body = {
+        "result_type": "analysis.powerflow.ac",
+        "context_ref": opened.context_ref,
+        "revision_ref": opened.revision_ref,
+        "converged": converged,
+        "total_active_loss": total_active_loss,
+        "solver_summary": {"success": converged, "total_active_loss": total_active_loss, "algorithm": "nr"},
+        "branch_results": branch_results,
+    }
+    result_ref = write_result_document(workspace, "powerflow", body)
+    evidence_ref = write_evidence_document(
+        workspace,
+        "analysis",
+        "analysis-evidence",
+        {
+            "evidence_type": "analysis_result",
+            "capability_id": "analysis.powerflow.ac.run",
+            "context_ref": opened.context_ref,
+            "revision_ref": opened.revision_ref,
+            "result_ref": result_ref,
+            "facts": {"converged": converged, "total_active_loss": total_active_loss},
+        },
+    )
+    return (
+        {
+            "context_ref": opened.context_ref,
+            "revision_ref": opened.revision_ref,
+            "result_ref": result_ref,
+            "evidence_refs": [evidence_ref],
+            "converged": converged,
+            "total_active_loss": total_active_loss,
+        },
+        evidence_ref,
+    )
+
+
+def write_n1_result(
+    workspace: AnalysisWorkspace,
+    opened: OpenedContext,
+    *,
+    scenarios: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str]:
+    linked_scenarios: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        scenario_body = {
+            "result_type": "analysis.contingency.n_minus_one.scenario",
+            "context_ref": opened.context_ref,
+            "revision_ref": opened.revision_ref,
+            "status": scenario.get("status"),
+            "max_loading_percent": scenario.get("max_loading_percent"),
+            "violations": scenario.get("violations", []),
+        }
+        scenario_ref = write_result_document(workspace, "contingency-scenario", scenario_body)
+        linked_scenarios.append({**scenario, "scenario_result_ref": scenario_ref})
+    body = {
+        "result_type": "analysis.contingency.n_minus_one.aggregate",
+        "context_ref": opened.context_ref,
+        "revision_ref": opened.revision_ref,
+        "status": "succeeded",
+        "scenarios": linked_scenarios,
+    }
+    result_ref = write_result_document(workspace, "contingency", body)
+    evidence_ref = write_evidence_document(
+        workspace,
+        "analysis",
+        "analysis-evidence",
+        {
+            "evidence_type": "contingency_scenario",
+            "capability_id": "analysis.contingency.n_minus_one.run",
+            "context_ref": opened.context_ref,
+            "revision_ref": opened.revision_ref,
+            "result_ref": result_ref,
+            "facts": {"status": "succeeded"},
+        },
+    )
+    return (
+        {
+            "context_ref": opened.context_ref,
+            "revision_ref": opened.revision_ref,
+            "result_ref": result_ref,
+            "evidence_refs": [evidence_ref],
+            "status": "succeeded",
+            "scenarios": linked_scenarios,
+        },
+        evidence_ref,
+    )
+
+
+def write_topology_evidence(
+    workspace: AnalysisWorkspace,
+    opened: OpenedContext,
+    *,
+    branch_ref: str,
+    from_bus: str,
+    to_bus: str,
+) -> str:
+    return write_evidence_document(
+        workspace,
+        "network-facts",
+        "network-fact",
+        {
+            "evidence_type": "network_fact",
+            "capability_id": "topology.branch.endpoints.get",
+            "context_ref": opened.context_ref,
+            "revision_ref": opened.revision_ref,
+            "facts": {"branch_ref": branch_ref, "from_bus": from_bus, "to_bus": to_bus},
+        },
+    )
+
+
+def write_result_document(workspace: AnalysisWorkspace, prefix: str, body: dict[str, Any]) -> str:
+    digest = hashlib.sha256(canonical_json(body).encode("utf-8")).hexdigest()
+    result_ref = "result:sha256:" + digest
+    result_path = workspace.results_path / f"{prefix}-{digest}.json"
+    result_path.write_text(canonical_json({"result_ref": result_ref, **body}), encoding="utf-8")
+    return result_ref
+
+
+def write_evidence_document(
+    workspace: AnalysisWorkspace,
+    directory: str,
+    prefix: str,
+    document: dict[str, Any],
+) -> str:
+    digest = hashlib.sha256(canonical_json(document).encode("utf-8")).hexdigest()
+    evidence_ref = "evidence:sha256:" + digest
+    evidence_path = workspace.evidence_path / directory / f"{prefix}-{digest}.json"
+    evidence_path.write_text(canonical_json(document), encoding="utf-8")
+    return evidence_ref
+
+
+def canonical_json(document: object) -> str:
+    return json.dumps(document, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def fact_statement(fact: VerifiedFact) -> dict[str, Any]:
+    statement = json.loads(fact.statement)
+    assert isinstance(statement, dict)
+    return statement
