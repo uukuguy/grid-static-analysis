@@ -14,7 +14,8 @@
 - CLI: `grid-agent` returns a single JSON answer envelope on stdout; offline routing handles narrow informational requests before workspace creation.
 - Agent path: Pi/LLM receives only direct `grid_*` domain tools, guides, and answer submission; language/entity interpretation stays with the model.
 - Simulator: `gridctl` owns registered read-only IEEE-39 access, typed semantic capabilities, pandapower 3.4.0 execution, result persistence, and evidence.
-- Integrity: online drafts declare `result_refs` and `claim_evidence_refs`; current-run documents, digests, contexts, and links are verified without parsing answer prose.
+- Integrity: online drafts declare primary `result_refs` and `claim_evidence_refs`; current-run documents, digests, immutable simulation contexts, and evidence-associated result links are verified without parsing answer prose.
+- Context engineering: each simulator-backed question opens a typed, immutable simulation-environment context (registered model source, pandapower version, semantic version, network counts and context reference); batch reports render that actual context rather than a guessed label.
 - Validation: deterministic offline and scripted Pi suites validate structured tool results, capability boundaries, evidence, and the output envelope; provider validation is opt-in.
 
 ## Open Problems (theme-level)

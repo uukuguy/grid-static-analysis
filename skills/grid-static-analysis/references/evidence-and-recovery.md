@@ -10,25 +10,26 @@ Do not use this to create calculations, alter evidence, substitute missing evide
 
 ## Concepts and Terminology
 
-Evidence references are opaque `evidence:sha256:*` values returned by trusted capabilities. A final answer may cite only evidence from the current run. `evidence.get` is topology/network-fact-only in WP-A: it retrieves persisted `network_fact` documents produced by `topology.branch.endpoints.get`; it does not validate user text, create new facts, or retrieve analysis result content.
+Evidence references are opaque `evidence:sha256:*` values returned by trusted capabilities. A final answer may cite only evidence from the current run. `evidence.get` retrieves a persisted topology or analysis evidence document; it does not validate user text, create new facts, or bypass result contracts.
 
 ## Available Capabilities
 
-- `evidence.get`: input a topology endpoint `evidence_ref`; output `evidence_ref` and a `network_fact` document.
+- `evidence.get`: input a current-run `evidence_ref`; output the reference and its topology or analysis document.
 
-The document shape currently supports `evidence_type: "network_fact"`, `capability_id: "topology.branch.endpoints.get"`, `context_ref`, `revision_ref`, `subject_ref`, `facts`, and `provenance`.
+The document shape carries `evidence_type`, producing `capability_id`, `context_ref`, `revision_ref`, optional `subject_ref`/`result_ref`, `facts`, and pandapower provenance.
 
 ## Parameters and Defaults
 
-`evidence.get` requires a topology endpoint `evidence_ref`. There are no defaults and no path-like identifiers.
+`evidence.get` requires a current-run evidence reference. There are no defaults and no path-like identifiers.
 
 ## Result Fields and Units
 
-Endpoint evidence facts include `from_bus_ref` and `to_bus_ref`. Provenance includes `engine: "pandapower"`, `engine_version: "3.4.0"`, and `source_alias`.
+Endpoint evidence facts include `from_bus_ref` and `to_bus_ref`; analysis evidence can include convergence, loss, loading, or violation summaries. Provenance includes `engine: "pandapower"` and `engine_version: "3.4.0"`.
 
 ## Single-step Examples
 
 - "Show the topology endpoint evidence" -> call `evidence.get` with the `evidence_ref` returned by `topology.branch.endpoints.get`.
+- "Inspect the persisted AC evidence" -> call `evidence.get` with a returned AC `evidence_ref`.
 - "Can I cite this stale ref?" -> no, unless it came from the current run workspace.
 
 ## Multi-step Examples
@@ -42,11 +43,11 @@ Endpoint evidence facts include `from_bus_ref` and `to_bus_ref`. Provenance incl
 
 ## Evidence Requirements
 
-Evidence is required for topology endpoint claims, AC numerical claims, result rankings, and N-1 risk claims when the producing capability marks `evidence_required: true`. AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs`; do not use `evidence.get` to request their result content.
+Evidence is required for topology endpoint claims, AC numerical claims, result rankings, and N-1 risk claims when the producing capability marks `evidence_required: true`. AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs`; `evidence.get` may inspect a current-run evidence document but does not replace those references.
 
 ## Common Mistakes
 
 - Treating the existence of a ref-looking string as evidence.
-- Reading files directly instead of using `evidence.get`.
+- Reading files directly instead of using `evidence.get` when the model needs a published evidence document.
 - Omitting evidence when final answers include network-specific facts or numerical values.
-- Calling `evidence.get` for AC, ranking, N-1, non-convergence, or contingency result content instead of citing returned refs.
+- Treating an `evidence.get` document as an unrestricted result-table query.

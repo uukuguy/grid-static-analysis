@@ -174,7 +174,7 @@ def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
         raise RuntimeError("grid_submit_answer draft must include result_refs")
     evidence_documents = _verify_evidence_refs(workspace, tuple(claimed))
     result_documents = _verify_result_refs(workspace, tuple(result_refs))
-    _verify_result_evidence_links(tuple(result_refs), result_documents, tuple(claimed), evidence_documents)
+    _verify_result_evidence_links(workspace, tuple(result_refs), result_documents, tuple(claimed), evidence_documents)
     return answer
 
 
@@ -283,11 +283,20 @@ def _allowed_result_document_path(workspace: RunWorkspace, digest: str) -> Path 
 
 
 def _verify_result_evidence_links(
+    workspace: RunWorkspace,
     result_refs: tuple[str, ...],
     result_documents: Mapping[str, Mapping[str, Any]],
     claimed_evidence_refs: tuple[str, ...],
     evidence_documents: tuple[Mapping[str, Any], ...],
 ) -> None:
+    """Verify the answer's explicit primary results and evidence-associated results.
+
+    A model declares the result references that directly support its conclusion.  Analysis
+    evidence already contains a cryptographic link to its producing result, so requiring the
+    model to repeat every one of those links is both redundant and brittle.  We nevertheless
+    load and validate every such linked result in the current workspace.
+    """
+    documents = dict(result_documents)
     declared = set(result_refs)
     linked: set[str] = set()
     claimed = set(claimed_evidence_refs)
@@ -295,13 +304,13 @@ def _verify_result_evidence_links(
         evidence_type = document.get("evidence_type")
         evidence_result_ref = document.get("result_ref")
         if isinstance(evidence_result_ref, str):
-            if evidence_type in {"analysis_result", "contingency_scenario"} and evidence_result_ref not in declared:
-                raise RuntimeError(f"analysis evidence requires a declared result_ref: {evidence_result_ref}")
-            if evidence_result_ref in declared:
-                _verify_matching_context(evidence_result_ref, result_documents[evidence_result_ref], document)
+            if evidence_type in {"analysis_result", "contingency_scenario"}:
+                if evidence_result_ref not in documents:
+                    documents.update(_verify_result_refs(workspace, (evidence_result_ref,)))
+                _verify_matching_context(evidence_result_ref, documents[evidence_result_ref], document)
                 linked.add(evidence_result_ref)
 
-    for result_ref, result_document in result_documents.items():
+    for result_ref, result_document in documents.items():
         result_evidence_refs = result_document.get("evidence_refs")
         if isinstance(result_evidence_refs, list) and any(ref in claimed for ref in result_evidence_refs):
             linked.add(result_ref)
@@ -355,6 +364,14 @@ def report(
 ) -> None:
     """Run a question file sequentially and write a readable simulation-analysis report."""
     project_paths = ProjectPaths.from_root(Path.cwd())
+    runtime_env = _runtime_environment(project_paths.root)
+    resolved = resolve_llm(
+        catalog=ProviderCatalog.load(),
+        cli=CliLLMOptions(provider=provider, model=model),
+        environ=runtime_env,
+        env_file=project_paths.root / ".env",
+        oauth_configured=lambda profile: ProjectAuthStore(project_paths.state_dir / "auth").status(profile).configured,
+    ).config
     batch_id = f"batch-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
     records: list[BatchRecord] = []
     typer.echo(f"开始批量系统仿真分析 batch={batch_id} 问题文件={questions}")
@@ -362,10 +379,7 @@ def report(
         question_id = f"{batch_id}-q{ordinal:03d}"
         typer.echo(f"\n[{ordinal}] 开始：{question}")
         command = ["grid-agent", "run", "--question-id", question_id]
-        if provider:
-            command.extend(["--provider", provider])
-        if model:
-            command.extend(["--model", model])
+        command.extend(["--provider", resolved.provider, "--model", resolved.model])
         command.append(question)
         started = time.monotonic()
         completed = _run_child_with_live_stderr(command, project_paths.root, lambda line: typer.echo(line, err=True))
@@ -379,18 +393,20 @@ def report(
             answer = "执行限制 / execution limitation: invalid batch child output"
             returned_id = question_id
         run_path = project_paths.runs_dir / returned_id
-        steps, evidence_refs, result_refs = read_run_observations(run_path)
+        observation = read_run_observations(run_path)
         status = "success" if completed.returncode == 0 else "failed"
         error = None if status == "success" else _summary(completed.stderr or completed.stdout)
-        records.append(BatchRecord(ordinal, question, returned_id, answer, status, duration, str(run_path) if run_path.exists() else None, steps, evidence_refs, result_refs, error))
-        typer.echo(f"[{ordinal}] {'完成' if status == 'success' else '失败'}：{duration:.2f}s；工具步骤 {len(steps)}；证据 {len(evidence_refs)}")
+        records.append(BatchRecord(ordinal, question, returned_id, answer, status, duration, str(run_path) if run_path.exists() else None, observation, error))
+        typer.echo(f"[{ordinal}] {'完成' if status == 'success' else '失败'}：{duration:.2f}s；工具步骤 {len(observation.steps)}；证据 {len(observation.evidence_sources)}")
     destination = report_path or project_paths.runs_dir / "reports" / f"{batch_id}-系统仿真分析报告.md"
     destination.parent.mkdir(parents=True, exist_ok=True)
     environment = {
         "执行时间（UTC）": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "Provider": provider or os.environ.get("GRID_AGENT_LLM_PROVIDER", "由 .env 配置"),
-        "Model": model or os.environ.get("GRID_AGENT_LLM_MODEL", "由 provider 默认值决定"),
-        "仿真器": "pandapower 3.4.0（经 gridctl）",
+        "LLM Provider": resolved.provider,
+        "LLM 模型": resolved.model,
+        "单次请求时限": f"{resolved.timeout_seconds:g} 秒",
+        "SDK 自动重试": f"{resolved.max_retries} 次",
+        "仿真器边界": "pandapower 3.4.0（经 gridctl）",
         "gridctl": str(GridctlLocator(_repo_root()).resolve()),
     }
     destination.write_text(render_markdown(batch_id=batch_id, source_name=str(questions), environment=environment, records=records), encoding="utf-8")

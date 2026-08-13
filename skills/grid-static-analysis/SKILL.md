@@ -35,7 +35,7 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 
 Open a context with `context.open` before model-specific operations. Use the returned `context_ref` for every later call. Treat `revision_ref`, `asset_ref`, `dataset_ref`, `result_ref`, `artifact_ref`, and `evidence_ref` as opaque stable references. Source aliases such as `pandapower:line:11` help resolve user language, but stable refs are used for composition.
 
-Only cite evidence that exists in the current run. If a capability says `evidence_required: true`, final network-specific claims must include the returned evidence or result reference. Submit final answers with `grid_submit_answer` using separate `result_refs` and `claim_evidence_refs` arrays; use `result_refs: []` only for topology-only or limitation answers with no persisted result. Offline informational answers may not create run workspaces or imply simulator evidence.
+Only cite evidence that exists in the current run. If a capability says `evidence_required: true`, final network-specific claims must include the returned evidence or result reference. Submit final answers with `grid_submit_answer` using separate `result_refs` (the primary result(s) used for the conclusion) and `claim_evidence_refs` arrays. The verifier also follows and verifies result references already bound into claimed analysis evidence, so do not repeat every scenario result merely to satisfy a format rule. Use `result_refs: []` only for topology-only or limitation answers with no persisted result. Offline informational answers may not create run workspaces or imply simulator evidence.
 
 ## Simple Questions
 
@@ -55,7 +55,7 @@ Plan from stable references:
 4. Run `analysis.powerflow.ac.run` for numerical AC steady-state values.
 5. Rank existing branch results with `result.branches.rank`; do not rerun power flow for ranking.
 6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context and policy.
-7. For topology endpoint facts only, call `evidence.get` when the final answer needs the `network_fact` document. For AC, ranking, and N-1, cite the returned `result_ref` and `evidence_refs`, and declare those result refs in `grid_submit_answer.result_refs`.
+7. Use `evidence.get` to inspect a current-run topology or analysis document when its persisted facts are needed. For AC, ranking, and N-1, cite the returned primary `result_ref` and relevant `evidence_refs`; scenario results linked by claimed N-1 evidence are verified automatically.
 
 ## Failure Recovery
 

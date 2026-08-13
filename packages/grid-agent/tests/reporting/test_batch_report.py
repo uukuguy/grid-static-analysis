@@ -5,7 +5,17 @@ import sys
 from pathlib import Path
 
 from grid_agent.cli.app import _run_child_with_live_stderr
-from grid_agent.reporting import BatchRecord, load_questions, read_run_observations, render_markdown, write_jsonl
+from grid_agent.reporting import (
+    AnalysisStep,
+    BatchRecord,
+    EvidenceSource,
+    RunObservation,
+    SimulationContext,
+    load_questions,
+    read_run_observations,
+    render_markdown,
+    write_jsonl,
+)
 
 
 def test_load_questions_ignores_blank_and_comment_lines(tmp_path: Path) -> None:
@@ -24,9 +34,23 @@ def test_render_markdown_explains_observed_analysis_environment_and_evidence() -
         status="success",
         duration_seconds=4.2,
         run_path="runs/q-1",
-        steps=(("context.open", 0.2), ("topology.branch.endpoints.get", 0.6)),
-        evidence_refs=("evidence:sha256:" + "a" * 64,),
-        result_refs=(),
+        observation=RunObservation(
+            context=SimulationContext(
+                "context:sha256:" + "b" * 64,
+                "ieee39",
+                "pandapower.networks.case39",
+                "pandapower",
+                "3.4.0",
+                "c" * 64,
+                {"buses": 39, "lines": 35},
+            ),
+            steps=(
+                AnalysisStep("context.open", 0.2, "打开只读网络仿真环境上下文：ieee39", True),
+                AnalysisStep("topology.branch.endpoints.get", 0.6, "核查支路两端母线：已返回线路端点和可追溯网络事实", True),
+            ),
+            evidence_sources=(EvidenceSource("evidence:sha256:" + "a" * 64, "网络拓扑事实：已持久化该支路两端母线的来源记录", "topology.branch.endpoints.get", None, "evidence/network-facts/network-fact.json"),),
+            result_refs=(),
+        ),
         error=None,
     )
 
@@ -38,19 +62,19 @@ def test_render_markdown_explains_observed_analysis_environment_and_evidence() -
     )
 
     assert "# 系统仿真分析报告" in report
-    assert "问题 1" in report
-    assert "任务拆解（基于实际执行）" in report
-    assert "仿真环境" in report
+    assert "## 1. 线路11连接哪两个母线?" in report
+    assert report.index("### 回答") < report.index("### 执行信息")
+    assert "仿真环境上下文" in report
     assert "证据来源" in report
-    assert "topology.branch.endpoints.get" in report
+    assert "打开只读网络仿真环境上下文" in report
     assert "线路11连接母线6与11。" in report
 
 
 def test_write_jsonl_contains_only_answer_envelopes(tmp_path: Path) -> None:
     destination = tmp_path / "answers.jsonl"
     records = (
-        BatchRecord(1, "q", "q-1", "a", "success", 1.0, None, (), (), (), None),
-        BatchRecord(2, "q2", "q-2", "b", "failed", 2.0, None, (), (), (), "timeout"),
+        BatchRecord(1, "q", "q-1", "a", "success", 1.0, None, RunObservation(None, (), (), ()), None),
+        BatchRecord(2, "q2", "q-2", "b", "failed", 2.0, None, RunObservation(None, (), (), ()), "timeout"),
     )
 
     write_jsonl(destination, records)
@@ -75,11 +99,12 @@ def test_read_run_observations_pairs_tool_start_and_canonical_result(tmp_path: P
         encoding="utf-8",
     )
 
-    steps, evidence_refs, result_refs = read_run_observations(events.parent)
+    observation = read_run_observations(events.parent)
 
-    assert steps == (("topology.branch.endpoints.get", 2.0),)
-    assert evidence_refs == ("evidence:sha256:" + "a" * 64,)
-    assert result_refs == ()
+    assert observation.steps[0].capability == "topology.branch.endpoints.get"
+    assert observation.steps[0].duration_seconds == 2.0
+    assert observation.evidence_sources[0].reference == "evidence:sha256:" + "a" * 64
+    assert observation.result_refs == ()
 
 
 def test_batch_child_forwards_stderr_lines_before_process_completion(tmp_path: Path) -> None:

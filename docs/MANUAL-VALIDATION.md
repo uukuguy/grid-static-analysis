@@ -62,7 +62,7 @@ make report
 make report QUESTIONS=questions.txt OUTPUT=answers.jsonl
 ```
 
-运行期间终端显示每题开始、模型/工具进度、工具结果摘要、每题总时长和最终报告位置。Markdown 报告在 `runs/reports/`，每题包含问题、最终回答、可观察的任务拆解、步骤时长、当前运行目录、仿真环境、`result_ref`/`evidence_ref` 及失败原因。它只记录可审计的执行信息，不展示模型隐藏推理。`OUTPUT` 文件每行严格只含 `question_id` 与 `answer_output`。
+运行期间终端显示每题开始、模型/工具进度、工具结果摘要、每题总时长和最终报告位置。Markdown 报告在 `runs/reports/`，每题以问题本身为标题并先给最终回答；随后记录本题实际打开的**仿真环境上下文**（模型来源、pandapower 版本、网络规模、不可变上下文标识）、可观察的分析动作与时长、可读的证据说明和文件位置，以及失败原因。这个上下文是问题分析和仿真结果的共同边界，不是由回答文字推断的标签。它只记录可审计的执行信息，不展示模型隐藏推理。`OUTPUT` 文件每行严格只含 `question_id` 与 `answer_output`。
 
 ## 3. 离线知识与确定性诊断
 
@@ -111,7 +111,7 @@ make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 
 检查 stderr 中有 `grid_guide_open`、`context.open`、`topology.branch.endpoints.get` 和 `grid_submit_answer` 等事件。然后检查 `runs/<question_id>/events.jsonl`：领域工具完成事件必须以规范化的 `tool_result` 保存，包含 capability、`ok`、typed `result` 和 `evidence_refs`。不得出现 `read`、`shell`、`bash`、`grid_query` 或模型直接调用 pandapower 的轨迹。
 
-最后打开 `answer-draft.json`：它应有 `answer_output`、`result_refs`、`claim_evidence_refs`。拓扑事实允许空 `result_refs`；AC/排序/N-1 结论必须声明当前运行中存在并与证据相连的 `result:sha256:*`。引用缺失、过期或摘要不匹配时 CLI 必须拒绝草稿，而不是照样输出答案。
+最后打开 `answer-draft.json`：它应有 `answer_output`、`result_refs`、`claim_evidence_refs`。`result_refs` 是支撑最终结论的主结果；分析证据中已关联的场景结果由运行时自动校验，不要求模型机械重复每一个场景引用。拓扑事实允许空 `result_refs`；AC/排序/N-1 结论必须有当前运行的主结果或与其相连的分析证据。引用缺失、过期、跨上下文或摘要不匹配时 CLI 必须拒绝草稿，而不是照样输出答案。
 
 ## 6. 回归与验证集
 

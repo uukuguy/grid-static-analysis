@@ -180,7 +180,7 @@ def test_answer_draft_requires_declared_result_refs_field(tmp_path: Path) -> Non
         _load_verified_answer_draft(workspace)
 
 
-def test_answer_draft_requires_result_ref_for_analysis_evidence(tmp_path: Path) -> None:
+def test_answer_draft_derives_and_verifies_result_ref_linked_by_analysis_evidence(tmp_path: Path) -> None:
     workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
     result_ref = _write_result_document(
         workspace,
@@ -205,8 +205,7 @@ def test_answer_draft_requires_result_ref_for_analysis_evidence(tmp_path: Path) 
     )
     _write_answer_draft(workspace, claim_evidence_refs=[evidence_ref], result_refs=[])
 
-    with pytest.raises(RuntimeError, match="analysis evidence requires a declared result_ref"):
-        _load_verified_answer_draft(workspace)
+    assert _load_verified_answer_draft(workspace) == "answer"
 
 
 def test_answer_draft_accepts_result_ref_linked_to_current_run_analysis_evidence(tmp_path: Path) -> None:

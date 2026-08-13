@@ -12,12 +12,12 @@ Do not use ranking to run a new power flow, fabricate missing result rows, query
 
 `result.branches.rank` consumes a prior current-run `result_ref` from `analysis.powerflow.ac.run`. It must not rerun power flow. Ranking is a read-only result query over persisted analysis artifacts.
 
-`evidence.get` is topology/network-fact-only in WP-A. It retrieves `network_fact` documents from `topology.branch.endpoints.get`; it is not the way to fetch AC, ranking, or N-1 result content.
+`evidence.get` retrieves a current-run topology or analysis evidence document. It is useful for inspecting persisted facts and provenance, but it is not a substitute for result queries or a way to access arbitrary files.
 
 ## Available Capabilities
 
 - `result.branches.rank`: rank branches by `loading_percent`, `p_from_mw`, `p_to_mw`, or `pl_mw`.
-- `evidence.get`: retrieve topology endpoint `network_fact` documents only; do not use it to retrieve ranking rows or analysis result content.
+- `evidence.get`: retrieve current-run topology or analysis evidence by its returned reference; do not use it to retrieve ranking rows.
 
 ## Parameters and Defaults
 
@@ -45,11 +45,11 @@ Outputs include `result_ref`, `context_ref`, `revision_ref`, `metric`, `metric_u
 
 ## Evidence Requirements
 
-`result.branches.rank` has `evidence_required: true` because it depends on persisted AC result references. Cite the input `result_ref` and relevant `evidence_refs` from the producing power-flow result. Submit that `result_ref` in `grid_submit_answer.result_refs`. AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs`; only topology endpoint `network_fact` documents are read through `evidence.get`.
+`result.branches.rank` has `evidence_required: true` because it depends on persisted AC result references. Cite the input `result_ref` and relevant `evidence_refs` from the producing power-flow result. Submit that primary `result_ref` in `grid_submit_answer.result_refs`. AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs`; `evidence.get` may inspect their persisted evidence when needed.
 
 ## Common Mistakes
 
 - Calling ranking with a context ref instead of a result ref.
 - Ranking a metric that was not produced by AC power flow.
 - Answering "highest loaded" from static line ratings instead of power-flow result rows.
-- Calling `evidence.get` to retrieve ranking rows or AC/N-1 result content.
+- Calling `evidence.get` to retrieve ranking rows rather than using `result.branches.rank`.
