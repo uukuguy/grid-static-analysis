@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -128,8 +129,11 @@ def test_verify_evidence_accepts_generated_ac_and_n1_evidence(tmp_path: Path) ->
         timeout_seconds=60,
     )
     opened = client.invoke("context.open", {"model_id": "ieee39"})
-    context_ref = str(opened["context_ref"])
+    context_ref = opened.get("context_ref")
+    assert isinstance(context_ref, str)
     powerflow = client.invoke("analysis.powerflow.ac.run", {"context_ref": context_ref})
+    powerflow_evidence_refs = powerflow.get("evidence_refs")
+    assert isinstance(powerflow_evidence_refs, list)
     element = client.invoke(
         "model.element.get",
         {
@@ -139,18 +143,24 @@ def test_verify_evidence_accepts_generated_ac_and_n1_evidence(tmp_path: Path) ->
             "identifier": "11",
         },
     )
+    element_document = element.get("element")
+    assert isinstance(element_document, Mapping)
+    branch_ref = element_document.get("asset_ref")
+    assert isinstance(branch_ref, str)
     contingency = client.invoke(
         "analysis.contingency.n_minus_one.run",
         {
             "context_ref": context_ref,
-            "branch_refs": [str(dict(element["element"])["asset_ref"])],
+            "branch_refs": [branch_ref],
             "policy": "static-analysis-v1",
         },
     )
+    contingency_evidence_refs = contingency.get("evidence_refs")
+    assert isinstance(contingency_evidence_refs, list)
 
     verifier = ContentReferenceVerifier(workspace.root_path)
-    for evidence_ref in tuple(str(ref) for ref in powerflow["evidence_refs"]) + tuple(
-        str(ref) for ref in contingency["evidence_refs"]
+    for evidence_ref in tuple(str(ref) for ref in powerflow_evidence_refs) + tuple(
+        str(ref) for ref in contingency_evidence_refs
     ):
         assert verifier.verify_evidence(evidence_ref).reference == evidence_ref
 
