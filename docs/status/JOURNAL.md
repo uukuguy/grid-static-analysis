@@ -136,3 +136,4 @@
 - 15:28 Added Makefile-aligned human verification manual for reproducible acceptance [f683e30]
 - 15:29 Recorded WP-A cutover state and recovery instructions after main integration [00f5cb1]
 - 15:31 Removed all retired GSE worktrees and local branches after WP-A integration [b639e4e]
+- 16:12 Added default TASK batch simulation reports with optional JSONL output for human and machine verification [b1a5b70]
