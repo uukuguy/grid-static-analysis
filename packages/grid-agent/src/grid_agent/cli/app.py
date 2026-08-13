@@ -237,7 +237,7 @@ def _load_submitted_answer(workspace: RunWorkspace) -> SubmittedAnswer:
 
     diagnostics = _audit_answer_draft(workspace, tuple(claimed), tuple(result_refs))
     _write_answer_audit(workspace, diagnostics)
-    return SubmittedAnswer(answer_output=humanize_answer(answer), diagnostics=diagnostics)
+    return SubmittedAnswer(answer_output=answer, diagnostics=diagnostics)
 
 
 def _audit_answer_draft(

@@ -394,3 +394,18 @@ def test_submitted_answer_keeps_answer_when_claim_evidence_is_foreign(tmp_path: 
     assert submitted.answer_output == "模型已提交的答案"
     assert len(submitted.diagnostics) == 1
     assert submitted.diagnostics[0].severity == "error"
+
+
+def test_submitted_answer_preserves_opaque_references_byte_for_byte(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    answer = "结果 result:sha256:" + "a" * 64 + " 与证据 evidence:sha256:" + "b" * 64
+    _write_answer_draft(
+        workspace,
+        answer_output=answer,
+        claim_evidence_refs=[],
+        result_refs=[],
+    )
+
+    submitted = _load_submitted_answer(workspace)
+
+    assert submitted.answer_output == answer
