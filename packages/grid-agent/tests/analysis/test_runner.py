@@ -315,7 +315,7 @@ def test_runner_replays_final_ledger_and_writes_manifest(runner_harness: RunnerH
     assert outcome.report_path == runner_harness.workspace.report_path
 
 
-def test_runner_verifies_materialized_completed_snapshot_before_final_report(
+def test_runner_verifies_running_snapshot_before_completion_and_final_report(
     runner_harness: RunnerHarness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -337,9 +337,10 @@ def test_runner_verifies_materialized_completed_snapshot_before_final_report(
     )
 
     assert outcome.status == "completed"
-    assert "verify:completed" in calls
+    assert "verify:running" in calls
     assert "report:completed" in calls
-    assert calls.index("verify:completed") < calls.index("report:completed")
+    assert "verify:completed" not in calls
+    assert calls.index("verify:running") < calls.index("report:completed")
 
 
 def test_runner_terminally_fails_when_final_replay_verification_fails(
@@ -358,8 +359,8 @@ def test_runner_terminally_fails_when_final_replay_verification_fails(
     assert outcome.status == "failed"
     assert "durable state mismatch" in (outcome.error or "")
     manifest = json.loads(runner_harness.workspace.manifest_path.read_text(encoding="utf-8"))
-    assert runner_harness.store.snapshot.status == "completed"
-    assert manifest["status"] == "aborted"
+    assert runner_harness.store.snapshot.status == "failed"
+    assert manifest["status"] == "failed"
     assert "durable state mismatch" in manifest["error"]
 
 

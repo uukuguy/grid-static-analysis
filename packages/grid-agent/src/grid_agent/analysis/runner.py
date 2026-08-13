@@ -34,7 +34,7 @@ class AnalysisOutcome:
     error: str | None = None
 
 
-ManifestStatus = Literal["completed", "failed", "aborted"]
+ManifestStatus = Literal["completed", "failed"]
 
 
 class PiSession(Protocol):
@@ -127,6 +127,7 @@ class AnalysisRunner:
                 self._checkpoint_after_turn(finalized)
 
             try:
+                self._verify_running_state_before_completion()
                 self._store.append(
                     ContextEventDraft(
                         event_type="analysis.completed",
@@ -136,7 +137,6 @@ class AnalysisRunner:
                         },
                     )
                 )
-                self._verify_completed_state()
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 self._fail_analysis(error, total_turns=len(request.instructions))
@@ -184,11 +184,11 @@ class AnalysisRunner:
             environment=self._environment,
         )
 
-    def _verify_completed_state(self) -> None:
+    def _verify_running_state_before_completion(self) -> None:
         self._store.verify_materialized_snapshot()
         replayed = AnalysisContextStore.replay(self._workspace.context_events_path)
         if replayed != self._store.snapshot:
-            raise ContextStoreError("replayed context does not match in-memory snapshot after completion")
+            raise ContextStoreError("replayed context does not match in-memory snapshot before completion")
 
     def _fail_analysis(self, error: str, *, total_turns: int) -> None:
         if self._store.snapshot.status not in {"completed", "failed"} and self._store.snapshot.current_turn is None:
@@ -202,8 +202,7 @@ class AnalysisRunner:
                 )
             except ContextStoreError:
                 pass
-        manifest_status: ManifestStatus = "failed" if self._store.snapshot.status == "failed" else "aborted"
-        self._write_final_artifacts(status=manifest_status, error=error, total_turns=total_turns)
+        self._write_final_artifacts(status="failed", error=error, total_turns=total_turns)
 
     def _write_final_artifacts(
         self,

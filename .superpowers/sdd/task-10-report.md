@@ -1,6 +1,6 @@
 ### Task 10 Report: One-process Analysis runner
 
-Status: complete; review fixes complete
+Status: complete; final review fixes complete
 
 Implemented `AnalysisRunner` with dependency injection for the existing workspace, durable context store, turn controller, projector, Pi RPC session, context view materialization, and report writer.
 
@@ -14,9 +14,9 @@ Key behavior covered:
 - Treats `PiProtocolError`, durable context-state failures, and `SimulatorIntegrityError` as terminal analysis failures.
 - Protects Pi launch inside the lifecycle guard so launch failures terminalize artifacts and still call `stop`.
 - Safely aborts active turns on durable `ContextStoreError` before writing a failed manifest when the store can still record closure.
-- Writes `aborted` manifests instead of failed manifests when a post-terminal verification failure means the context cannot be rewritten.
 - Keeps normal gridctl/tool errors non-terminal as diagnostic/limitation context.
-- Appends `analysis.completed` only after successful turns, verifies the materialized completed snapshot, replays/compares the ledger, then writes final report and `manifest.json`.
+- Verifies the materialized running snapshot and replay/in-memory consistency before appending `analysis.completed`, preventing completed context plus failed outcome contradictions.
+- Appends `analysis.failed` and writes failed report/manifest when pre-completion integrity verification fails.
 
 Files changed:
 
@@ -45,8 +45,17 @@ Verification:
   - `0 errors, 0 warnings, 0 informations`
 - Review-fix mypy: `uv run --project packages/grid-agent --with mypy mypy packages/grid-agent/src/grid_agent/analysis/runner.py packages/grid-agent/tests/analysis/test_runner.py`
   - `Success: no issues found in 2 source files`
+- Final high-issue RED: `uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_runner.py -q`
+  - Failed as expected because final verification still happened after `analysis.completed` and produced completed context with failed outcome.
+- Final high-issue runner tests: `uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_runner.py -q`
+  - `9 passed in 0.22s`
+- Final high-issue pyright: `pyright --pythonpath packages/grid-agent/.venv/bin/python packages/grid-agent/src/grid_agent/analysis/runner.py packages/grid-agent/tests/analysis/test_runner.py`
+  - `0 errors, 0 warnings, 0 informations`
+- Final high-issue mypy: `uv run --project packages/grid-agent --with mypy mypy packages/grid-agent/src/grid_agent/analysis/runner.py packages/grid-agent/tests/analysis/test_runner.py`
+  - `Success: no issues found in 2 source files`
 
 Commit:
 
 - Initial implementation: `624e2aa feat: run ordered instructions in one pi session`
-- Review-fix commit pending at report-update time.
+- Review fixes: `f88b51b fix: harden analysis runner terminal failures`
+- Final high-issue fix pending at report-update time.
