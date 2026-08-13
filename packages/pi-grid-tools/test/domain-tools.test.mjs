@@ -46,6 +46,69 @@ test("registers catalog tools, guide, and answer submission only", async () => {
   );
 });
 
+test("analysis tools expose bounded context and bind answer to active turn", async () => {
+  const root = await makeFixtureRoot();
+  await configureAnalysisPaths(
+    root,
+    {
+      turn_id: "analysis-test-t002",
+      turn_nonce: "nonce-2",
+    },
+    { schema_version: "analysis-context-view/1.0", revision: 9, state_hash: "sha256:test" },
+  );
+
+  const registered = [];
+  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
+
+  assert.equal(registered.some((tool) => tool.name === "grid_analysis_context_get"), true);
+  const context = await registered.find((tool) => tool.name === "grid_analysis_context_get").execute("context-1", {});
+  const submitted = await registered.find((tool) => tool.name === "grid_submit_answer").execute("submit-1", {
+    answer_output: "答案",
+    result_refs: [],
+    claim_evidence_refs: [],
+  });
+
+  assert.equal(context.isError, undefined);
+  assert.equal(context.details.result.revision, 9);
+  assert.deepEqual(JSON.parse(await readFile(process.env.GRID_AGENT_ANSWER_DRAFT, "utf8")), {
+    turn_id: "analysis-test-t002",
+    turn_nonce: "nonce-2",
+    answer_output: "答案",
+    result_refs: [],
+    claim_evidence_refs: [],
+  });
+  assert.equal(submitted.details.result.turn_id, "analysis-test-t002");
+  assert.equal(submitted.details.result.turn_nonce, "nonce-2");
+});
+
+test("analysis context tool is optional for legacy single-run launches", async () => {
+  const root = await makeFixtureRoot();
+  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
+  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
+  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
+  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
+  delete process.env.GRID_AGENT_ACTIVE_TURN;
+  delete process.env.GRID_AGENT_ANALYSIS_CONTEXT_VIEW;
+  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
+  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
+
+  const registered = [];
+  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
+
+  assert.equal(registered.some((tool) => tool.name === "grid_analysis_context_get"), false);
+  const submit = registered.find((tool) => tool.name === "grid_submit_answer");
+  await submit.execute("submit-legacy", {
+    answer_output: "legacy",
+    result_refs: [],
+    claim_evidence_refs: [],
+  });
+  assert.deepEqual(JSON.parse(await readFile(process.env.GRID_AGENT_ANSWER_DRAFT, "utf8")), {
+    answer_output: "legacy",
+    result_refs: [],
+    claim_evidence_refs: [],
+  });
+});
+
 test("removes provider credentials from gridctl child environment", () => {
   const clean = sanitizeEnvironment(
     {
@@ -317,6 +380,20 @@ async function makeFixtureRoot() {
   await mkdir(join(root, "run"), { recursive: true });
   await mkdir(join(root, "guides"), { recursive: true });
   return root;
+}
+
+async function configureAnalysisPaths(root, activeTurn, contextView) {
+  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
+  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
+  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
+  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
+  process.env.GRID_AGENT_ACTIVE_TURN = join(root, "run/active-turn.json");
+  process.env.GRID_AGENT_ANALYSIS_CONTEXT_VIEW = join(root, "run/context/analysis-context-view.json");
+  await mkdir(join(root, "run/context"), { recursive: true });
+  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
+  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
+  await writeFile(process.env.GRID_AGENT_ACTIVE_TURN, JSON.stringify(activeTurn), "utf8");
+  await writeFile(process.env.GRID_AGENT_ANALYSIS_CONTEXT_VIEW, JSON.stringify(contextView), "utf8");
 }
 
 async function writeCatalog(path) {

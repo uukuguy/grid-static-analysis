@@ -76,7 +76,10 @@ export default function domainToolsExtension(pi) {
     pi.registerTool(createGridTool(contract, (payload) => runGridctl(payload, paths.workspacePath)));
   }
   pi.registerTool(createGuideTool(paths.guideIndexPath));
-  pi.registerTool(createSubmitAnswerTool(paths.answerDraftPath));
+  if (paths.analysisContextViewPath !== undefined) {
+    pi.registerTool(createAnalysisContextTool(paths.analysisContextViewPath));
+  }
+  pi.registerTool(createSubmitAnswerTool(paths.answerDraftPath, paths.activeTurnPath));
 }
 
 function runGridctl(payload, workspacePath = requiredExistingRealPath(process.env, "GRID_AGENT_WORKSPACE")) {
@@ -169,7 +172,29 @@ function createGuideTool(guideIndexPath) {
   });
 }
 
-function createSubmitAnswerTool(answerDraftPath) {
+function createAnalysisContextTool(analysisContextViewPath) {
+  return defineTool({
+    name: "grid_analysis_context_get",
+    label: "grid_analysis_context_get",
+    description: "Return the controller-generated bounded read-only analysis context view.",
+    parameters: Type.Object({}),
+    async execute() {
+      const result = await readJson(analysisContextViewPath);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        details: {
+          event: "tool_result",
+          capability: "grid_analysis_context_get",
+          ok: true,
+          result,
+          evidence_refs: [],
+        },
+      };
+    },
+  });
+}
+
+function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined) {
   return defineTool({
     name: "grid_submit_answer",
     label: "grid_submit_answer",
@@ -180,7 +205,9 @@ function createSubmitAnswerTool(answerDraftPath) {
       claim_evidence_refs: Type.Array(Type.String()),
     }),
     async execute(_id, params) {
+      const activeTurn = activeTurnPath === undefined ? {} : await readActiveTurn(activeTurnPath);
       const payload = {
+        ...activeTurn,
         answer_output: params.answer_output,
         result_refs: params.result_refs,
         claim_evidence_refs: params.claim_evidence_refs,
@@ -205,16 +232,20 @@ function runtimePaths(env) {
   const toolCatalogPath = requiredExistingRealPath(env, "GRID_AGENT_TOOL_CATALOG");
   const guideIndexPath = requiredExistingRealPath(env, "GRID_AGENT_GUIDE_INDEX");
   const answerDraftPath = requiredWritableRealPath(env, "GRID_AGENT_ANSWER_DRAFT");
+  const activeTurnPath = optionalWritableRealPath(env, "GRID_AGENT_ACTIVE_TURN");
+  const analysisContextViewPath = optionalExistingRealPath(env, "GRID_AGENT_ANALYSIS_CONTEXT_VIEW");
   for (const [name, candidate] of [
     ["GRID_AGENT_TOOL_CATALOG", toolCatalogPath],
     ["GRID_AGENT_GUIDE_INDEX", guideIndexPath],
     ["GRID_AGENT_ANSWER_DRAFT", answerDraftPath],
+    ["GRID_AGENT_ACTIVE_TURN", activeTurnPath],
+    ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW", analysisContextViewPath],
   ]) {
-    if (!isInside(candidate, workspacePath)) {
+    if (candidate !== undefined && !isInside(candidate, workspacePath)) {
       throw new Error(`${name} resolved path ${candidate} is outside GRID_AGENT_WORKSPACE`);
     }
   }
-  return { workspacePath, toolCatalogPath, guideIndexPath, answerDraftPath };
+  return { workspacePath, toolCatalogPath, guideIndexPath, answerDraftPath, activeTurnPath, analysisContextViewPath };
 }
 
 function requiredAbsolutePath(env, name) {
@@ -249,6 +280,20 @@ function requiredWritableRealPath(env, name) {
       throw new Error(`${name} parent must resolve to an existing path: ${parentError.message}`);
     }
   }
+}
+
+function optionalExistingRealPath(env, name) {
+  if (env[name] === undefined || env[name] === "") {
+    return undefined;
+  }
+  return requiredExistingRealPath(env, name);
+}
+
+function optionalWritableRealPath(env, name) {
+  if (env[name] === undefined || env[name] === "") {
+    return undefined;
+  }
+  return requiredWritableRealPath(env, name);
 }
 
 function isInside(candidate, root) {
@@ -345,6 +390,17 @@ function readJsonSync(path) {
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function readActiveTurn(path) {
+  const activeTurn = await readJson(path);
+  if (typeof activeTurn?.turn_id !== "string" || typeof activeTurn?.turn_nonce !== "string") {
+    throw new Error("GRID_AGENT_ACTIVE_TURN must contain turn_id and turn_nonce");
+  }
+  return {
+    turn_id: activeTurn.turn_id,
+    turn_nonce: activeTurn.turn_nonce,
+  };
 }
 
 async function writeJsonAtomic(path, payload) {

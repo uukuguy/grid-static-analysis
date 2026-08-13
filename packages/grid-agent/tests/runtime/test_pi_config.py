@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from grid_agent.config.models import ResolvedLLM, ResolvedLLMConfig, SecretValue
@@ -82,6 +83,27 @@ def test_pi_launch_passes_domain_tool_paths_in_environment(tmp_path: Path) -> No
     assert launch.environment["GRID_AGENT_WORKSPACE"] == str(paths.workspace)
     assert launch.environment["GRID_AGENT_ANSWER_DRAFT"] == str(paths.answer_draft_path)
     assert launch.environment["OPENAI_API_KEY"] == "super-secret"
+
+
+def test_pi_launch_exposes_analysis_paths_only_when_configured(tmp_path: Path) -> None:
+    resolved = _resolved_openai()
+    legacy_paths = _runtime_paths(tmp_path / "legacy")
+    analysis_base_paths = _runtime_paths(tmp_path / "analysis")
+    analysis_paths = replace(
+        analysis_base_paths,
+        active_turn_path=tmp_path / "analysis/run/active-turn.json",
+        analysis_context_view_path=tmp_path / "analysis/run/context/analysis-context-view.json",
+    )
+
+    legacy_launch = build_pi_launch(resolved, legacy_paths, base_environment={"PATH": "/bin", "HOME": "/tmp"})
+    analysis_launch = build_pi_launch(resolved, analysis_paths, base_environment={"PATH": "/bin", "HOME": "/tmp"})
+
+    assert "GRID_AGENT_ACTIVE_TURN" not in legacy_launch.environment
+    assert "GRID_AGENT_ANALYSIS_CONTEXT_VIEW" not in legacy_launch.environment
+    assert analysis_launch.environment["GRID_AGENT_ACTIVE_TURN"] == str(analysis_paths.active_turn_path)
+    assert analysis_launch.environment["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"] == str(
+        analysis_paths.analysis_context_view_path
+    )
 
 
 def _resolved_openai() -> ResolvedLLM:

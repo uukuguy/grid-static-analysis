@@ -20,6 +20,8 @@ class RuntimePaths:
     guide_index_path: Path
     answer_draft_path: Path
     system_policy_path: Path
+    active_turn_path: Path | None = None
+    analysis_context_view_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,10 @@ def build_pi_environment(resolved: ResolvedLLM, paths: RuntimePaths, *, base_env
     allowed["GRID_AGENT_TOOL_CATALOG"] = str(paths.tool_catalog_path)
     allowed["GRID_AGENT_GUIDE_INDEX"] = str(paths.guide_index_path)
     allowed["GRID_AGENT_ANSWER_DRAFT"] = str(paths.answer_draft_path)
+    if paths.active_turn_path is not None:
+        allowed["GRID_AGENT_ACTIVE_TURN"] = str(paths.active_turn_path)
+    if paths.analysis_context_view_path is not None:
+        allowed["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"] = str(paths.analysis_context_view_path)
     if resolved.secret is not None:
         allowed[resolved.config.credential_reference] = resolved.secret.value
         allowed["GRID_AGENT_SECRET_ENV_NAMES"] = resolved.config.credential_reference
