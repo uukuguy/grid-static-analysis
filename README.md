@@ -19,3 +19,4 @@ The simulator is separately pinned to pandapower 3.4.0. API keys are environment
 `make validate` runs the mandatory WP-A deterministic offline and scripted-Pi suites. `make validate-provider PROVIDER=<id> [MODEL=<id>]` is optional and may call a billed provider only when explicit credentials are configured.
 
 See [运行操作指南](docs/RUNBOOK.md) for setup, execution, Pi RPC, evidence, and verification details.
+For a reproducible, human-facing acceptance procedure aligned with every Makefile entry, see [人工验证手册](docs/MANUAL-VALIDATION.md).

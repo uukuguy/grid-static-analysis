@@ -85,6 +85,8 @@ WP-A 可执行能力包括：运行时/模型发现、打开 IEEE-39 上下文�
 
 ## 验证
 
+需要逐项人工核验命令、stdout 边界、结构化工具轨迹和证据引用时，请使用 [人工验证手册](MANUAL-VALIDATION.md)。该手册只使用本 Makefile 发布的入口。
+
 ```sh
 make test
 make test-e2e

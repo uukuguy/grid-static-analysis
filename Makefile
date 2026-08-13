@@ -12,9 +12,10 @@ help:
 	@echo "  make auth-import-pi        Import local Pi Codex OAuth to this project"
 	@echo "  make auth-login            Log in to Pi Codex OAuth for this project"
 	@echo "  make test                  Run all offline verification"
-	@echo "  make test-e2e              Run offline command-line scenarios"
+	@echo "  make test-e2e              Run offline CLI and scripted Pi-to-gridctl scenarios"
 	@echo "  make validate              Run deterministic WP-A validation"
 	@echo "  make validate-provider PROVIDER=... [MODEL=...]  Run optional billed provider validation"
+	@echo "  Manual: docs/MANUAL-VALIDATION.md (human verification for every entry above)"
 
 setup: setup-agent setup-simulator setup-tools
 
