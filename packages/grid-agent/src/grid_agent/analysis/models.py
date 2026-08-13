@@ -21,6 +21,8 @@ EventType = Literal[
     "turn.completed",
     "analysis.completed",
     "analysis.failed",
+    "analysis_context.changed",
+    "analysis_context.injected",
 ]
 
 

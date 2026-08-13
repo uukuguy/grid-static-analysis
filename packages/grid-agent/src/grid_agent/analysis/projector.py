@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable, Mapping
 from hashlib import sha256
 from pathlib import Path
@@ -35,7 +36,7 @@ class AnalysisContextProjector:
         self._verifier = verifier
         self._starts: dict[str, Mapping[str, Any]] = {}
 
-    def observe(self, event: Mapping[str, Any], *, turn_id: str) -> None:
+    def observe(self, event: Mapping[str, Any], *, turn_id: str, trace_sequence: int | None = None) -> None:
         event_type = event.get("type")
         if event_type == "tool_execution_start":
             call_id = _tool_call_id(event)
@@ -95,6 +96,7 @@ class AnalysisContextProjector:
             start=start,
             turn_id=turn_id,
             call_id=call_id,
+            trace_sequence=trace_sequence,
         )
         if capability != "result.branches.rank":
             self._append_missing_baselines(capability, result, context_artifacts, turn_id=turn_id)
@@ -121,6 +123,7 @@ class AnalysisContextProjector:
         start: Mapping[str, Any],
         turn_id: str,
         call_id: str | None,
+        trace_sequence: int | None = None,
     ) -> None:
         observation_ref = self._append_observation(
             capability,
@@ -129,6 +132,7 @@ class AnalysisContextProjector:
             start=start,
             turn_id=turn_id,
             call_id=call_id,
+            trace_sequence=trace_sequence,
             consume_dependencies=False,
         )
         error = event.get("error")
@@ -205,18 +209,22 @@ class AnalysisContextProjector:
         turn_id: str,
         call_id: str | None,
         consume_dependencies: bool = True,
+        trace_sequence: int | None = None,
     ) -> str:
         args = _start_args(start)
         observation_ref = _stable_ref("observation", capability, turn_id, call_id, args, _projection_summary(capability, result, event))
         consumed_refs = _consumed_refs(capability, args) if consume_dependencies else []
+        result_path = self._tool_result_path(turn_id, call_id or observation_ref)
+        _write_json_atomic(result_path, {"capability": capability, "ok": event.get("ok") is True, "result": result, "error": event.get("error"), "evidence_refs": event.get("evidence_refs", [])})
         self._store.append(
             ContextEventDraft(
                 event_type="tool.observation.recorded",
                 turn_id=turn_id,
                 capability=capability,
+                trace_sequence=trace_sequence,
                 payload={
                     "observation_ref": observation_ref,
-                    "path": f"tool-results/{turn_id}/{call_id or observation_ref}.json",
+                    "path": _relative_path(result_path, self._verifier.workspace_root),
                     "summary": _projection_summary(capability, result, event),
                     "producer_observation": _producer_observation(capability, start, call_id),
                     "consumed_refs": consumed_refs,
@@ -225,6 +233,9 @@ class AnalysisContextProjector:
             )
         )
         return observation_ref
+
+    def _tool_result_path(self, turn_id: str, call_id: str) -> Path:
+        return self._verifier.workspace_root / "tool-results" / turn_id / f"{call_id}.json"
 
     def _append_results(
         self,
@@ -719,6 +730,17 @@ def _stable_ref(kind: str, *parts: object) -> str:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    encoded = _canonical_json(payload).encode("utf-8") + b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("wb") as stream:
+        stream.write(encoded)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
 
 
 def _dedupe(refs: Iterable[str]) -> list[str]:

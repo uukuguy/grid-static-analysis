@@ -36,6 +36,9 @@ class FakePi:
 
     def start(self) -> None:
         self.start_calls += 1
+        # The Node extension reads this file during process startup, before it
+        # receives its first prompt.
+        assert self.workspace.context_view_path.is_file()
         if self.start_error is not None:
             raise self.start_error
 
@@ -53,20 +56,20 @@ class FakePi:
             return ""
         if action == TAMPERED_SUCCESSFUL_RESULT:
             assert callable(on_semantic_event)
-            on_semantic_event(action)
+            on_semantic_event(action, 1)
             return ""
         if isinstance(action, dict) and action.get("tool_error"):
             assert callable(on_semantic_event)
-            on_semantic_event({"type": "tool_result", "capability": "analysis.powerflow.ac.run", "ok": False})
+            on_semantic_event({"type": "tool_result", "capability": "analysis.powerflow.ac.run", "ok": False}, 1)
         if isinstance(action, dict) and "produce_result_ref" in action:
             assert callable(on_semantic_event)
-            on_semantic_event({"type": "fake_result", "result_ref": action["produce_result_ref"]})
+            on_semantic_event({"type": "fake_result", "result_ref": action["produce_result_ref"]}, 1)
         if isinstance(action, dict) and "consume_result_ref" in action:
             assert callable(on_semantic_event)
-            on_semantic_event({"type": "fake_consume", "result_ref": action["consume_result_ref"]})
+            on_semantic_event({"type": "fake_consume", "result_ref": action["consume_result_ref"]}, 1)
         if isinstance(action, dict) and action.get("store_error"):
             assert callable(on_semantic_event)
-            on_semantic_event({"type": "fake_store_error"})
+            on_semantic_event({"type": "fake_store_error"}, 1)
         if isinstance(action, dict) and action.get("write_draft", True):
             handle = _read_active_turn(self.workspace)
             _write_draft(
@@ -83,7 +86,7 @@ class FakeProjector:
         self.store = store
         self.events: list[tuple[str, Mapping[str, Any]]] = []
 
-    def observe(self, event: Mapping[str, Any], *, turn_id: str) -> None:
+    def observe(self, event: Mapping[str, Any], *, turn_id: str, trace_sequence: int | None = None) -> None:
         self.events.append((turn_id, event))
         if event.get("type") == "fake_result":
             _append_baseline_if_missing(self.store, turn_id)
@@ -207,6 +210,19 @@ def test_runner_reuses_one_pi_process_and_injects_finalized_prior_context(runner
     assert RESULT_REF in runner_harness.pi.prompts[1]
     assert outcome.status == "completed"
     assert runner_harness.store.snapshot.turns[1].consumed_refs == [RESULT_REF]
+
+
+def test_runner_records_submitted_answer_before_completing_turn(runner_harness: RunnerHarness) -> None:
+    outcome = runner_harness.runner.run(AnalysisRequest(analysis_id="analysis-test", instructions=("一",)))
+
+    events = [json.loads(line) for line in runner_harness.workspace.context_events_path.read_text(encoding="utf-8").splitlines()]
+    submitted = next(event for event in events if event["event_type"] == "answer.submitted")
+    completed = next(event for event in events if event["event_type"] == "turn.completed")
+    assert submitted["sequence"] < completed["sequence"]
+    assert submitted["payload"]["turn_id"] == "analysis-test-t001"
+    assert submitted["payload"]["answer_path"] == "turns/001/answer.json"
+    assert submitted["payload"]["answer_sha256"]
+    assert outcome.status == "completed"
 
 
 def test_runner_continues_after_missing_answer_but_stops_on_integrity_failure(

@@ -460,6 +460,7 @@ def _execute_analysis(
             "gridctl": str(workspace.bin_path / "gridctl"),
         },
         progress_callback=progress.on_event,
+        trace=trace,
     )
     outcome = runner.run(AnalysisRequest(analysis_id=workspace.analysis_id, instructions=instruction_items))
     typer.echo(

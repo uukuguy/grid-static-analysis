@@ -13,7 +13,7 @@ from grid_agent.runtime.lock import PiCommand
 from grid_agent.runtime.environment import PiLaunch
 
 
-SemanticEventCallback = Callable[[dict[str, Any]], None]
+SemanticEventCallback = Callable[[dict[str, Any], int], None]
 TRACEABLE_RPC_TYPES = frozenset({"prompt_ack", "response", "tool_execution_start", "tool_execution_end", "agent_end"})
 
 
@@ -87,9 +87,9 @@ class PiRpcClient:
                 if isinstance(assistant_event, dict) and assistant_event.get("type") == "text_delta":
                     text.append(str(assistant_event.get("delta", "")))
             for payload in _semantic_trace_payloads(event, "".join(text), pending_tool_calls):
-                self.trace.append("pi_event", payload)
+                sequence = self.trace.append("pi_event", payload)
                 if on_semantic_event is not None:
-                    on_semantic_event(payload)
+                    on_semantic_event(payload, sequence)
             if event.get("type") == "prompt_ack" and event.get("ok") is True:
                 acknowledged = True
             if event.get("type") == "response" and event.get("command") == "prompt":

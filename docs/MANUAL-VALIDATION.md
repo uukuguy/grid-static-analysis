@@ -67,7 +67,7 @@ stdout 必须只有一个最终 `AnswerEnvelope`，`question_id` 形如 `analysi
 
 `make report` 和 `grid-agent report --questions PATH` 仅为迁移期兼容别名，委托同一条连续分析路径。它们不再接受独立 `OUTPUT`、`--output` 或 `--report-path`，也不再为每个问题启动一个 `grid-agent run` 子进程。当前版本没有 resume、命名 session 或 session 切换；中断后应检查已写入的同一分析目录并重新运行指令集。
 
-若最终答案审计不通过，报告不会只给出截断日志或悄悄把草稿当作成功答案：它会明确写出发现、对最终结果的影响和复核建议，并在其下保留“模型草稿（未采纳）”。同一分析目录中的 `output/answers.jsonl` 仍只记录受控的逐回合答案 envelope，避免把未经证据校验的草稿交给下游系统。
+答案草稿通过受控提交后即为已接受答案；审计会作为单独的诊断写入报告，明确列出发现、影响和复核建议，但不会把已接受答案改写为“未采纳”。同一分析目录中的 `output/answers.jsonl` 仍只记录受控的逐回合答案 envelope。
 
 ## 3. 离线知识与确定性诊断
 

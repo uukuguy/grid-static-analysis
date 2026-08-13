@@ -14,7 +14,7 @@ class JsonlTraceWriter:
         self._sequence = self._read_existing_sequence(path)
         self._stream: TextIO = path.open("a", encoding="utf-8")
 
-    def append(self, event: str, payload: Any) -> None:
+    def append(self, event: str, payload: Any) -> int:
         self._sequence += 1
         record = {
             "sequence": self._sequence,
@@ -25,6 +25,7 @@ class JsonlTraceWriter:
         self._stream.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._stream.flush()
         os.fsync(self._stream.fileno())
+        return self._sequence
 
     def _redact(self, value: Any) -> Any:
         if isinstance(value, str):

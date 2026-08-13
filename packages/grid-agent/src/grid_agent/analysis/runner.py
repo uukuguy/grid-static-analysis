@@ -16,6 +16,7 @@ from grid_agent.analysis.turns import ActiveTurnHandle, FinalizedTurn, TurnContr
 from grid_agent.analysis.view import materialize_context_view
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.runtime.rpc import PiProtocolError, SemanticEventCallback
+from grid_agent.observability.trace import JsonlTraceWriter
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +56,7 @@ class PiSession(Protocol):
 
 
 class ContextProjector(Protocol):
-    def observe(self, event: Mapping[str, Any], *, turn_id: str) -> None: ...
+    def observe(self, event: Mapping[str, Any], *, turn_id: str, trace_sequence: int | None = None) -> None: ...
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -74,6 +75,7 @@ class AnalysisRunner:
         projector: ContextProjector,
         environment: Mapping[str, str] | None = None,
         progress_callback: ProgressCallback | None = None,
+        trace: JsonlTraceWriter | None = None,
     ) -> None:
         self._workspace = workspace
         self._store = store
@@ -82,6 +84,8 @@ class AnalysisRunner:
         self._projector = projector
         self._environment = dict(environment or {})
         self._progress_callback = progress_callback
+        self._trace = trace
+        self._last_context_revision: int | None = None
 
     def run(self, request: AnalysisRequest) -> AnalysisOutcome:
         if request.analysis_id != self._workspace.analysis_id or request.analysis_id != self._store.snapshot.analysis_id:
@@ -89,6 +93,9 @@ class AnalysisRunner:
 
         try:
             try:
+                # Pi loads the extension before the first prompt; its configured
+                # context-view path must therefore already exist.
+                self._materialize_context_view()
                 self._pi.start()
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
@@ -107,9 +114,10 @@ class AnalysisRunner:
                     self._pi.prompt_and_wait(
                         self._prompt_for(instruction),
                         on_event=self._progress_callback,
-                        on_semantic_event=lambda event, turn_id=handle.turn_id: self._projector.observe(
+                        on_semantic_event=lambda event, sequence, turn_id=handle.turn_id: self._projector.observe(
                             event,
                             turn_id=turn_id,
+                            trace_sequence=sequence,
                         ),
                         require_answer_text=False,
                     )
@@ -220,12 +228,14 @@ class AnalysisRunner:
         error: str | None,
         total_turns: int,
     ) -> None:
-        self._materialize_context_view()
-        write_analysis_report_checkpoint(
-            context=self._store.snapshot,
-            workspace=self._workspace,
-            environment=self._environment,
-        )
+        context_available = self._store.snapshot.status in {"completed", "failed"} and self._store.snapshot.current_turn is None
+        if context_available:
+            self._materialize_context_view()
+            write_analysis_report_checkpoint(
+                context=self._store.snapshot,
+                workspace=self._workspace,
+                environment=self._environment,
+            )
         manifest: dict[str, Any] = {
             "schema_version": "grid-agent-analysis-manifest/1.0",
             "analysis_id": self._workspace.analysis_id,
@@ -235,6 +245,7 @@ class AnalysisRunner:
             "report_path": str(self._workspace.report_path.relative_to(self._workspace.root_path)),
             "context_path": str(self._workspace.context_snapshot_path.relative_to(self._workspace.root_path)),
             "context_events_path": str(self._workspace.context_events_path.relative_to(self._workspace.root_path)),
+            "context_available": context_available,
         }
         if error is not None:
             manifest["error"] = error
@@ -242,6 +253,19 @@ class AnalysisRunner:
 
     def _materialize_context_view(self) -> None:
         materialize_context_view(self._store.snapshot, self._workspace.context_view_path)
+        if self._trace is None:
+            return
+        revision = self._store.snapshot.revision
+        state_hash = self._store.snapshot.state_hash
+        if revision != self._last_context_revision:
+            changed_sequence = self._trace.append("analysis_context.changed", {"revision": revision, "state_hash": state_hash})
+            self._store.append(ContextEventDraft(event_type="analysis_context.changed", trace_sequence=changed_sequence, payload={"revision": revision, "state_hash": state_hash}))
+            materialize_context_view(self._store.snapshot, self._workspace.context_view_path)
+            revision = self._store.snapshot.revision
+            state_hash = self._store.snapshot.state_hash
+        injected_sequence = self._trace.append("analysis_context.injected", {"revision": revision, "state_hash": state_hash, "path": str(self._workspace.context_view_path.relative_to(self._workspace.root_path))})
+        self._store.append(ContextEventDraft(event_type="analysis_context.injected", trace_sequence=injected_sequence, payload={"revision": revision, "state_hash": state_hash}))
+        self._last_context_revision = self._store.snapshot.revision
 
     def _prompt_for(self, instruction: str) -> str:
         context_view = self._workspace.context_view_path.read_text(encoding="utf-8")

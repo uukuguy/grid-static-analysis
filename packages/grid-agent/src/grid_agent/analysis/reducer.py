@@ -87,7 +87,7 @@ def _apply_transition(state: AnalysisContext, draft: ContextEventDraft) -> Analy
     if draft.event_type == "tool.failed":
         return _record_diagnostic(state, draft)
     if draft.event_type == "answer.submitted":
-        return _record_observation(state, draft)
+        return _record_answer_submission(state, draft)
     if draft.event_type == "audit.diagnostic.recorded":
         return _record_diagnostic(state, draft)
     if draft.event_type == "limitation.recorded":
@@ -100,6 +100,8 @@ def _apply_transition(state: AnalysisContext, draft: ContextEventDraft) -> Analy
         return _complete_analysis(state, "completed")
     if draft.event_type == "analysis.failed":
         return _complete_analysis(state, "failed")
+    if draft.event_type in {"analysis_context.changed", "analysis_context.injected"}:
+        return state
     raise ContextTransitionError(f"unsupported event type: {draft.event_type}")
 
 
@@ -146,6 +148,25 @@ def _record_observation(state: AnalysisContext, draft: ContextEventDraft) -> Ana
     )
     current_turn = _merge_turn_refs(turn, consumed_refs=observation.consumed_refs, produced_refs=observation.produced_refs)
     return state.model_copy(update={"observations": observations, "current_turn": current_turn})
+
+
+def _record_answer_submission(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:
+    turn = _require_active_turn(state, draft)
+    payload = draft.payload
+    if payload.get("turn_id") != turn.turn_id:
+        raise ContextTransitionError("answer.submitted must bind to active turn")
+    for key in ("answer_path", "answer_sha256", "answer_draft_path"):
+        if not isinstance(payload.get(key), str) or not payload[key]:
+            raise ContextTransitionError(f"answer.submitted requires {key}")
+    result_refs = payload.get("result_refs", [])
+    claimed_refs = payload.get("claim_evidence_refs", [])
+    if not isinstance(result_refs, list) or not all(isinstance(item, str) for item in result_refs):
+        raise ContextTransitionError("answer.submitted result_refs must be strings")
+    if not isinstance(claimed_refs, list) or not all(isinstance(item, str) for item in claimed_refs):
+        raise ContextTransitionError("answer.submitted claim_evidence_refs must be strings")
+    # Submission is accepted independently of audit findings; unknown claim
+    # references are recorded by the subsequent diagnostic events.
+    return state
 
 
 def _register_result(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:

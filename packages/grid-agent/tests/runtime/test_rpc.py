@@ -245,7 +245,7 @@ def test_rpc_emits_semantic_tools_and_omits_streaming_snapshots(tmp_path: Path) 
 
     client.start()
     try:
-        assert client.prompt_and_wait("question", on_semantic_event=semantic.append) == "答案"
+        assert client.prompt_and_wait("question", on_semantic_event=lambda payload, _sequence: semantic.append(payload)) == "答案"
     finally:
         client.stop()
 

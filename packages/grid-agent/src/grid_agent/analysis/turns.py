@@ -149,6 +149,24 @@ class TurnController:
         answer_bytes = _write_json_atomic(answer_path, envelope)
         _append_jsonl_fsync(self._workspace.answers_path, envelope)
 
+        # Keep the accepted answer auditable in the context ledger before the
+        # turn becomes terminal.
+        self._store.append(
+            ContextEventDraft(
+                event_type="answer.submitted",
+                turn_id=handle.turn_id,
+                payload={
+                    "turn_id": handle.turn_id,
+                    "turn_nonce_sha256": _sha256_text(handle.turn_nonce),
+                    "answer_path": str(answer_path.relative_to(self._workspace.root_path)),
+                    "answer_sha256": sha256(answer_bytes).hexdigest(),
+                    "answer_draft_path": str(archived_draft_path.relative_to(self._workspace.root_path)),
+                    "result_refs": list(result_refs),
+                    "claim_evidence_refs": list(claim_evidence_refs),
+                },
+            )
+        )
+
         for diagnostic in diagnostics:
             self._record_audit_diagnostic(handle, diagnostic)
         self._store.append(
