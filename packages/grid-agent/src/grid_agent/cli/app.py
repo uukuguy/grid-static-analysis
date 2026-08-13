@@ -9,7 +9,7 @@ import subprocess
 from datetime import UTC, datetime
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 from pathlib import Path
 
 import typer
@@ -35,18 +35,10 @@ from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
 from grid_agent.tools.catalog import ToolCatalog, load_packaged_capability_documents
 from grid_agent.tools.guide import GuideIndex
-from grid_agent.reporting import BatchRecord, append_jsonl_record, humanize_answer, load_questions, read_run_observations, render_markdown, write_jsonl
+from grid_agent.reporting import AuditDiagnostic, BatchRecord, append_jsonl_record, humanize_answer, load_questions, read_answer_audit, read_run_observations, render_markdown, write_jsonl
 
 
 app = typer.Typer(add_completion=False)
-
-
-@dataclass(frozen=True, slots=True)
-class AuditDiagnostic:
-    severity: Literal["warning", "error"]
-    finding: str
-    impact: str
-    remediation: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -607,10 +599,25 @@ def report(
             returned_id = question_id
         run_path = project_paths.runs_dir / returned_id
         observation = read_run_observations(run_path)
+        audit_diagnostics = read_answer_audit(run_path)
         status = "success" if completed.returncode == 0 else "failed"
         error = None if status == "success" else _batch_failure_explanation(completed.stderr, completed.stdout)
         draft_answer = _read_draft_answer(run_path)
-        records.append(BatchRecord(ordinal, question, returned_id, answer, status, duration, str(run_path) if run_path.exists() else None, observation, error, draft_answer))
+        records.append(
+            BatchRecord(
+                ordinal,
+                question,
+                returned_id,
+                answer,
+                status,
+                duration,
+                str(run_path) if run_path.exists() else None,
+                observation,
+                error,
+                draft_answer,
+                audit_diagnostics,
+            )
+        )
         _write_report_checkpoint(destination, batch_id=batch_id, source_name=str(questions), environment=environment, records=records)
         if output:
             append_jsonl_record(output, records[-1])
