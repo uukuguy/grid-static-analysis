@@ -34,6 +34,9 @@ class AnalysisOutcome:
     error: str | None = None
 
 
+ManifestStatus = Literal["completed", "failed", "aborted"]
+
+
 class PiSession(Protocol):
     def start(self) -> None: ...
 
@@ -75,16 +78,20 @@ class AnalysisRunner:
         if request.analysis_id != self._workspace.analysis_id or request.analysis_id != self._store.snapshot.analysis_id:
             raise ValueError("analysis request id does not match workspace context")
 
-        error: str | None = None
-        status: Literal["completed", "failed"] = "failed"
-        self._pi.start()
         try:
+            try:
+                self._pi.start()
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                self._fail_analysis(error, total_turns=len(request.instructions))
+                return self._outcome(request, "failed", error)
+
             for ordinal, instruction in enumerate(request.instructions, start=1):
                 try:
                     handle = self._turns.start(ordinal, instruction)
                 except ContextStoreError as exc:
                     error = f"{type(exc).__name__}: {exc}"
-                    self._fail_analysis(error)
+                    self._fail_analysis(error, total_turns=len(request.instructions))
                     return self._outcome(request, "failed", error)
                 try:
                     self._materialize_context_view()
@@ -102,23 +109,24 @@ class AnalysisRunner:
                     error = f"{type(exc).__name__}: {exc}"
                     finalized = self._fail_turn_if_active(handle, error)
                     self._checkpoint_after_turn(finalized)
-                    self._fail_analysis(error)
+                    self._fail_analysis(error, total_turns=len(request.instructions))
                     return self._outcome(request, "failed", error)
                 except SimulatorIntegrityError as exc:
                     error = f"{type(exc).__name__}: {exc}"
                     finalized = self._fail_turn_if_active(handle, error)
                     self._checkpoint_after_turn(finalized)
-                    self._fail_analysis(error)
+                    self._fail_analysis(error, total_turns=len(request.instructions))
                     return self._outcome(request, "failed", error)
                 except ContextStoreError as exc:
                     error = f"{type(exc).__name__}: {exc}"
-                    self._fail_analysis(error)
+                    finalized = self._fail_turn_if_active(handle, error)
+                    self._checkpoint_after_turn(finalized)
+                    self._fail_analysis(error, total_turns=len(request.instructions))
                     return self._outcome(request, "failed", error)
 
                 self._checkpoint_after_turn(finalized)
 
             try:
-                self._verify_running_state_before_completion()
                 self._store.append(
                     ContextEventDraft(
                         event_type="analysis.completed",
@@ -128,15 +136,14 @@ class AnalysisRunner:
                         },
                     )
                 )
-                self._verify_final_state()
+                self._verify_completed_state()
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
-                self._fail_analysis(error)
+                self._fail_analysis(error, total_turns=len(request.instructions))
                 return self._outcome(request, "failed", error)
 
-            status = "completed"
-            self._write_final_artifacts(status=status, error=None, total_turns=len(request.instructions))
-            return self._outcome(request, status, None)
+            self._write_final_artifacts(status="completed", error=None, total_turns=len(request.instructions))
+            return self._outcome(request, "completed", None)
         finally:
             self._pi.stop()
 
@@ -153,11 +160,21 @@ class AnalysisRunner:
                 audit_diagnostics=(),
                 error=error,
             )
-        return self._turns.fail(
-            handle,
-            error=error,
-            duration_seconds=max(0.0, time.monotonic() - handle.started_monotonic),
-        )
+        try:
+            return self._turns.fail(
+                handle,
+                error=error,
+                duration_seconds=max(0.0, time.monotonic() - handle.started_monotonic),
+            )
+        except ContextStoreError:
+            return FinalizedTurn(
+                turn_id=handle.turn_id,
+                status="failed",
+                answer_output=f"执行限制 / execution limitation: {error}",
+                answer_path=None,
+                audit_diagnostics=(),
+                error=error,
+            )
 
     def _checkpoint_after_turn(self, _finalized: FinalizedTurn) -> None:
         self._materialize_context_view()
@@ -167,18 +184,13 @@ class AnalysisRunner:
             environment=self._environment,
         )
 
-    def _verify_running_state_before_completion(self) -> None:
+    def _verify_completed_state(self) -> None:
         self._store.verify_materialized_snapshot()
-        replayed = AnalysisContextStore.replay(self._workspace.context_events_path)
-        if replayed != self._store.snapshot:
-            raise ContextStoreError("replayed context does not match in-memory snapshot before completion")
-
-    def _verify_final_state(self) -> None:
         replayed = AnalysisContextStore.replay(self._workspace.context_events_path)
         if replayed != self._store.snapshot:
             raise ContextStoreError("replayed context does not match in-memory snapshot after completion")
 
-    def _fail_analysis(self, error: str) -> None:
+    def _fail_analysis(self, error: str, *, total_turns: int) -> None:
         if self._store.snapshot.status not in {"completed", "failed"} and self._store.snapshot.current_turn is None:
             try:
                 self._store.append(
@@ -190,12 +202,13 @@ class AnalysisRunner:
                 )
             except ContextStoreError:
                 pass
-        self._write_final_artifacts(status="failed", error=error, total_turns=self._store.snapshot.input.instruction_count)
+        manifest_status: ManifestStatus = "failed" if self._store.snapshot.status == "failed" else "aborted"
+        self._write_final_artifacts(status=manifest_status, error=error, total_turns=total_turns)
 
     def _write_final_artifacts(
         self,
         *,
-        status: Literal["completed", "failed"],
+        status: ManifestStatus,
         error: str | None,
         total_turns: int,
     ) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,7 @@ import pytest
 from grid_agent.analysis.integrity import SimulatorIntegrityError
 from grid_agent.analysis.models import ContextEventDraft
 from grid_agent.analysis.runner import AnalysisOutcome, AnalysisRequest, AnalysisRunner
-from grid_agent.analysis.store import AnalysisContextStore
+from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
 from grid_agent.analysis.turns import ActiveTurnHandle, TurnController
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.runtime.rpc import PiProtocolError
@@ -28,18 +29,21 @@ SHOULD_NOT_RUN = {"answer": "should not run"}
 class FakePi:
     workspace: AnalysisWorkspace
     behavior: list[Any] = field(default_factory=list)
+    start_error: BaseException | None = None
     start_calls: int = 0
     stop_calls: int = 0
     prompts: list[str] = field(default_factory=list)
 
     def start(self) -> None:
         self.start_calls += 1
+        if self.start_error is not None:
+            raise self.start_error
 
     def stop(self) -> None:
         self.stop_calls += 1
 
-    def prompt_and_wait(self, prompt: str, **kwargs: Any) -> str:
-        self.prompts.append(prompt)
+    def prompt_and_wait(self, question: str, **kwargs: Any) -> str:
+        self.prompts.append(question)
         index = len(self.prompts) - 1
         action = self.behavior[index] if index < len(self.behavior) else {"answer": f"answer {index + 1}"}
         on_semantic_event = kwargs.get("on_semantic_event")
@@ -60,6 +64,9 @@ class FakePi:
         if isinstance(action, dict) and "consume_result_ref" in action:
             assert callable(on_semantic_event)
             on_semantic_event({"type": "fake_consume", "result_ref": action["consume_result_ref"]})
+        if isinstance(action, dict) and action.get("store_error"):
+            assert callable(on_semantic_event)
+            on_semantic_event({"type": "fake_store_error"})
         if isinstance(action, dict) and action.get("write_draft", True):
             handle = _read_active_turn(self.workspace)
             _write_draft(
@@ -74,9 +81,9 @@ class FakePi:
 class FakeProjector:
     def __init__(self, store: AnalysisContextStore) -> None:
         self.store = store
-        self.events: list[tuple[str, dict[str, Any]]] = []
+        self.events: list[tuple[str, Mapping[str, Any]]] = []
 
-    def observe(self, event: dict[str, Any], *, turn_id: str) -> None:
+    def observe(self, event: Mapping[str, Any], *, turn_id: str) -> None:
         self.events.append((turn_id, event))
         if event.get("type") == "fake_result":
             _append_baseline_if_missing(self.store, turn_id)
@@ -111,6 +118,8 @@ class FakeProjector:
                     },
                 )
             )
+        if event.get("type") == "fake_store_error":
+            raise ContextStoreError("durable append failed while active")
         if event == TAMPERED_SUCCESSFUL_RESULT:
             raise SimulatorIntegrityError("tampered result")
         if event.get("ok") is False:
@@ -250,6 +259,46 @@ def test_runner_stops_on_pi_protocol_error_and_still_stops_process(
     assert runner_harness.store.snapshot.status == "failed"
 
 
+def test_runner_start_failure_terminalizes_artifacts_and_still_stops_process(
+    runner_harness: RunnerHarness,
+) -> None:
+    runner_harness.pi.start_error = PiProtocolError("launch failed")
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
+    )
+
+    manifest = json.loads(runner_harness.workspace.manifest_path.read_text(encoding="utf-8"))
+    assert outcome.status == "failed"
+    assert "launch failed" in (outcome.error or "")
+    assert runner_harness.pi.start_calls == 1
+    assert runner_harness.pi.stop_calls == 1
+    assert runner_harness.pi.prompts == []
+    assert runner_harness.store.snapshot.current_turn is None
+    assert runner_harness.store.snapshot.status == "failed"
+    assert manifest["status"] == "failed"
+
+
+def test_runner_active_context_store_error_aborts_turn_before_failed_manifest(
+    runner_harness: RunnerHarness,
+) -> None:
+    runner_harness.pi.behavior = [{"store_error": True, "write_draft": False}, SHOULD_NOT_RUN]
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二"))
+    )
+
+    manifest = json.loads(runner_harness.workspace.manifest_path.read_text(encoding="utf-8"))
+    assert outcome.status == "failed"
+    assert "durable append failed while active" in (outcome.error or "")
+    assert runner_harness.pi.stop_calls == 1
+    assert len(runner_harness.pi.prompts) == 1
+    assert runner_harness.store.snapshot.current_turn is None
+    assert runner_harness.store.snapshot.turns[0].status == "failed"
+    assert runner_harness.store.snapshot.status == "failed"
+    assert manifest["status"] == "failed"
+
+
 def test_runner_replays_final_ledger_and_writes_manifest(runner_harness: RunnerHarness) -> None:
     outcome = runner_harness.runner.run(
         AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
@@ -264,6 +313,33 @@ def test_runner_replays_final_ledger_and_writes_manifest(runner_harness: RunnerH
     assert manifest["status"] == "completed"
     assert manifest["report_path"] == "report.md"
     assert outcome.report_path == runner_harness.workspace.report_path
+
+
+def test_runner_verifies_materialized_completed_snapshot_before_final_report(
+    runner_harness: RunnerHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    original_verify = AnalysisContextStore.verify_materialized_snapshot
+
+    def record_verify(self: AnalysisContextStore) -> Any:
+        calls.append(f"verify:{self.snapshot.status}")
+        return original_verify(self)
+
+    def record_checkpoint(**kwargs: Any) -> None:
+        calls.append(f"report:{kwargs['context'].status}")
+
+    monkeypatch.setattr(AnalysisContextStore, "verify_materialized_snapshot", record_verify)
+    monkeypatch.setattr("grid_agent.analysis.runner.write_analysis_report_checkpoint", record_checkpoint)
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
+    )
+
+    assert outcome.status == "completed"
+    assert "verify:completed" in calls
+    assert "report:completed" in calls
+    assert calls.index("verify:completed") < calls.index("report:completed")
 
 
 def test_runner_terminally_fails_when_final_replay_verification_fails(
@@ -281,7 +357,10 @@ def test_runner_terminally_fails_when_final_replay_verification_fails(
 
     assert outcome.status == "failed"
     assert "durable state mismatch" in (outcome.error or "")
-    assert runner_harness.store.snapshot.status == "failed"
+    manifest = json.loads(runner_harness.workspace.manifest_path.read_text(encoding="utf-8"))
+    assert runner_harness.store.snapshot.status == "completed"
+    assert manifest["status"] == "aborted"
+    assert "durable state mismatch" in manifest["error"]
 
 
 def _read_active_turn(workspace: AnalysisWorkspace) -> ActiveTurnHandle:
