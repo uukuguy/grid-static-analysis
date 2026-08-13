@@ -193,7 +193,11 @@ def test_rpc_persists_canonical_tool_result_from_extension_tool_end_event(tmp_pa
         "result": {"branch": {"identifier": "11"}, "evidence_ref": evidence_ref},
         "evidence_refs": [evidence_ref],
     } in traced_payloads
-    assert not any(payload.get("type") == "tool_execution_start" for payload in traced_payloads)
+    assert {
+        "type": "tool_execution_start",
+        "toolName": "grid_topology_branch_endpoints",
+        "args": {"identifier": "11"},
+    } in traced_payloads
 
 
 def test_rpc_rejects_successful_agent_end_without_answer_text(tmp_path: Path) -> None:

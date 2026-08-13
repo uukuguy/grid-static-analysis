@@ -131,7 +131,7 @@ def _provider_error(event: dict[str, Any]) -> str | None:
 
 
 def _skip_trace_event(event: dict[str, Any]) -> bool:
-    return event.get("type") == "tool_execution_start"
+    return False
 
 
 def _canonical_tool_result_event(event: dict[str, Any]) -> dict[str, Any] | None:

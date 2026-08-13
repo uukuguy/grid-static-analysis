@@ -5,6 +5,8 @@ import json
 import sys
 import os
 import time
+import subprocess
+from datetime import UTC, datetime
 from collections.abc import Mapping, Sequence
 from typing import Any
 from pathlib import Path
@@ -32,6 +34,7 @@ from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
 from grid_agent.tools.catalog import ToolCatalog, load_packaged_capability_documents
 from grid_agent.tools.guide import GuideIndex
+from grid_agent.reporting import BatchRecord, load_questions, read_run_observations, render_markdown, write_jsonl
 
 
 app = typer.Typer(add_completion=False)
@@ -319,6 +322,66 @@ def _verify_matching_context(result_ref: str, result_document: Mapping[str, Any]
 def _sha256_canonical_json(document: object) -> str:
     payload = json.dumps(document, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@app.command()
+def report(
+    questions: Path = typer.Option(_repo_root() / "validation/questions/task.md.txt", "--questions", exists=True, readable=True),
+    output: Path | None = typer.Option(None, "--output", help="Optional JSONL file containing only answer envelopes."),
+    report_path: Path | None = typer.Option(None, "--report-path", help="Markdown report destination."),
+    provider: str | None = typer.Option(None, "--provider"),
+    model: str | None = typer.Option(None, "--model"),
+) -> None:
+    """Run a question file sequentially and write a readable simulation-analysis report."""
+    project_paths = ProjectPaths.from_root(Path.cwd())
+    batch_id = f"batch-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    records: list[BatchRecord] = []
+    typer.echo(f"开始批量系统仿真分析 batch={batch_id} 问题文件={questions}")
+    for ordinal, question in enumerate(load_questions(questions), start=1):
+        question_id = f"{batch_id}-q{ordinal:03d}"
+        typer.echo(f"\n[{ordinal}] 开始：{question}")
+        command = ["grid-agent", "run", "--question-id", question_id]
+        if provider:
+            command.extend(["--provider", provider])
+        if model:
+            command.extend(["--model", model])
+        command.append(question)
+        started = time.monotonic()
+        completed = subprocess.run(command, cwd=project_paths.root, text=True, capture_output=True)
+        if completed.stderr:
+            typer.echo(completed.stderr, nl=not completed.stderr.endswith("\n"), err=True)
+        duration = time.monotonic() - started
+        try:
+            payload = json.loads(completed.stdout)
+            envelope = AnswerEnvelope.model_validate(payload)
+            answer = envelope.answer_output
+            returned_id = envelope.question_id
+        except Exception:
+            answer = "执行限制 / execution limitation: invalid batch child output"
+            returned_id = question_id
+        run_path = project_paths.runs_dir / returned_id
+        steps, evidence_refs, result_refs = read_run_observations(run_path)
+        status = "success" if completed.returncode == 0 else "failed"
+        error = None if status == "success" else _summary(completed.stderr or completed.stdout)
+        records.append(BatchRecord(ordinal, question, returned_id, answer, status, duration, str(run_path) if run_path.exists() else None, steps, evidence_refs, result_refs, error))
+        typer.echo(f"[{ordinal}] {'完成' if status == 'success' else '失败'}：{duration:.2f}s；工具步骤 {len(steps)}；证据 {len(evidence_refs)}")
+    destination = report_path or project_paths.runs_dir / "reports" / f"{batch_id}-系统仿真分析报告.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    environment = {
+        "执行时间（UTC）": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "Provider": provider or os.environ.get("GRID_AGENT_LLM_PROVIDER", "由 .env 配置"),
+        "Model": model or os.environ.get("GRID_AGENT_LLM_MODEL", "由 provider 默认值决定"),
+        "仿真器": "pandapower 3.4.0（经 gridctl）",
+        "gridctl": str(GridctlLocator(_repo_root()).resolve()),
+    }
+    destination.write_text(render_markdown(batch_id=batch_id, source_name=str(questions), environment=environment, records=records), encoding="utf-8")
+    if output:
+        write_jsonl(output, records)
+    typer.echo(f"\n报告已写入：{destination}")
+    if output:
+        typer.echo(f"标准结果 JSONL 已写入：{output}")
+    if any(record.status == "failed" for record in records):
+        raise typer.Exit(1)
 
 
 @app.command()

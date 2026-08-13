@@ -16,8 +16,9 @@
 | --- | --- | --- |
 | 安装依赖 | `make setup` | agent、simulator、Pi tools 三套依赖均完成安装。 |
 | 本机健康检查 | `make doctor` | 输出 JSON；不发送模型请求。 |
-| 离线问题 | `make run QUESTION="..."` | stdout 是单个答案 JSON；仅需要仿真的问题生成 `runs/`。 |
-| 在线智能体 | `make run-llm QUESTION="..."` | stdout 仍是单个答案 JSON；stderr 显示 Pi 工具轨迹。 |
+| 主产品/评测路径 | `make run-llm QUESTION="..."` | Pi/LLM 解释自然语言并组合 domain tools；stdout 是单个答案 JSON，stderr 有 Pi 工具轨迹。 |
+| 批量系统仿真分析 | `make report [QUESTIONS=...] [OUTPUT=...]` | 缺省运行 TASK 问题集，实时显示分步日志，并写入易读报告；`OUTPUT` 可选 JSONL 标准结果。 |
+| 离线冒烟 | `make run QUESTION="..."` | 只验证确定性离线知识/诊断路由；不代替智能体能力验证。 |
 | Pi 安装/认证 | `make install-pi`、`make auth-import-pi`、`make auth-login` | 仅在使用托管 Pi 或 `openai-codex` OAuth 时需要。 |
 | 单元与契约测试 | `make test` | Python agent、pandapower simulator 和 Node tools 全部通过。 |
 | 端到端测试 | `make test-e2e` | 离线 CLI 与 scripted Pi → gridctl 路径全部通过。 |
@@ -35,7 +36,35 @@ make doctor
 
 检查 `make doctor` 的 JSON 是否报告可定位的 `gridctl`、pandapower 3.4.0 与所需运行时。它不应创建某个问题的 `runs/<question_id>/` 目录，也不应发起 provider 请求。
 
-## 2. 离线知识与拓扑问题
+## 2. 主产品路径：Pi/LLM 自然语言分析
+
+人工验收任务理解、实体识别和多步工具组合时，所有 TASK 示例都应首先走 `make run-llm`，而不是 `make run`：
+
+```sh
+make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
+make run-llm QUESTION="对IEEE-39节点系统运行交流潮流，并输出有功网损;"
+make run-llm QUESTION="筛选负载率最高的5条线路;"
+```
+
+先按 RUNBOOK 配置 provider/Pi。检查 stdout 的单一 JSON 外壳、stderr 的受控工具轨迹，以及 `runs/<question_id>/` 下的当前运行证据。不要把离线固定路由的成功当成模型理解或工具编排成功。
+
+## 批量“系统仿真分析报告”
+
+不带参数即可运行版本化的 TASK 示例问题集：
+
+```sh
+make report
+```
+
+输入文件每行一个问题；可指定自己的文件和供评测/后处理读取的标准结果：
+
+```sh
+make report QUESTIONS=questions.txt OUTPUT=answers.jsonl
+```
+
+运行期间终端显示每题开始、模型/工具进度、工具结果摘要、每题总时长和最终报告位置。Markdown 报告在 `runs/reports/`，每题包含问题、最终回答、可观察的任务拆解、步骤时长、当前运行目录、仿真环境、`result_ref`/`evidence_ref` 及失败原因。它只记录可审计的执行信息，不展示模型隐藏推理。`OUTPUT` 文件每行严格只含 `question_id` 与 `answer_output`。
+
+## 3. 离线知识与确定性诊断
 
 先运行纯知识问题：
 
@@ -45,7 +74,7 @@ make run QUESTION="母线电压正常运行范围是多少?"
 
 确认 stdout 可被 `json.loads` 解析，且只含 `question_id`、`answer_output`；该问题不应新建 `runs/<question_id>/`。
 
-再运行有模型事实的拓扑问题：
+再运行当前离线支持的确定性拓扑诊断：
 
 ```sh
 make run QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
@@ -53,14 +82,14 @@ make run QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 
 预期答案说明线路 11 的端点为母线 6 与母线 11。确认该次运行对应的目录包含 `evidence/network-facts/`，其中 network-fact 文档的摘要与引用的 `evidence:sha256:*` 一致。不要只凭答案文字判断正确性，应打开该 JSON 文档核对 `capability_id` 为 `topology.branch.endpoints.get` 及端点字段。
 
-## 3. 潮流、排序和 N-1
+## 4. 潮流、排序和 N-1 的证据复核
 
 以下每条均应通过 `gridctl` 执行 pandapower，而非由模型计算数值：
 
 ```sh
-make run QUESTION="对IEEE-39节点系统运行交流潮流，并输出有功网损;"
-make run QUESTION="筛选负载率最高的5条线路;"
-make run QUESTION="对线路11开展N-1校核;"
+make run-llm QUESTION="对IEEE-39节点系统运行交流潮流，并输出有功网损;"
+make run-llm QUESTION="筛选负载率最高的5条线路;"
+make run-llm QUESTION="对线路11开展N-1校核;"
 ```
 
 对每个新运行目录，检查：
@@ -72,7 +101,7 @@ make run QUESTION="对线路11开展N-1校核;"
 
 具体答案数值取决于注册模型与 pandapower 固定版本；人工验收以当前运行中的结构化结果/证据为准，不以手工抄录的数字为准。
 
-## 4. 在线 Pi/LLM 路径
+## 5. 在线 Pi/LLM 工具边界复核
 
 将 `.env.example` 复制为 Git 忽略的 `.env`，仅配置一个 provider 的凭证；详见 [RUNBOOK](RUNBOOK.md#llm-配置与-pi-rpc-路径)。随后执行：
 
@@ -84,7 +113,7 @@ make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 
 最后打开 `answer-draft.json`：它应有 `answer_output`、`result_refs`、`claim_evidence_refs`。拓扑事实允许空 `result_refs`；AC/排序/N-1 结论必须声明当前运行中存在并与证据相连的 `result:sha256:*`。引用缺失、过期或摘要不匹配时 CLI 必须拒绝草稿，而不是照样输出答案。
 
-## 5. 回归与验证集
+## 6. 回归与验证集
 
 ```sh
 make test

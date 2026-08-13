@@ -16,15 +16,30 @@ make doctor
 
 `make setup` 分别创建 agent 与 simulator 的隔离环境，并安装 Pi grid domain tools 扩展依赖。`make doctor` 不发送模型请求。
 
-## 执行分析问题
+## 主路径：执行自然语言分析问题
+
+评测和人工验证智能体的自然语言理解、实体识别与多次工具编排时，使用 `make run-llm`。这是产品主路径：Pi/LLM 负责理解请求并组合发布的 pandapower domain tools，`gridctl` 负责所有确定性计算与证据。
 
 ```sh
+make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
+make run-llm QUESTION="对IEEE-39节点系统运行交流潮流，并输出有功网损;"
+make run-llm QUESTION="筛选负载率最高的5条线路;"
+```
+
+该路径需要按下一节配置 provider/Pi。stdout 始终是一个 JSON 对象，仅含 `question_id` 与 `answer_output`；进度与工具轨迹写入 stderr，simulator-backed 问题的证据写入 `runs/<question_id>/`。
+
+## 离线冒烟与回归路径
+
+`make run` 是本地、非计费的确定性路径，只覆盖明确支持的离线知识与诊断请求。它用于安装后冒烟、离线回归和验证器，不承担开放自然语言理解或多步智能体编排。
+
+```sh
+make run QUESTION="母线电压正常运行范围是多少?"
 make run QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
-make run QUESTION="对IEEE-39节点系统运行交流潮流，并输出有功网损;"
-make run QUESTION="筛选负载率最高的5条线路;"
 ```
 
 标准输出始终是一个 JSON 对象，仅含 `question_id` 与 `answer_output`。数值计算和模型事实通过独立的 `gridctl` JSONL 进程完成，仿真边界固定为 pandapower 3.4.0；运行证据写入当前目录的 `runs/<question_id>/`。纯信息回答不会创建运行目录，也不会声称仿真证据。
+
+对 TASK 中的潮流、排序、N-1 与风险分析请求，人工验收应使用上面的 `make run-llm` 主路径，以验证模型实际完成理解与多次工具编排。
 
 `runs/` 是操作者可检查的运行记录，已被 Git 忽略。`.grid-agent/` 只存放项目内部 Pi OAuth、托管 Pi runtime、会话状态等内部状态，同样被 Git 忽略。版本化运行配置位于 `configs/runtime/`，例如 `configs/runtime/pi-runtime.lock.json`。
 
