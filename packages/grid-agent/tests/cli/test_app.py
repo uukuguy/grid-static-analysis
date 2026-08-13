@@ -236,6 +236,72 @@ def test_answer_draft_accepts_result_ref_linked_to_current_run_analysis_evidence
     assert _load_verified_answer_draft(workspace) == "answer"
 
 
+def test_answer_draft_accepts_declared_result_with_unclaimed_current_run_analysis_evidence(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    result_ref = _write_result_document(
+        workspace,
+        "contingency",
+        {
+            "result_type": "analysis.contingency.n_minus_one.aggregate",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "scenarios": [],
+        },
+    )
+    _write_evidence_document(
+        workspace.evidence_path / "analysis" / "analysis-evidence-placeholder.json",
+        {
+            "evidence_type": "contingency_scenario",
+            "capability_id": "analysis.contingency.n_minus_one.run",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "result_ref": result_ref,
+            "facts": {"status": "succeeded"},
+        },
+    )
+    _write_answer_draft(workspace, claim_evidence_refs=[], result_refs=[result_ref])
+
+    assert _load_verified_answer_draft(workspace) == "answer"
+
+
+def test_answer_draft_accepts_contingency_aggregate_with_unclaimed_scenario_evidence(tmp_path: Path) -> None:
+    workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
+    scenario_ref = _write_result_document(
+        workspace,
+        "contingency-scenario",
+        {
+            "result_type": "analysis.contingency.n_minus_one.scenario",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+        },
+    )
+    evidence_ref = _write_evidence_document(
+        workspace.evidence_path / "analysis" / "analysis-evidence-placeholder.json",
+        {
+            "evidence_type": "contingency_scenario",
+            "capability_id": "analysis.contingency.n_minus_one.run",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "result_ref": scenario_ref,
+            "facts": {"status": "succeeded"},
+        },
+    )
+    aggregate_ref = _write_result_document(
+        workspace,
+        "contingency",
+        {
+            "result_type": "analysis.contingency.n_minus_one.aggregate",
+            "context_ref": "context:sha256:" + "1" * 64,
+            "revision_ref": "revision:sha256:" + "2" * 64,
+            "evidence_refs": [evidence_ref],
+            "scenarios": [{"scenario_result_ref": scenario_ref}],
+        },
+    )
+    _write_answer_draft(workspace, claim_evidence_refs=[], result_refs=[aggregate_ref])
+
+    assert _load_verified_answer_draft(workspace) == "answer"
+
+
 def test_answer_draft_rejects_tampered_result_document(tmp_path: Path) -> None:
     workspace = RunWorkspace.create(tmp_path / "runs", run_id="q")
     result_ref = _write_result_document(

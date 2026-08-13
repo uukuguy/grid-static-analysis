@@ -315,9 +315,46 @@ def _verify_result_evidence_links(
         if isinstance(result_evidence_refs, list) and any(ref in claimed for ref in result_evidence_refs):
             linked.add(result_ref)
 
+    for result_ref, result_document in documents.items():
+        for evidence_document in _current_run_analysis_evidence_for_result(workspace, result_ref):
+            _verify_matching_context(result_ref, result_document, evidence_document)
+            linked.add(result_ref)
+        for scenario_ref in _scenario_result_refs(result_document):
+            scenario_documents = _verify_result_refs(workspace, (scenario_ref,))
+            scenario_document = scenario_documents[scenario_ref]
+            for evidence_document in _current_run_analysis_evidence_for_result(workspace, scenario_ref):
+                _verify_matching_context(scenario_ref, scenario_document, evidence_document)
+                _verify_matching_context(result_ref, result_document, evidence_document)
+                linked.add(result_ref)
+
     for result_ref in result_refs:
         if result_ref not in linked:
             raise RuntimeError(f"declared result_ref is not linked to claimed evidence: {result_ref}")
+
+
+def _current_run_analysis_evidence_for_result(workspace: RunWorkspace, result_ref: str) -> tuple[dict[str, Any], ...]:
+    """Return digest-verified analysis evidence linked to one current-run result."""
+    documents: list[dict[str, Any]] = []
+    for path in workspace.evidence_path.joinpath("analysis").glob("analysis-evidence-*.json"):
+        document = _load_json_document(path)
+        if not isinstance(document, dict) or document.get("result_ref") != result_ref:
+            continue
+        digest = path.stem.removeprefix("analysis-evidence-")
+        evidence_ref = f"evidence:sha256:{digest}"
+        _verify_evidence_document(evidence_ref, digest, path, document)
+        documents.append(document)
+    return tuple(documents)
+
+
+def _scenario_result_refs(result_document: Mapping[str, Any]) -> tuple[str, ...]:
+    scenarios = result_document.get("scenarios")
+    if not isinstance(scenarios, list):
+        return ()
+    return tuple(
+        str(scenario["scenario_result_ref"])
+        for scenario in scenarios
+        if isinstance(scenario, Mapping) and isinstance(scenario.get("scenario_result_ref"), str)
+    )
 
 
 def _verify_matching_context(result_ref: str, result_document: Mapping[str, Any], evidence_document: Mapping[str, Any]) -> None:
