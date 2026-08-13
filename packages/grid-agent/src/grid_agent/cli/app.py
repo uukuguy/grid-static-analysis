@@ -8,7 +8,8 @@ import time
 import subprocess
 from datetime import UTC, datetime
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 from pathlib import Path
 
 import typer
@@ -38,6 +39,20 @@ from grid_agent.reporting import BatchRecord, append_jsonl_record, humanize_answ
 
 
 app = typer.Typer(add_completion=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AuditDiagnostic:
+    severity: Literal["warning", "error"]
+    finding: str
+    impact: str
+    remediation: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubmittedAnswer:
+    answer_output: str
+    diagnostics: tuple[AuditDiagnostic, ...]
 
 
 def _repo_root() -> Path:
@@ -181,7 +196,7 @@ def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
         raise RuntimeError("grid_submit_answer did not create an answer draft")
     try:
         draft = json.loads(draft_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("grid_submit_answer draft is not valid JSON") from exc
     if not isinstance(draft, dict):
         raise RuntimeError("grid_submit_answer draft must be a JSON object")
@@ -198,6 +213,120 @@ def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
     result_documents = _verify_result_refs(workspace, tuple(result_refs))
     _verify_result_evidence_links(workspace, tuple(result_refs), result_documents, tuple(claimed), evidence_documents)
     return humanize_answer(answer)
+
+
+def _load_submitted_answer(workspace: RunWorkspace) -> SubmittedAnswer:
+    draft_path = workspace.root_path / "answer-draft.json"
+    if not draft_path.is_file():
+        raise RuntimeError("grid_submit_answer did not create an answer draft")
+    try:
+        draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("grid_submit_answer draft is not valid JSON") from exc
+    if not isinstance(draft, dict):
+        raise RuntimeError("grid_submit_answer draft must be a JSON object")
+    answer = draft.get("answer_output")
+    claimed = draft.get("claim_evidence_refs")
+    result_refs = draft.get("result_refs")
+    if not isinstance(answer, str) or not answer.strip():
+        raise RuntimeError("grid_submit_answer draft must include answer_output")
+    if not isinstance(claimed, list) or not all(isinstance(item, str) for item in claimed):
+        raise RuntimeError("grid_submit_answer draft must include claim_evidence_refs")
+    if not isinstance(result_refs, list) or not all(isinstance(item, str) for item in result_refs):
+        raise RuntimeError("grid_submit_answer draft must include result_refs")
+
+    diagnostics = _audit_answer_draft(workspace, tuple(claimed), tuple(result_refs))
+    _write_answer_audit(workspace, diagnostics)
+    return SubmittedAnswer(answer_output=humanize_answer(answer), diagnostics=diagnostics)
+
+
+def _audit_answer_draft(
+    workspace: RunWorkspace,
+    claimed_evidence_refs: tuple[str, ...],
+    result_refs: tuple[str, ...],
+) -> tuple[AuditDiagnostic, ...]:
+    diagnostics: list[AuditDiagnostic] = []
+    evidence_documents: tuple[dict[str, Any], ...] = ()
+    evidence_error = False
+    try:
+        evidence_documents = _verify_evidence_refs(workspace, claimed_evidence_refs)
+    except RuntimeError as exc:
+        evidence_error = True
+        diagnostics.append(
+            AuditDiagnostic(
+                severity="error",
+                finding=str(exc),
+                impact="The submitted answer includes evidence that could not be verified in the current run.",
+                remediation="Reference a digest-verified evidence document from this run.",
+            )
+        )
+
+    validated_result_refs: list[str] = []
+    for result_ref in result_refs:
+        if not result_ref.startswith("result:sha256:"):
+            diagnostics.append(
+                AuditDiagnostic(
+                    severity="warning",
+                    finding=f"result_refs contains a non-result reference: {result_ref}",
+                    impact="This reference is not a simulator result and was not validated as one.",
+                    remediation="Use a result:sha256: reference when declaring simulator results.",
+                )
+            )
+            continue
+        validated_result_refs.append(result_ref)
+
+    result_documents: dict[str, dict[str, Any]] = {}
+    result_error = False
+    try:
+        result_documents = _verify_result_refs(workspace, tuple(validated_result_refs))
+    except RuntimeError as exc:
+        result_error = True
+        diagnostics.append(
+            AuditDiagnostic(
+                severity="error",
+                finding=str(exc),
+                impact="The submitted answer declares a simulator result that could not be verified in the current run.",
+                remediation="Reference a digest-verified result document from this run.",
+            )
+        )
+
+    if not evidence_error and not result_error:
+        try:
+            _verify_result_evidence_links(
+                workspace,
+                tuple(validated_result_refs),
+                result_documents,
+                claimed_evidence_refs,
+                evidence_documents,
+            )
+        except RuntimeError as exc:
+            diagnostics.append(
+                AuditDiagnostic(
+                    severity="error",
+                    finding=str(exc),
+                    impact="The submitted answer's evidence and result references are not consistently linked.",
+                    remediation="Declare only current-run results linked to the claimed evidence.",
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _write_answer_audit(workspace: RunWorkspace, diagnostics: tuple[AuditDiagnostic, ...]) -> None:
+    audit_path = workspace.root_path / "answer-audit.json"
+    temporary = audit_path.with_name(f".{audit_path.name}.tmp")
+    payload = {
+        "diagnostics": [
+            {
+                "severity": diagnostic.severity,
+                "finding": diagnostic.finding,
+                "impact": diagnostic.impact,
+                "remediation": diagnostic.remediation,
+            }
+            for diagnostic in diagnostics
+        ]
+    }
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(audit_path)
 
 
 def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
@@ -577,9 +706,10 @@ def run(
                     on_heartbeat=progress.heartbeat,
                     require_answer_text=False,
                 )
-                answer = _load_verified_answer_draft(workspace)
+                submitted = _load_submitted_answer(workspace)
             finally:
                 rpc.stop()
+            answer = submitted.answer_output
             progress.completed(answer)
             envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
             typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
