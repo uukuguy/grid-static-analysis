@@ -18,6 +18,10 @@ from grid_simulator.workspace import SimulatorWorkspace
 
 POWERFLOW_CAPABILITY_ID = "analysis.powerflow.ac.run"
 CONTINGENCY_CAPABILITY_ID = "analysis.contingency.n_minus_one.run"
+STATIC_ANALYSIS_V1_LIMITS = {
+    "bus_voltage_pu": {"minimum": 0.95, "maximum": 1.05},
+    "branch_loading_percent": {"maximum": 100.0},
+}
 AC_SOLVER_PROFILE = "ac-default-v1"
 RECOVERY_ACTIONS_NON_CONVERGENCE = (
     "inspect_network_diagnostics",
@@ -542,7 +546,7 @@ def _total_active_loss(net: Any) -> float:
 def _violations(powerflow: dict[str, Any]) -> list[dict[str, Any]]:
     violations = []
     for row in powerflow["branch_results"]:
-        if row["element_kind"] == "line" and row["loading_percent"] is not None and row["loading_percent"] > 100.0:
+        if row["element_kind"] == "line" and row["loading_percent"] is not None and row["loading_percent"] > STATIC_ANALYSIS_V1_LIMITS["branch_loading_percent"]["maximum"]:
             violations.append(
                 {
                     "kind": "line_overload",
@@ -551,12 +555,12 @@ def _violations(powerflow: dict[str, Any]) -> list[dict[str, Any]]:
                     "element_kind": row["element_kind"],
                     "pandapower_index": row["pandapower_index"],
                     "value": row["loading_percent"],
-                    "limit": 100.0,
+                    "limit": STATIC_ANALYSIS_V1_LIMITS["branch_loading_percent"]["maximum"],
                     "unit": "percent",
                 }
             )
     for row in powerflow["bus_results"]:
-        if row["vm_pu"] is not None and row["vm_pu"] < 0.95:
+        if row["vm_pu"] is not None and row["vm_pu"] < STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["minimum"]:
             violations.append(
                 {
                     "kind": "bus_voltage_low",
@@ -564,11 +568,11 @@ def _violations(powerflow: dict[str, Any]) -> list[dict[str, Any]]:
                     "asset_ref": row["asset_ref"],
                     "pandapower_index": row["pandapower_index"],
                     "value": row["vm_pu"],
-                    "limit": 0.95,
+                    "limit": STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["minimum"],
                     "unit": "p.u.",
                 }
             )
-        if row["vm_pu"] is not None and row["vm_pu"] > 1.05:
+        if row["vm_pu"] is not None and row["vm_pu"] > STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["maximum"]:
             violations.append(
                 {
                     "kind": "bus_voltage_high",
@@ -576,7 +580,7 @@ def _violations(powerflow: dict[str, Any]) -> list[dict[str, Any]]:
                     "asset_ref": row["asset_ref"],
                     "pandapower_index": row["pandapower_index"],
                     "value": row["vm_pu"],
-                    "limit": 1.05,
+                    "limit": STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["maximum"],
                     "unit": "p.u.",
                 }
             )

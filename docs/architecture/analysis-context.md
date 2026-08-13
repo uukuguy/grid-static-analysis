@@ -124,10 +124,12 @@ artifacts and follow-on grid tools.
 ## Report Projection
 
 `report.md` is a projection from the finalized context and workspace files.
-Its reader-facing body starts with a conclusion overview, then presents each
-instruction as **question → accepted answer → readable tool execution
-process → non-blocking diagnostics**. Internal content-addressed references
-are replaced by a provenance marker in this body so that conclusions are not
+It is organized for an operator reading one instruction at a time: **question
+→ accepted answer → execution information → simulation context → actual tool
+process → evidence sources**. Tool steps are reconstructed from the recorded
+start/result trace and are presented with semantic descriptions and durations.
+Internal content-addressed references are replaced by a provenance marker in
+the answer body so that conclusions are not
 buried under hashes; the accepted original answer remains linked as an
 artifact. Tool execution is derived only from recorded observations and shows
 the tool purpose, relevant human-readable input, and compact verified outcome;

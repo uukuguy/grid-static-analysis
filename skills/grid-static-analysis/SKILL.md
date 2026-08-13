@@ -28,6 +28,7 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 - Topology endpoints and components: [topology-analysis](references/topology-analysis.md).
 - AC power flow and solver profile: [ac-powerflow](references/ac-powerflow.md).
 - N-1 static contingency: [contingency-analysis](references/contingency-analysis.md).
+- Published operating limits: `analysis.policy.describe` with `policy: "static-analysis-v1"`; use it for normal voltage-range questions instead of inferring a policy from a power-flow result.
 - Result ranking and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
 - Defined future scope that is unavailable in WP-A: [future-capabilities](references/future-capabilities.md).
 
@@ -65,6 +66,6 @@ If evidence cannot be read, preserve the original reference and report the artif
 
 ## Capability Status
 
-Available WP-A executable capabilities: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
+Available WP-A executable capabilities: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.policy.describe`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
 
 Defined but unavailable future capabilities include DC flow, OPF, short circuit, state estimation, time series, model import/create/modify, richer policy/risk engines, and multiple registered networks. See [future-capabilities](references/future-capabilities.md) before promising those workflows.

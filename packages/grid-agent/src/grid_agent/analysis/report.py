@@ -6,6 +6,7 @@ import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,37 +23,289 @@ from grid_agent.analysis.models import (
 from grid_agent.analysis.workspace import AnalysisWorkspace
 
 
-REPORT_SECTIONS = (
-    "结论总览",
-    "逐题分析",
-    "审计附录",
-)
-
-
 def render_analysis_report(
     *,
     context: AnalysisContext,
     workspace: AnalysisWorkspace,
     environment: Mapping[str, str],
 ) -> str:
-    """Render the operator-facing report from finalized structured context.
-
-    Accepted answers and raw forensic data remain in their registered files.
-    The reader-facing body replaces opaque internal references with a short
-    provenance marker; the complete values remain in the collapsed appendix.
-    """
+    """Render a readable analysis narrative from finalized structured context."""
     diagnostics: list[str] = []
     ledger = _read_context_events(workspace.context_events_path)
     diagnostics.extend(ledger.diagnostics)
-    turn_revisions = _turn_revision_ranges(ledger.events, context.turns)
-    diagnostics.extend(turn_revisions.diagnostics)
-    lines = ["# 分析报告", ""]
-
-    _append_section(lines, "结论总览", _render_reader_summary(context, workspace, diagnostics))
-    _append_section(lines, "逐题分析", _render_reader_turns(context, workspace, ledger.events, diagnostics))
-    _append_section(lines, "审计附录", _render_audit_appendix(context, workspace, environment, diagnostics))
+    trace = _read_trace_steps(workspace.trace_path)
+    diagnostics.extend(trace.diagnostics)
+    counts = {status: sum(turn.status == status for turn in context.turns) for status in ("success", "failed")}
+    lines = [
+        "# 系统仿真分析报告",
+        "",
+        f"- 分析编号：`{context.analysis_id}`",
+        f"- 指令数：{context.input.instruction_count}；已完成：{len(context.turns)}；成功：{counts['success']}；未完成：{counts['failed']}",
+        "",
+        "## 本批次运行环境",
+        "",
+        *_render_environment(context, environment),
+    ]
+    for turn in sorted(context.turns, key=lambda item: item.ordinal):
+        lines.extend(_render_narrative_turn(context, turn, workspace, trace.steps, diagnostics))
+    audit = _render_audit_review(context, workspace, diagnostics)
+    if audit:
+        lines.extend(["", "## 审计复核", "", *audit])
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+@dataclass(frozen=True, slots=True)
+class _TraceStep:
+    sequence: int
+    tool_call_id: str | None
+    capability: str
+    args: Mapping[str, Any]
+    result: Mapping[str, Any]
+    ok: bool
+    duration_seconds: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class _TraceRead:
+    steps: tuple[_TraceStep, ...]
+    diagnostics: tuple[str, ...]
+
+
+def _render_narrative_turn(
+    context: AnalysisContext,
+    turn: TurnRecord,
+    workspace: AnalysisWorkspace,
+    trace_steps: Sequence[_TraceStep],
+    diagnostics: list[str],
+) -> list[str]:
+    limitations = [item for item in context.unresolved_limitations if item.turn_id == turn.turn_id]
+    answer = _reader_answer(_accepted_answer_text(turn, workspace, limitations, diagnostics))
+    steps = _steps_for_turn(context, turn.turn_id, trace_steps)
+    lines = [
+        "",
+        f"## {turn.ordinal}. {_md(turn.instruction)}",
+        "",
+        "### 回答",
+        "",
+        answer,
+        "",
+        "### 执行信息",
+        "",
+        f"- 状态：{_reader_status(turn.status)}",
+        f"- 总时长：{turn.duration_seconds:.2f} 秒" if turn.duration_seconds is not None else "- 总时长：未记录",
+        f"- 本题原始回答：{_answer_link_or_label(turn, workspace, diagnostics)}",
+        "",
+        "### 仿真环境上下文",
+        "",
+        *_render_turn_context(context, turn, steps, workspace, diagnostics),
+        "",
+        "### 实际分析过程",
+        "",
+        *_render_trace_steps(steps),
+        "",
+        "### 证据来源",
+        "",
+        *_render_turn_evidence(context, turn, workspace, diagnostics),
+    ]
+    if limitations:
+        lines.extend(["", "### 审计提示", "", *[f"- {_reader_diagnostic(item.message)}" for item in _unique_limitations(limitations)]])
+    return lines
+
+
+def _render_turn_context(
+    context: AnalysisContext,
+    turn: TurnRecord,
+    steps: Sequence[_TraceStep],
+    workspace: AnalysisWorkspace,
+    diagnostics: list[str],
+) -> list[str]:
+    opened = next((step.result for step in steps if step.capability == "context.open" and step.ok), None)
+    if opened is None and context.baselines:
+        baseline = next(iter(context.baselines.values()))
+        source = _first_string(baseline.source, ("source", "dataset", "module")) or "未记录"
+        model = _first_string(baseline.source, ("model", "name", "network")) or "未记录"
+        network = baseline.network
+        counts = "，".join(f"{key} {value}" for key, value in network.items() if isinstance(value, int)) or "模型规模未记录"
+        model_line = f"- 网络模型：`{model}`；来源：`{source}`；模型规模：{counts}。"
+    elif isinstance(opened, Mapping):
+        counts = opened.get("counts")
+        count_text = "，".join(f"{key} {value}" for key, value in counts.items() if isinstance(value, int)) if isinstance(counts, Mapping) else "模型规模未返回"
+        model_line = f"- 网络模型：`{opened.get('model', '未返回')}`；来源：`{opened.get('source', '未返回')}`；模型规模：{count_text}。"
+    else:
+        model_line = "- 本题未打开网络模型上下文；回答不应被解读为新的仿真计算结论。"
+    reused = len(turn.consumed_refs)
+    produced = len(turn.produced_refs)
+    return [
+        model_line,
+        f"- 会话状态：本题复用前序已验证工件 {reused} 项；本题新增工件 {produced} 项。",
+        "- 执行边界：模型上下文为只读冻结快照；下列过程记录的是本题实际调用的已发布工具。",
+        f"- {_workspace_link(workspace, workspace.context_snapshot_path.relative_to(workspace.root_path), label='查看连续分析上下文', unavailable_label='上下文文件不可用', diagnostics=diagnostics, description='连续分析上下文')}。",
+    ]
+
+
+def _render_trace_steps(steps: Sequence[_TraceStep]) -> list[str]:
+    if not steps:
+        return ["未观察到与本题关联的领域工具调用。"]
+    lines: list[str] = []
+    for ordinal, step in enumerate(steps, start=1):
+        state = "完成" if step.ok else "返回受限/错误"
+        duration = f"，{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else ""
+        lines.append(f"{ordinal}. {_trace_step_summary(step)}（`{step.capability}`，{state}{duration}）")
+    return lines
+
+
+def _trace_step_summary(step: _TraceStep) -> str:
+    if step.capability == "context.open":
+        model = step.result.get("model")
+        return f"打开只读网络仿真环境上下文：{model}" if isinstance(model, str) else "打开只读网络仿真环境上下文"
+    if step.capability == "analysis.powerflow.ac.run" and step.result.get("converged") is True:
+        loss = step.result.get("total_active_loss")
+        if isinstance(loss, Mapping) and isinstance(loss.get("value"), (int, float)):
+            return f"运行交流潮流计算：收敛，有功网损 {loss['value']:.4f} {loss.get('unit', 'MW')}"
+        return "运行交流潮流计算：潮流收敛"
+    if step.capability == "analysis.contingency.n_minus_one.run":
+        count = step.result.get("scenario_count")
+        return f"执行单支路 N-1 静态安全校核：完成 {count} 个场景" if isinstance(count, int) else "执行单支路 N-1 静态安全校核"
+    return {
+        "environment.describe": "核对仿真器协议和已发布能力",
+        "model.list": "确认可用的已注册网络模型",
+        "context.get": "读取已打开的仿真环境上下文",
+        "model.element.get": "定位问题涉及的网络元件",
+        "model.dataset.describe": "核对可查询的数据集与字段",
+        "model.dataset.query": "查询网络模型数据",
+        "topology.branch.endpoints.get": "核查支路两端母线",
+        "topology.components.get": "核查网络拓扑连通性",
+        "result.branches.rank": "按支路运行指标筛选和排序",
+        "evidence.get": "读取已持久化的仿真证据",
+        "grid_guide_open": "读取已发布的领域操作指南",
+        "grid_submit_answer": "提交本题回答",
+    }.get(step.capability, "调用已发布的领域能力")
+
+
+def _render_turn_evidence(
+    context: AnalysisContext,
+    turn: TurnRecord,
+    workspace: AnalysisWorkspace,
+    diagnostics: list[str],
+) -> list[str]:
+    records = [item for item in context.evidence.values() if item.turn_id == turn.turn_id]
+    if not records:
+        return ["本题未新增独立证据工件；如复用了前序结果，其来源已在连续分析上下文中登记。"]
+    lines: list[str] = []
+    for record in records[:4]:
+        title = _first_string(record.summary, ("title", "description")) or "当前运行持久化的仿真证据"
+        location = _workspace_link(workspace, record.path, label="查看证据工件", unavailable_label="证据工件不可用", diagnostics=diagnostics, description="仿真证据")
+        lines.append(f"- {title}（{location}）。")
+    if len(records) > 4:
+        lines.append(f"- 其余 {len(records) - 4} 个场景证据已保存在本次分析目录，避免用重复条目掩盖主要结论。")
+    return lines
+
+
+def _render_audit_review(context: AnalysisContext, workspace: AnalysisWorkspace, diagnostics: list[str]) -> list[str]:
+    lines: list[str] = []
+    if context.unresolved_limitations:
+        lines.append("以下提示不改写已经提交的回答，只标记需要复核的执行事实。")
+        for limitation in _unique_limitations(context.unresolved_limitations):
+            lines.append(f"- {_reader_diagnostic(limitation.message)}")
+    if diagnostics:
+        lines.extend(f"- {_md(item)}" for item in dict.fromkeys(diagnostics))
+    lines.extend(
+        [
+            f"- 完整上下文与调用轨迹：{_workspace_link(workspace, workspace.context_snapshot_path.relative_to(workspace.root_path), label='上下文', unavailable_label='路径不可用', diagnostics=diagnostics, description='上下文工件')}、{_workspace_link(workspace, workspace.trace_path.relative_to(workspace.root_path), label='调用轨迹', unavailable_label='路径不可用', diagnostics=diagnostics, description='调用轨迹工件')}。",
+        ]
+    )
+    return lines
+
+
+def _steps_for_turn(context: AnalysisContext, turn_id: str, trace_steps: Sequence[_TraceStep]) -> tuple[_TraceStep, ...]:
+    call_ids: set[str] = set()
+    sequences: set[int] = set()
+    for observation in context.observations.values():
+        if observation.turn_id != turn_id or not isinstance(observation.producer_observation, Mapping):
+            continue
+        producer = observation.producer_observation
+        if isinstance(producer.get("tool_call_id"), str):
+            call_ids.add(str(producer["tool_call_id"]))
+        if isinstance(producer.get("trace_sequence"), int):
+            sequences.add(int(producer["trace_sequence"]))
+    return tuple(step for step in trace_steps if step.tool_call_id in call_ids or step.sequence in sequences)
+
+
+def _read_trace_steps(path: Path) -> _TraceRead:
+    if not path.is_file():
+        return _TraceRead((), ("调用轨迹不可用：trace/events.jsonl 缺失",))
+    starts: dict[str, tuple[int, datetime]] = {}
+    steps: list[_TraceStep] = []
+    diagnostics: list[str] = []
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return _TraceRead((), ("调用轨迹不可用：trace/events.jsonl 不可读",))
+    for line_number, line in enumerate(raw_lines, start=1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            diagnostics.append(f"调用轨迹第 {line_number} 行格式错误")
+            continue
+        if not isinstance(event, Mapping) or event.get("event") != "pi_event" or not isinstance(event.get("payload"), Mapping):
+            continue
+        payload = event["payload"]
+        call_id = payload.get("tool_call_id")
+        timestamp = _trace_timestamp(event.get("timestamp"))
+        if payload.get("type") == "tool_execution_start" and isinstance(call_id, str) and timestamp is not None:
+            starts[call_id] = (int(event.get("sequence", 0)), timestamp)
+        elif payload.get("type") == "tool_result" and isinstance(payload.get("capability"), str):
+            duration = None
+            if isinstance(call_id, str) and call_id in starts and timestamp is not None:
+                duration = max(0.0, (timestamp - starts[call_id][1]).total_seconds())
+            result = payload.get("result") if isinstance(payload.get("result"), Mapping) else {}
+            args: Mapping[str, Any] = {}
+            if isinstance(call_id, str) and call_id in starts:
+                # Arguments are recovered from the matching start record below when available.
+                pass
+            steps.append(_TraceStep(int(event.get("sequence", 0)), call_id if isinstance(call_id, str) else None, str(payload["capability"]), args, result, payload.get("ok") is True, duration))
+    # Populate arguments in a second pass without trusting result payloads.
+    args_by_call = _trace_args_by_call(raw_lines)
+    return _TraceRead(
+        tuple(
+            step.__class__(
+                step.sequence,
+                step.tool_call_id,
+                step.capability,
+                args_by_call.get(step.tool_call_id, {}) if step.tool_call_id is not None else {},
+                step.result,
+                step.ok,
+                step.duration_seconds,
+            )
+            for step in steps
+        ),
+        tuple(diagnostics),
+    )
+
+
+def _trace_args_by_call(lines: Sequence[str]) -> dict[str, Mapping[str, Any]]:
+    values: dict[str, Mapping[str, Any]] = {}
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        payload = event.get("payload") if isinstance(event, Mapping) else None
+        if not isinstance(payload, Mapping) or payload.get("type") != "tool_execution_start":
+            continue
+        if isinstance(payload.get("tool_call_id"), str) and isinstance(payload.get("args"), Mapping):
+            values[str(payload["tool_call_id"])] = payload["args"]
+    return values
+
+
+def _trace_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def write_analysis_report_checkpoint(

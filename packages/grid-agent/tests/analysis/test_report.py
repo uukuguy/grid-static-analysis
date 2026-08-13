@@ -42,25 +42,22 @@ class ReportFixture:
         return _append_context_event(self.workspace, self.context, draft, integrity="diagnostic")
 
 
-def test_report_prioritizes_questions_answers_and_readable_tool_steps(report_fixture: ReportFixture) -> None:
+def test_report_uses_per_question_narrative_and_real_trace_steps(report_fixture: ReportFixture) -> None:
     report = render_analysis_report(
         context=report_fixture.context,
         workspace=report_fixture.workspace,
         environment=report_fixture.environment,
     )
-    reader_report, audit_appendix = report.split("## 审计附录", maxsplit=1)
-
-    assert reader_report.index("## 结论总览") < reader_report.index("## 逐题分析")
-    assert "### 1. 运行潮流并复用前序结果" in reader_report
-    assert "#### 回答" in reader_report
-    assert "#### 工具执行过程" in reader_report
-    assert "按负载率排序" in reader_report
-    assert "result:sha256:" not in reader_report
-    assert "evidence:sha256:" not in reader_report
-    assert "asset:line:sha256:" not in reader_report
-    assert "结果依赖关系" not in reader_report
-    assert RESULT_REF in audit_appendix
-    assert "context/analysis-context.json" in audit_appendix
+    assert report.startswith("# 系统仿真分析报告")
+    assert "## 本批次运行环境" in report
+    assert "## 1. 运行潮流并复用前序结果" in report
+    assert report.index("### 回答") < report.index("### 执行信息") < report.index("### 仿真环境上下文")
+    assert "### 实际分析过程" in report
+    assert "按支路运行指标筛选和排序（`result.branches.rank`，完成，1.50 秒）" in report
+    assert "### 证据来源" in report
+    assert "result:sha256:" not in report
+    assert "evidence:sha256:" not in report
+    assert "结果依赖关系" not in report
 
 
 def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: ReportFixture) -> None:
@@ -71,7 +68,7 @@ def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: Rep
     )
 
     assert "接受答案保持原文 〔可追溯引用〕" in report
-    assert "审计诊断" in report
+    assert "## 审计复核" in report
     assert "模型草稿（未采纳）" not in report
 
 
@@ -84,7 +81,7 @@ def test_report_renders_failed_turns_and_unresolved_limitations(report_fixture: 
 
     assert "状态：未完成" in report
     assert "执行限制 / execution limitation: solver unavailable" in report
-    assert "## 审计附录" in report
+    assert "## 审计复核" in report
     assert "solver unavailable" in report
 
 
@@ -93,9 +90,8 @@ def test_report_deduplicates_multiple_baselines_by_source(tmp_path: Path) -> Non
 
     report = render_analysis_report(context=fixture.context, workspace=fixture.workspace, environment={})
 
-    assert report.count("## 仿真基线") == 1
-    assert report.count("pandapower.networks.case39") == 1
-    assert "补充基线 1 项" in report
+    assert report.count("## 本批次运行环境") == 1
+    assert "pandapower.networks.case39" in report
 
 
 def test_report_uses_relative_forensic_links_without_absolute_path_leakage(report_fixture: ReportFixture) -> None:
@@ -106,8 +102,7 @@ def test_report_uses_relative_forensic_links_without_absolute_path_leakage(repor
     )
 
     assert "turns/001/answer.json" in report
-    assert "evidence/results/powerflow.json" in report
-    assert "evidence/analysis/powerflow-evidence.json" in report
+    assert "context/analysis-context.json" in report
     assert str(report_fixture.workspace.root_path) not in report
     assert str(report_fixture.workspace.root_path.parent) not in report
 
@@ -143,8 +138,8 @@ def test_report_rejects_absolute_and_traversal_artifact_paths(report_fixture: Re
     assert str(outside_answer) not in report
     assert "../outside-result.json" not in report
     assert "evidence/../secret.json" not in report
-    assert report.count("路径不可用") >= 4
-    assert "报告生成诊断" in report
+    assert report.count("路径不可用") >= 2
+    assert "## 审计复核" in report
 
 
 def test_report_marks_turn_revision_unavailable_when_ledger_is_missing(report_fixture: ReportFixture) -> None:
@@ -175,7 +170,7 @@ def test_write_analysis_report_checkpoint_atomically_replaces_report(report_fixt
     )
 
     first = report_fixture.workspace.report_path.read_text(encoding="utf-8")
-    assert first.startswith("# 分析报告")
+    assert first.startswith("# 系统仿真分析报告")
     assert "old report" not in first
     assert not list(report_fixture.workspace.root_path.glob(".report.md*.tmp"))
 
@@ -212,6 +207,46 @@ def _build_report_fixture(tmp_path: Path, *, include_second_baseline: bool = Fal
     )
     workspace.manifest_path.write_text(
         json.dumps({"analysis_id": workspace.analysis_id, "report": "report.md"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    workspace.trace_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.trace_path.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "sequence": 7,
+                        "timestamp": "2026-08-14T00:00:00Z",
+                        "event": "pi_event",
+                        "payload": {
+                            "type": "tool_execution_start",
+                            "tool_call_id": "rank-call",
+                            "tool_name": "grid_result_branches_rank",
+                            "args": {"result_ref": RESULT_REF, "metric": "loading_percent", "limit": 5},
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "sequence": 8,
+                        "timestamp": "2026-08-14T00:00:01.500000Z",
+                        "event": "pi_event",
+                        "payload": {
+                            "type": "tool_result",
+                            "tool_call_id": "rank-call",
+                            "tool_name": "grid_result_branches_rank",
+                            "capability": "result.branches.rank",
+                            "ok": True,
+                            "result": {"result_ref": RESULT_REF, "metric": "loading_percent"},
+                            "evidence_refs": [],
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        + "\n",
         encoding="utf-8",
     )
     return ReportFixture(context=eventful.context, workspace=workspace, environment=environment, answer_text=answer_text)

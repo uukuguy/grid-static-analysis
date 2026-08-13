@@ -17,6 +17,7 @@ from grid_simulator.analyses import (
     RECOVERY_ACTIONS_NON_CONVERGENCE,
     PowerflowExecutionError,
     ResultIntegrityError,
+    STATIC_ANALYSIS_V1_LIMITS,
     UnknownBranchError,
     UnknownResultError,
     evidence_path,
@@ -57,6 +58,7 @@ from grid_simulator.workspace import SimulatorWorkspace
 EXECUTABLE_CAPABILITIES = frozenset(
     {
         "environment.describe",
+        "analysis.policy.describe",
         "model.list",
         "context.open",
         "context.get",
@@ -102,6 +104,8 @@ def _dispatch(
 ) -> dict[str, Any]:
     if request.capability == "environment.describe":
         return _environment_describe(services.capability_registry)
+    if request.capability == "analysis.policy.describe":
+        return _analysis_policy_describe(request.arguments)
     if request.capability == "model.list":
         return _model_list(services.engine)
     if request.capability == "context.open":
@@ -141,6 +145,12 @@ def _environment_describe(registry: CapabilityRegistry) -> dict[str, Any]:
             if contract.id in EXECUTABLE_CAPABILITIES
         ],
     }
+
+
+def _analysis_policy_describe(arguments: dict[str, Any]) -> dict[str, Any]:
+    if arguments["policy"] != "static-analysis-v1":
+        raise _failure("unknown_policy", "Static-analysis policy is not published", phase="resolve")
+    return {"policy": "static-analysis-v1", **STATIC_ANALYSIS_V1_LIMITS}
 
 
 def _model_list(engine: Pandapower340Engine) -> dict[str, Any]:

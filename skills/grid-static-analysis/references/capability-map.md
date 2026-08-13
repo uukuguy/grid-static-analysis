@@ -26,6 +26,7 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 - `topology.branch.endpoints.get`: returns branch endpoint buses and topology evidence.
 - `topology.components.get`: returns connected component summaries.
 - `analysis.powerflow.ac.run`: runs AC steady-state power flow.
+- `analysis.policy.describe`: returns the published static-analysis operating limits.
 - `result.branches.rank`: ranks branch rows from a prior power-flow result.
 - `analysis.contingency.n_minus_one.run`: runs isolated single-branch outage scenarios.
 - `evidence.get`: retrieves persisted evidence documents by `evidence_ref`.
@@ -35,6 +36,7 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 Catalog calls take no context. Model-specific calls require `context_ref`. Calculation calls require the same `context_ref` and contract-enumerated solver overrides only. Ranking requires an existing `result_ref`, explicit `metric`, `direction`, and `limit`.
 
 Use `model_id: "ieee39"` for the only registered WP-A model. Use policy `static-analysis-v1` for N-1.
+For the normal voltage range or a branch loading limit, call `analysis.policy.describe` with that policy; it returns the limits without requiring a network context or power-flow run.
 
 ## Result Fields and Units
 

@@ -71,6 +71,7 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
     ids = {item["id"] for item in response.result["executable_capabilities"]}
     assert ids == {
         "environment.describe",
+        "analysis.policy.describe",
         "model.list",
         "context.open",
         "context.get",
@@ -85,6 +86,17 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
         "analysis.contingency.n_minus_one.run",
     }
     assert "capabilities" not in response.result
+
+
+def test_policy_describe_returns_static_analysis_operating_limits(tmp_path: Path) -> None:
+    response = dispatch(request("analysis.policy.describe", {"policy": "static-analysis-v1"}), tmp_path)
+
+    assert response.ok is True
+    assert response.result == {
+        "policy": "static-analysis-v1",
+        "bus_voltage_pu": {"minimum": 0.95, "maximum": 1.05},
+        "branch_loading_percent": {"maximum": 100.0},
+    }
 
 
 def test_context_open_rejects_unexpected_arguments_before_persistence(tmp_path: Path) -> None:
