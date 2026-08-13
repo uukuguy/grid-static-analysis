@@ -136,7 +136,7 @@ def _record_observation(state: AnalysisContext, draft: ContextEventDraft) -> Ana
     payload["capability"] = capability
     observation = ObservationRecord.model_validate(payload)
     _require_known_refs(state, observation.consumed_refs, allow_unregistered_context_refs=True)
-    if capability == "result.branches.rank":
+    if capability == "result.branches.rank" and observation.summary.get("ok") is not False:
         _validate_ranking_observation(state, observation)
     observations = _upsert_record(
         state.observations,

@@ -216,6 +216,36 @@ def test_projector_requires_start_for_success_but_not_for_normal_failure(
     assert context_harness.store.snapshot.unresolved_limitations
 
 
+def test_projector_failed_ranking_with_unknown_result_ref_records_limitation(
+    context_harness: ContextHarness,
+) -> None:
+    unknown_result_ref = "result:sha256:" + "9" * 64
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_result_branches_rank", {"result_ref": unknown_result_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "call-1",
+            "result.branches.rank",
+            {},
+            ok=False,
+            error={"code": "unknown_result_ref"},
+        ),
+        turn_id="analysis-test-t001",
+    )
+
+    state = context_harness.store.snapshot
+    assert state.unresolved_limitations
+    observation = next(item for item in state.observations.values() if item.capability == "result.branches.rank")
+    assert observation.consumed_refs == []
+    assert observation.producer_observation["args"] == {"result_ref": unknown_result_ref}
+    assert state.diagnostics[-1].details["error"]["code"] == "unknown_result_ref"
+    assert state.diagnostics[-1].details["tool_name"] == "grid_result_branches_rank"
+
+
 def test_projector_rejects_forged_inline_powerflow_fact_values(
     context_harness: ContextHarness,
 ) -> None:

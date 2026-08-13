@@ -129,6 +129,7 @@ class AnalysisContextProjector:
             start=start,
             turn_id=turn_id,
             call_id=call_id,
+            consume_dependencies=False,
         )
         error = event.get("error")
         if not isinstance(error, Mapping):
@@ -139,6 +140,7 @@ class AnalysisContextProjector:
             "message": str(message),
             "call_id": call_id,
             "tool_name": _tool_name(start),
+            "args": dict(_start_args(start)),
             "error": dict(error),
             "observation_ref": observation_ref,
         }
@@ -202,9 +204,11 @@ class AnalysisContextProjector:
         start: Mapping[str, Any],
         turn_id: str,
         call_id: str | None,
+        consume_dependencies: bool = True,
     ) -> str:
         args = _start_args(start)
         observation_ref = _stable_ref("observation", capability, turn_id, call_id, args, _projection_summary(capability, result, event))
+        consumed_refs = _consumed_refs(capability, args) if consume_dependencies else []
         self._store.append(
             ContextEventDraft(
                 event_type="tool.observation.recorded",
@@ -215,7 +219,7 @@ class AnalysisContextProjector:
                     "path": f"tool-results/{turn_id}/{call_id or observation_ref}.json",
                     "summary": _projection_summary(capability, result, event),
                     "producer_observation": _producer_observation(capability, start, call_id),
-                    "consumed_refs": _consumed_refs(capability, args),
+                    "consumed_refs": consumed_refs,
                     "produced_refs": _produced_refs(capability, result, event),
                 },
             )

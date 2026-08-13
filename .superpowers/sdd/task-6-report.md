@@ -179,3 +179,53 @@ uv run --project packages/grid-agent pyright packages/grid-agent/src/grid_agent/
 
 0 errors, 0 warnings, 0 informations
 ```
+
+## Review repair: failed ranking dependency diagnostics
+
+Commit: pending at report time.
+
+### Finding fixed
+
+- Failed tool results now record observation, limitation, and diagnostic state without enforcing successful dependency existence.
+- This specifically covers failed `result.branches.rank` calls with unknown or bad `result_ref` values.
+- The failed observation keeps `consumed_refs=[]` so reducer dependency validation is not triggered for an unsuccessful tool.
+- Original failed args remain available for diagnosis in:
+  - `ObservationRecord.producer_observation["args"]`
+  - `DiagnosticRecord.details["args"]`
+- Reducer ranking dependency validation remains active unless the observation explicitly has `summary.ok is False`.
+
+### RED evidence
+
+```text
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_projector.py -q
+
+1 failed, 11 passed in 0.21s
+```
+
+The regression failed because a failed ranking result with an unknown `result_ref` still raised before recording limitation state.
+
+### GREEN / verification evidence
+
+Focused projector check:
+
+```text
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_projector.py -q
+
+12 passed in 0.17s
+```
+
+Required analysis gate:
+
+```text
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_projector.py packages/grid-agent/tests/analysis/test_reducer.py packages/grid-agent/tests/analysis/test_integrity.py -q
+
+35 passed in 5.91s
+```
+
+Changed-file pyright:
+
+```text
+uv run --project packages/grid-agent pyright packages/grid-agent/src/grid_agent/analysis/projector.py packages/grid-agent/src/grid_agent/analysis/reducer.py packages/grid-agent/tests/analysis/test_projector.py
+
+0 errors, 0 warnings, 0 informations
+```
