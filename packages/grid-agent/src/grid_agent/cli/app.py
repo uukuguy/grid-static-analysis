@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
 import os
@@ -15,6 +14,7 @@ from pathlib import Path
 import typer
 from dotenv import dotenv_values
 
+from grid_agent.analysis.integrity import ContentReferenceVerifier, ReferenceDiagnostic
 from grid_agent.contracts import AnswerEnvelope, RunRequest
 from grid_agent.knowledge.offline import answer_diagnostic, answer_information, plan_diagnostic
 from grid_agent.simulator.client import GridctlClient
@@ -39,6 +39,7 @@ from grid_agent.reporting import AuditDiagnostic, BatchRecord, append_jsonl_reco
 
 
 app = typer.Typer(add_completion=False)
+_NON_SIMULATOR_CAPABILITIES = {"grid_submit_answer", "grid_guide_open"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +183,48 @@ def _message_text(message: Mapping[str, Any]) -> str:
     )
 
 
+def _admit_successful_tool_references(workspace: RunWorkspace, event: Mapping[str, Any]) -> None:
+    details = _tool_result_details(event)
+    if not isinstance(details, Mapping):
+        return
+    capability = details.get("capability")
+    if not isinstance(capability, str) or capability in _NON_SIMULATOR_CAPABILITIES:
+        return
+    ok = details.get("ok")
+    if ok is not True and ok is not False:
+        ok = event.get("isError") is not True
+    if ok is not True:
+        return
+    result = details.get("result", {})
+    if not isinstance(result, Mapping):
+        result = {}
+    evidence_refs = details.get("evidence_refs", [])
+    if not isinstance(evidence_refs, list):
+        evidence_refs = []
+    ContentReferenceVerifier(workspace.root_path).admit_successful_tool_references(
+        capability,
+        result,
+        tuple(reference for reference in evidence_refs if isinstance(reference, str)),
+    )
+
+
+def _tool_result_details(event: Mapping[str, Any]) -> object:
+    if event.get("type") == "tool_result":
+        return event
+    if event.get("type") != "tool_execution_end":
+        return None
+    result = event.get("result")
+    if isinstance(result, Mapping):
+        details = result.get("details")
+        if isinstance(details, Mapping):
+            return details
+        return result
+    details = event.get("details")
+    if isinstance(details, Mapping):
+        return details
+    return None
+
+
 def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
     draft_path = workspace.root_path / "answer-draft.json"
     if not draft_path.is_file():
@@ -237,70 +280,20 @@ def _audit_answer_draft(
     claimed_evidence_refs: tuple[str, ...],
     result_refs: tuple[str, ...],
 ) -> tuple[AuditDiagnostic, ...]:
-    diagnostics: list[AuditDiagnostic] = []
-    evidence_documents: tuple[dict[str, Any], ...] = ()
-    evidence_error = False
-    try:
-        evidence_documents = _verify_evidence_refs(workspace, claimed_evidence_refs)
-    except RuntimeError as exc:
-        evidence_error = True
-        diagnostics.append(
-            AuditDiagnostic(
-                severity="error",
-                finding=str(exc),
-                impact="The submitted answer includes evidence that could not be verified in the current run.",
-                remediation="Reference a digest-verified evidence document from this run.",
-            )
-        )
+    diagnostics = ContentReferenceVerifier(workspace.root_path).audit_answer_references(
+        claimed_evidence_refs,
+        result_refs,
+    )
+    return tuple(_audit_diagnostic(diagnostic) for diagnostic in diagnostics)
 
-    validated_result_refs: list[str] = []
-    for result_ref in result_refs:
-        if not result_ref.startswith("result:sha256:"):
-            diagnostics.append(
-                AuditDiagnostic(
-                    severity="warning",
-                    finding=f"result_refs contains a non-result reference: {result_ref}",
-                    impact="This reference is not a simulator result and was not validated as one.",
-                    remediation="Use a result:sha256: reference when declaring simulator results.",
-                )
-            )
-            continue
-        validated_result_refs.append(result_ref)
 
-    result_documents: dict[str, dict[str, Any]] = {}
-    result_error = False
-    try:
-        result_documents = _verify_result_refs(workspace, tuple(validated_result_refs))
-    except RuntimeError as exc:
-        result_error = True
-        diagnostics.append(
-            AuditDiagnostic(
-                severity="error",
-                finding=str(exc),
-                impact="The submitted answer declares a simulator result that could not be verified in the current run.",
-                remediation="Reference a digest-verified result document from this run.",
-            )
-        )
-
-    if not evidence_error and not result_error:
-        try:
-            _verify_result_evidence_links(
-                workspace,
-                tuple(validated_result_refs),
-                result_documents,
-                claimed_evidence_refs,
-                evidence_documents,
-            )
-        except RuntimeError as exc:
-            diagnostics.append(
-                AuditDiagnostic(
-                    severity="error",
-                    finding=str(exc),
-                    impact="The submitted answer's evidence and result references are not consistently linked.",
-                    remediation="Declare only current-run results linked to the claimed evidence.",
-                )
-            )
-    return tuple(diagnostics)
+def _audit_diagnostic(diagnostic: ReferenceDiagnostic) -> AuditDiagnostic:
+    return AuditDiagnostic(
+        severity=diagnostic.severity,
+        finding=diagnostic.message,
+        impact=diagnostic.impact,
+        remediation=diagnostic.remediation,
+    )
 
 
 def _write_answer_audit(workspace: RunWorkspace, diagnostics: tuple[AuditDiagnostic, ...]) -> None:
@@ -322,107 +315,13 @@ def _write_answer_audit(workspace: RunWorkspace, diagnostics: tuple[AuditDiagnos
 
 
 def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
-    documents: list[dict[str, Any]] = []
-    for evidence_ref in evidence_refs:
-        if not evidence_ref.startswith("evidence:sha256:"):
-            raise RuntimeError(f"claimed evidence ref is invalid: {evidence_ref}")
-        digest = evidence_ref.removeprefix("evidence:sha256:")
-        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
-            raise RuntimeError(f"claimed evidence ref is invalid: {evidence_ref}")
-        document_path = _allowed_evidence_document_path(workspace, digest)
-        if document_path is None:
-            raise RuntimeError(f"claimed evidence ref is not in the current run: {evidence_ref}")
-        document = _load_json_document(document_path)
-        _verify_evidence_document(evidence_ref, digest, document_path, document)
-        documents.append(document)
-    return tuple(documents)
-
-
-def _allowed_evidence_document_path(workspace: RunWorkspace, digest: str) -> Path | None:
-    candidates = (
-        workspace.evidence_path / "network-facts" / f"network-fact-{digest}.json",
-        workspace.evidence_path / "analysis" / f"analysis-evidence-{digest}.json",
-    )
-    for path in candidates:
-        if path.is_file():
-            return path
-    return None
-
-
-def _load_json_document(path: Path) -> object:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except UnicodeDecodeError as exc:
-        raise RuntimeError(f"claimed evidence document is not UTF-8 JSON: {path.name}") from exc
-    except OSError as exc:
-        raise RuntimeError(f"claimed evidence document could not be read: {path.name}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"claimed evidence document is not valid JSON: {path.name}") from exc
-
-
-def _verify_evidence_document(evidence_ref: str, digest: str, path: Path, document: object) -> None:
-    if not isinstance(document, dict):
-        raise RuntimeError(f"claimed evidence document is malformed: {evidence_ref}")
-    if _sha256_canonical_json(document) != digest:
-        raise RuntimeError(f"claimed evidence document content does not match reference: {evidence_ref}")
-    evidence_type = document.get("evidence_type")
-    capability_id = document.get("capability_id")
-    if path.parent.name == "network-facts":
-        if evidence_type != "network_fact" or capability_id != "topology.branch.endpoints.get":
-            raise RuntimeError(f"claimed evidence document type is not allowed: {evidence_ref}")
-        return
-    allowed_analysis = {
-        ("analysis_result", "analysis.powerflow.ac.run"),
-        ("contingency_scenario", "analysis.contingency.n_minus_one.run"),
-        ("powerflow_non_convergence", "analysis.powerflow.ac.run"),
-        ("powerflow_non_convergence", "analysis.contingency.n_minus_one.run"),
-    }
-    if (str(evidence_type), str(capability_id)) not in allowed_analysis:
-        raise RuntimeError(f"claimed evidence document type is not allowed: {evidence_ref}")
-    if evidence_type in {"analysis_result", "contingency_scenario"} and not isinstance(document.get("result_ref"), str):
-        raise RuntimeError(f"claimed analysis evidence is not linked to a result document: {evidence_ref}")
+    verifier = ContentReferenceVerifier(workspace.root_path)
+    return tuple(dict(verifier.verify_evidence(evidence_ref).document) for evidence_ref in evidence_refs)
 
 
 def _verify_result_refs(workspace: RunWorkspace, result_refs: tuple[str, ...]) -> dict[str, dict[str, Any]]:
-    documents: dict[str, dict[str, Any]] = {}
-    for result_ref in result_refs:
-        digest = _result_digest(result_ref)
-        document_path = _allowed_result_document_path(workspace, digest)
-        if document_path is None:
-            raise RuntimeError(f"declared result_ref is not in the current run: {result_ref}")
-        document = _load_json_document(document_path)
-        if not isinstance(document, dict):
-            raise RuntimeError(f"declared result document is malformed: {result_ref}")
-        if document.get("result_ref") != result_ref:
-            raise RuntimeError(f"declared result document reference does not match: {result_ref}")
-        body = {key: value for key, value in document.items() if key != "result_ref"}
-        if _sha256_canonical_json(body) != digest:
-            raise RuntimeError(f"declared result document content does not match reference: {result_ref}")
-        if not isinstance(document.get("context_ref"), str) or not isinstance(document.get("revision_ref"), str):
-            raise RuntimeError(f"declared result document is missing context references: {result_ref}")
-        documents[result_ref] = document
-    return documents
-
-
-def _result_digest(result_ref: str) -> str:
-    if not result_ref.startswith("result:sha256:"):
-        raise RuntimeError(f"declared result_ref is invalid: {result_ref}")
-    digest = result_ref.removeprefix("result:sha256:")
-    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
-        raise RuntimeError(f"declared result_ref is invalid: {result_ref}")
-    return digest
-
-
-def _allowed_result_document_path(workspace: RunWorkspace, digest: str) -> Path | None:
-    candidates = (
-        workspace.evidence_path / "results" / f"powerflow-{digest}.json",
-        workspace.evidence_path / "results" / f"contingency-{digest}.json",
-        workspace.evidence_path / "results" / f"contingency-scenario-{digest}.json",
-    )
-    for path in candidates:
-        if path.is_file():
-            return path
-    return None
+    verifier = ContentReferenceVerifier(workspace.root_path)
+    return {result_ref: dict(verifier.verify_result(result_ref).document) for result_ref in result_refs}
 
 
 def _verify_result_evidence_links(
@@ -432,85 +331,12 @@ def _verify_result_evidence_links(
     claimed_evidence_refs: tuple[str, ...],
     evidence_documents: tuple[Mapping[str, Any], ...],
 ) -> None:
-    """Verify the answer's explicit primary results and evidence-associated results.
-
-    A model declares the result references that directly support its conclusion.  Analysis
-    evidence already contains a cryptographic link to its producing result, so requiring the
-    model to repeat every one of those links is both redundant and brittle.  We nevertheless
-    load and validate every such linked result in the current workspace.
-    """
-    documents = dict(result_documents)
-    declared = set(result_refs)
-    linked: set[str] = set()
-    claimed = set(claimed_evidence_refs)
-    for document in evidence_documents:
-        evidence_type = document.get("evidence_type")
-        evidence_result_ref = document.get("result_ref")
-        if isinstance(evidence_result_ref, str):
-            if evidence_type in {"analysis_result", "contingency_scenario"}:
-                if evidence_result_ref not in documents:
-                    documents.update(_verify_result_refs(workspace, (evidence_result_ref,)))
-                _verify_matching_context(evidence_result_ref, documents[evidence_result_ref], document)
-                linked.add(evidence_result_ref)
-
-    for result_ref, result_document in documents.items():
-        result_evidence_refs = result_document.get("evidence_refs")
-        if isinstance(result_evidence_refs, list) and any(ref in claimed for ref in result_evidence_refs):
-            linked.add(result_ref)
-
-    for result_ref, result_document in documents.items():
-        for evidence_document in _current_run_analysis_evidence_for_result(workspace, result_ref):
-            _verify_matching_context(result_ref, result_document, evidence_document)
-            linked.add(result_ref)
-        for scenario_ref in _scenario_result_refs(result_document):
-            scenario_documents = _verify_result_refs(workspace, (scenario_ref,))
-            scenario_document = scenario_documents[scenario_ref]
-            for evidence_document in _current_run_analysis_evidence_for_result(workspace, scenario_ref):
-                _verify_matching_context(scenario_ref, scenario_document, evidence_document)
-                _verify_matching_context(result_ref, result_document, evidence_document)
-                linked.add(result_ref)
-
-    for result_ref in result_refs:
-        if result_ref not in linked:
-            raise RuntimeError(f"declared result_ref is not linked to claimed evidence: {result_ref}")
-
-
-def _current_run_analysis_evidence_for_result(workspace: RunWorkspace, result_ref: str) -> tuple[dict[str, Any], ...]:
-    """Return digest-verified analysis evidence linked to one current-run result."""
-    documents: list[dict[str, Any]] = []
-    for path in workspace.evidence_path.joinpath("analysis").glob("analysis-evidence-*.json"):
-        document = _load_json_document(path)
-        if not isinstance(document, dict) or document.get("result_ref") != result_ref:
-            continue
-        digest = path.stem.removeprefix("analysis-evidence-")
-        evidence_ref = f"evidence:sha256:{digest}"
-        _verify_evidence_document(evidence_ref, digest, path, document)
-        documents.append(document)
-    return tuple(documents)
-
-
-def _scenario_result_refs(result_document: Mapping[str, Any]) -> tuple[str, ...]:
-    scenarios = result_document.get("scenarios")
-    if not isinstance(scenarios, list):
-        return ()
-    return tuple(
-        str(scenario["scenario_result_ref"])
-        for scenario in scenarios
-        if isinstance(scenario, Mapping) and isinstance(scenario.get("scenario_result_ref"), str)
+    ContentReferenceVerifier(workspace.root_path)._verify_result_evidence_links(
+        result_refs,
+        result_documents,
+        claimed_evidence_refs,
+        evidence_documents,
     )
-
-
-def _verify_matching_context(result_ref: str, result_document: Mapping[str, Any], evidence_document: Mapping[str, Any]) -> None:
-    if (
-        evidence_document.get("context_ref") != result_document.get("context_ref")
-        or evidence_document.get("revision_ref") != result_document.get("revision_ref")
-    ):
-        raise RuntimeError(f"declared result_ref context does not match claimed evidence: {result_ref}")
-
-
-def _sha256_canonical_json(document: object) -> str:
-    payload = json.dumps(document, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _run_child_with_live_stderr(
@@ -707,9 +533,13 @@ def run(
             rpc = PiRpcClient(launch, workspace, trace)
             rpc.start()
             try:
+                def on_pi_event(event: dict[str, Any]) -> None:
+                    _admit_successful_tool_references(workspace, event)
+                    progress.on_event(event)
+
                 rpc.prompt_and_wait(
                     request.question,
-                    on_event=progress.on_event,
+                    on_event=on_pi_event,
                     on_heartbeat=progress.heartbeat,
                     require_answer_text=False,
                 )
