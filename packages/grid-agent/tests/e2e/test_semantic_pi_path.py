@@ -6,11 +6,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from grid_agent.contracts import AnswerEnvelope
+
 
 ROOT = Path(__file__).resolve().parents[4]
 
 
-def test_scripted_pi_uses_catalog_guides_topology_result_and_current_run_evidence(tmp_path: Path) -> None:
+def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_outputs(tmp_path: Path) -> None:
     question_id = "semantic-pi-line-11-e2e"
     runs_path = ROOT / "runs" / question_id
     shutil.rmtree(runs_path, ignore_errors=True)
@@ -46,8 +48,7 @@ def test_scripted_pi_uses_catalog_guides_topology_result_and_current_run_evidenc
         "opened=grid('context.open',{'model_id':'ieee39'})\n"
         "result=grid('topology.branch.endpoints.get',{'context_ref':opened['context_ref'],'kind':'line','namespace':'pandapower_index','identifier':'11'})\n"
         "ref=result['evidence_ref']\n"
-        "answer=f\"线路11连接母线{result['from_bus']['name']}与{result['to_bus']['name']}；证据 {ref}。\"\n"
-        "draft={'answer_output':answer,'result_refs':[],'claim_evidence_refs':[ref]}\n"
+        "draft={'answer_output':'线路11连接母线6与11。','result_refs':[opened['context_ref'],'asset:line:sha256:'+'a'*64],'claim_evidence_refs':[ref]}\n"
         "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft,ensure_ascii=False))\n"
         "emit({'type':'tool_result','capability':'grid_submit_answer','ok':True,'result':draft,'evidence_refs':[ref]})\n"
         "emit({'type':'agent_end'})\n",
@@ -81,7 +82,11 @@ def test_scripted_pi_uses_catalog_guides_topology_result_and_current_run_evidenc
         )
 
         assert completed.returncode == 0, completed.stderr
-        assert "母线6与11" in json.loads(completed.stdout)["answer_output"]
+        envelope = AnswerEnvelope.model_validate_json(completed.stdout)
+        assert envelope.answer_output == "线路11连接母线6与11。"
+        audit = json.loads((runs_path / "answer-audit.json").read_text(encoding="utf-8"))
+        assert len(audit["diagnostics"]) == 2
+        assert all(diagnostic["severity"] == "warning" for diagnostic in audit["diagnostics"])
         events = [
             json.loads(line)["payload"]
             for line in (runs_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
@@ -106,5 +111,44 @@ def test_scripted_pi_uses_catalog_guides_topology_result_and_current_run_evidenc
         ]
         digest = evidence_ref.removeprefix("evidence:sha256:")
         assert (runs_path / "evidence/network-facts" / f"network-fact-{digest}.json").is_file()
+
+        questions = tmp_path / "questions.txt"
+        questions.write_text("IEEE-39节点系统中线路11连接哪两个母线?\n", encoding="utf-8")
+        report_path = tmp_path / "report.md"
+        output_path = tmp_path / "answers.jsonl"
+        report = subprocess.run(
+            [
+                "uv",
+                "run",
+                "--project",
+                "packages/grid-agent",
+                "grid-agent",
+                "report",
+                "--questions",
+                str(questions),
+                "--report-path",
+                str(report_path),
+                "--output",
+                str(output_path),
+            ],
+            cwd=ROOT,
+            env={
+                **os.environ,
+                "GRID_AGENT_PI_COMMAND": str(pi),
+                "GRID_AGENT_LLM_PROVIDER": "openai",
+                "OPENAI_API_KEY": "test-only-secret",
+            },
+            text=True,
+            capture_output=True,
+            timeout=90,
+        )
+
+        assert report.returncode == 0, report.stderr
+        report_text = report_path.read_text(encoding="utf-8")
+        assert "线路11连接母线6与11。" in report_text
+        assert report_text.count("严重性：warning") == 2
+        jsonl_records = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+        assert len(jsonl_records) == 1
+        assert jsonl_records[0]["answer_output"] == "线路11连接母线6与11。"
     finally:
         shutil.rmtree(runs_path, ignore_errors=True)

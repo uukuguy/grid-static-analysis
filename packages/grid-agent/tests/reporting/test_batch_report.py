@@ -7,11 +7,13 @@ from pathlib import Path
 from grid_agent.cli.app import _question_boundary, _run_child_with_live_stderr
 from grid_agent.reporting import (
     AnalysisStep,
+    AuditDiagnostic,
     BatchRecord,
     EvidenceSource,
     RunObservation,
     SimulationContext,
     load_questions,
+    read_answer_audit,
     read_run_observations,
     render_markdown,
     write_jsonl,
@@ -85,27 +87,81 @@ def test_humanize_answer_removes_opaque_internal_references() -> None:
     assert humanize_answer(answer) == "线路连接母线 6 与 11，证据"
 
 
-def test_render_markdown_explains_audit_rejection_without_hiding_the_draft() -> None:
+def test_render_markdown_keeps_accepted_answer_with_audit_diagnostics(tmp_path: Path) -> None:
     record = BatchRecord(
         ordinal=1,
-        question="母线电压正常运行范围是多少?",
+        question="线路11连接哪两个母线?",
         question_id="q-1",
-        answer_output="执行限制 / execution limitation: RuntimeError",
-        status="failed",
+        answer_output="线路11连接母线6与11。",
+        status="success",
         duration_seconds=4.2,
         run_path="/tmp/runs/q-1",
         observation=RunObservation(None, (), (), ()),
-        error="最终答案证据校验未通过：声明的结果缺少当前运行的证据链。",
-        draft_answer="0.95–1.05 p.u.。",
+        error=None,
+        audit_diagnostics=(
+            AuditDiagnostic(
+                severity="warning",
+                finding="result_refs contains a non-result reference: example",
+                impact="This reference was not validated as a simulator result.",
+                remediation="Use a result:sha256: reference.",
+            ),
+        ),
     )
 
     report = render_markdown(batch_id="batch-1", source_name="questions.txt", environment={}, records=(record,))
 
     assert "审计结论" in report
-    assert "不能作为最终提交结果" in report
-    assert "模型草稿（未采纳）" in report
-    assert "0.95–1.05 p.u.。" in report
-    assert "RuntimeError" not in report
+    assert "线路11连接母线6与11。" in report
+    assert "状态：成功" in report
+    assert "warning" in report
+    assert "不能作为最终提交结果" not in report
+
+    destination = tmp_path / "answers.jsonl"
+    write_jsonl(destination, (record,))
+
+    assert [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()] == [
+        {"question_id": "q-1", "answer_output": "线路11连接母线6与11。"}
+    ]
+
+
+def test_read_answer_audit_returns_one_error_for_invalid_schema(tmp_path: Path) -> None:
+    run_path = tmp_path / "run"
+    run_path.mkdir()
+    (run_path / "answer-audit.json").write_text(
+        json.dumps({"diagnostics": {"severity": "warning"}}),
+        encoding="utf-8",
+    )
+
+    diagnostics = read_answer_audit(run_path)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].severity == "error"
+    assert diagnostics[0].finding == "answer-audit.json is malformed."
+
+
+def test_accepted_answer_references_match_between_markdown_and_jsonl(tmp_path: Path) -> None:
+    answer = "结果 result:sha256:" + "a" * 64 + "；证据 evidence:sha256:" + "b" * 64
+    record = BatchRecord(
+        ordinal=1,
+        question="线路11连接哪两个母线?",
+        question_id="q-opaque-refs",
+        answer_output=answer,
+        status="success",
+        duration_seconds=1.0,
+        run_path=None,
+        observation=RunObservation(None, (), (), ()),
+        error=None,
+    )
+
+    report = render_markdown(batch_id="batch-1", source_name="questions.txt", environment={}, records=(record,))
+    destination = tmp_path / "answers.jsonl"
+    write_jsonl(destination, (record,))
+
+    assert answer in report
+    assert json.loads(destination.read_text(encoding="utf-8")) == {
+        "question_id": "q-opaque-refs",
+        "answer_output": answer,
+    }
 
 
 def test_write_jsonl_contains_only_answer_envelopes(tmp_path: Path) -> None:

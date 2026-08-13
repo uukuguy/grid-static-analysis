@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,14 @@ class RunObservation:
     result_refs: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class AuditDiagnostic:
+    severity: Literal["warning", "error"]
+    finding: str
+    impact: str
+    remediation: str
+
+
 @dataclass(frozen=True)
 class BatchRecord:
     ordinal: int
@@ -62,6 +70,7 @@ class BatchRecord:
     observation: RunObservation
     error: str | None
     draft_answer: str | None = None
+    audit_diagnostics: tuple[AuditDiagnostic, ...] = ()
 
 
 _ACTION_LABELS = {
@@ -168,6 +177,17 @@ def render_markdown(*, batch_id: str, source_name: str, environment: Mapping[str
             lines.append("未观察到已完成的领域工具调用。")
         lines.extend(["", "### 证据来源", ""])
         _render_evidence(lines, record.observation)
+        if record.audit_diagnostics:
+            lines.extend(["", "### 审计结论", ""])
+            for diagnostic in record.audit_diagnostics:
+                lines.extend(
+                    [
+                        f"- 严重性：{diagnostic.severity}",
+                        f"- 发现：{diagnostic.finding}",
+                        f"- 影响：{diagnostic.impact}",
+                        f"- 建议：{diagnostic.remediation}",
+                    ]
+                )
         if record.error:
             lines.extend(
                 [
@@ -200,6 +220,49 @@ def append_jsonl_record(path: Path, record: BatchRecord) -> None:
         stream.write(line)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def read_answer_audit(run_path: Path) -> tuple[AuditDiagnostic, ...]:
+    """Read a child-run audit without allowing malformed diagnostics to break reports."""
+    audit_path = run_path / "answer-audit.json"
+    if not audit_path.is_file():
+        return ()
+    try:
+        document = json.loads(audit_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return (_malformed_answer_audit(),)
+    if not isinstance(document, Mapping):
+        return (_malformed_answer_audit(),)
+    diagnostics = document.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        return (_malformed_answer_audit(),)
+
+    parsed: list[AuditDiagnostic] = []
+    for diagnostic in diagnostics:
+        if not isinstance(diagnostic, Mapping):
+            return (_malformed_answer_audit(),)
+        severity = diagnostic.get("severity")
+        finding = diagnostic.get("finding")
+        impact = diagnostic.get("impact")
+        remediation = diagnostic.get("remediation")
+        if (
+            severity not in {"warning", "error"}
+            or not isinstance(finding, str)
+            or not isinstance(impact, str)
+            or not isinstance(remediation, str)
+        ):
+            return (_malformed_answer_audit(),)
+        parsed.append(AuditDiagnostic(severity, finding, impact, remediation))
+    return tuple(parsed)
+
+
+def _malformed_answer_audit() -> AuditDiagnostic:
+    return AuditDiagnostic(
+        severity="error",
+        finding="answer-audit.json is malformed.",
+        impact="The answer audit could not be displayed reliably in this report.",
+        remediation="Inspect and regenerate the child run's answer-audit.json file.",
+    )
 
 
 def read_run_observations(run_path: Path) -> RunObservation:
@@ -396,7 +459,7 @@ def _representative_evidence(sources: Sequence[EvidenceSource]) -> tuple[Evidenc
 def _display_answer(record: BatchRecord) -> str:
     if record.status == "failed" and record.draft_answer:
         return "本题未形成可验收的最终回答。下方保留模型草稿及审计说明，便于判断问题所在。"
-    return humanize_answer(record.answer_output)
+    return record.answer_output
 
 
 def _status_label(status: str) -> str:
