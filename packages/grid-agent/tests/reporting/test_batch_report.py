@@ -13,6 +13,7 @@ from grid_agent.reporting import (
     RunObservation,
     SimulationContext,
     load_questions,
+    read_answer_audit,
     read_run_observations,
     render_markdown,
     write_jsonl,
@@ -121,6 +122,21 @@ def test_render_markdown_keeps_accepted_answer_with_audit_diagnostics(tmp_path: 
     assert [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()] == [
         {"question_id": "q-1", "answer_output": "线路11连接母线6与11。"}
     ]
+
+
+def test_read_answer_audit_returns_one_error_for_invalid_schema(tmp_path: Path) -> None:
+    run_path = tmp_path / "run"
+    run_path.mkdir()
+    (run_path / "answer-audit.json").write_text(
+        json.dumps({"diagnostics": {"severity": "warning"}}),
+        encoding="utf-8",
+    )
+
+    diagnostics = read_answer_audit(run_path)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].severity == "error"
+    assert diagnostics[0].finding == "answer-audit.json is malformed."
 
 
 def test_accepted_answer_references_match_between_markdown_and_jsonl(tmp_path: Path) -> None:
