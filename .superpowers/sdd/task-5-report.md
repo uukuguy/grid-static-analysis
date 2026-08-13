@@ -18,6 +18,15 @@
 
 - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/runtime/test_rpc.py packages/grid-agent/tests/test_trace.py -q`
   - 13 passed.
+- Review fix:
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/runtime/test_rpc.py packages/grid-agent/tests/test_trace.py -q`
+    - 13 passed.
+  - `uv run --project packages/grid-agent ruff check packages/grid-agent/src/grid_agent/runtime/rpc.py packages/grid-agent/tests/runtime/test_rpc.py`
+    - All checks passed.
+  - `uv run --project packages/grid-agent pyright packages/grid-agent/src/grid_agent/runtime/rpc.py packages/grid-agent/tests/runtime/test_rpc.py`
+    - 0 errors, 0 warnings.
+  - `uv run --project packages/grid-agent mypy --ignore-missing-imports packages/grid-agent/src/grid_agent/runtime/rpc.py packages/grid-agent/tests/runtime/test_rpc.py`
+    - Success: no issues found in 2 source files.
 
 ## Concerns
 

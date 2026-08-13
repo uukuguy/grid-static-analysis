@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Callable
-from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
 from typing import Any

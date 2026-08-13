@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from grid_agent.runtime.rpc import PiProtocolError, PiRpcClient
 from grid_agent.runtime.environment import PiLaunch
 
 
-OPEN_RESULT = {
+OPEN_RESULT: dict[str, object] = {
     "context_ref": "context:sha256:" + "a" * 64,
     "model": "ieee39",
 }
@@ -37,7 +38,7 @@ def scripted_rpc_client(tmp_path: Path, *, events: list[dict[str, object]]) -> t
     return PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path)), workspace
 
 
-def successful_tool_end(tool_call_id: str, tool_name: str, capability: str, result: dict[str, object]) -> dict[str, object]:
+def successful_tool_end(tool_call_id: str, tool_name: str, capability: str, result: Mapping[str, object]) -> dict[str, object]:
     return {
         "type": "tool_execution_end",
         "toolCallId": tool_call_id,
