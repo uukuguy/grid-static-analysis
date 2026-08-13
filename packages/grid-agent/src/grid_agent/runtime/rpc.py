@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
-from typing import Any
+from typing import Any, Protocol
 
-from grid_agent.application.workspace import RunWorkspace
 from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.lock import PiCommand
 from grid_agent.runtime.environment import PiLaunch
@@ -17,12 +17,17 @@ SemanticEventCallback = Callable[[dict[str, Any]], None]
 TRACEABLE_RPC_TYPES = frozenset({"prompt_ack", "response", "tool_execution_start", "tool_execution_end", "agent_end"})
 
 
+class RpcWorkspace(Protocol):
+    @property
+    def root_path(self) -> Path: ...
+
+
 class PiProtocolError(RuntimeError):
     pass
 
 
 class PiRpcClient:
-    def __init__(self, command: PiCommand | PiLaunch, workspace: RunWorkspace, trace: JsonlTraceWriter, *, environment: dict[str, str] | None = None) -> None:
+    def __init__(self, command: PiCommand | PiLaunch, workspace: RpcWorkspace, trace: JsonlTraceWriter, *, environment: dict[str, str] | None = None) -> None:
         self.command = command
         self.workspace = workspace
         self.trace = trace

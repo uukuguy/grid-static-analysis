@@ -15,7 +15,7 @@ from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
 from grid_agent.analysis.turns import ActiveTurnHandle, FinalizedTurn, TurnController
 from grid_agent.analysis.view import materialize_context_view
 from grid_agent.analysis.workspace import AnalysisWorkspace
-from grid_agent.runtime.rpc import PiProtocolError
+from grid_agent.runtime.rpc import PiProtocolError, SemanticEventCallback
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +40,16 @@ ManifestStatus = Literal["completed", "failed"]
 class PiSession(Protocol):
     def start(self) -> None: ...
 
-    def prompt_and_wait(self, question: str, **kwargs: Any) -> str: ...
+    def prompt_and_wait(
+        self,
+        question: str,
+        *,
+        on_event: ProgressCallback | None = None,
+        on_semantic_event: SemanticEventCallback | None = None,
+        on_heartbeat: Callable[[], None] | None = None,
+        heartbeat_seconds: float = 10.0,
+        require_answer_text: bool = True,
+    ) -> str: ...
 
     def stop(self) -> None: ...
 
