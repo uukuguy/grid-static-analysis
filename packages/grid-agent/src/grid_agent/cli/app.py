@@ -34,7 +34,7 @@ from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
 from grid_agent.tools.catalog import ToolCatalog, load_packaged_capability_documents
 from grid_agent.tools.guide import GuideIndex
-from grid_agent.reporting import BatchRecord, append_jsonl_record, load_questions, read_run_observations, render_markdown, write_jsonl
+from grid_agent.reporting import BatchRecord, append_jsonl_record, humanize_answer, load_questions, read_run_observations, render_markdown, write_jsonl
 
 
 app = typer.Typer(add_completion=False)
@@ -131,6 +131,28 @@ def _summary(value: str, limit: int = 200) -> str:
     return normalized if len(normalized) <= limit else f"{normalized[:limit]}…"
 
 
+def _read_draft_answer(run_path: Path) -> str | None:
+    """Keep an unaccepted draft visible to report readers without trusting it."""
+    draft_path = run_path / "answer-draft.json"
+    try:
+        document = json.loads(draft_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    answer = document.get("answer_output") if isinstance(document, Mapping) else None
+    return humanize_answer(answer) if isinstance(answer, str) and answer.strip() else None
+
+
+def _batch_failure_explanation(stderr: str, stdout: str) -> str:
+    """Preserve the actionable failure rather than a truncated terminal trace."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    explicit = next((line.removeprefix("grid-agent error:").strip() for line in reversed(lines) if line.startswith("grid-agent error:")), None)
+    if explicit:
+        return explicit
+    if stdout.strip():
+        return "子进程未返回可验收结果；请结合本题运行目录中的事件和证据工件复核。"
+    return "子进程在返回结果前结束；请检查运行日志中的模型请求或工具调用错误。"
+
+
 def _redact_event(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
@@ -175,7 +197,7 @@ def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
     evidence_documents = _verify_evidence_refs(workspace, tuple(claimed))
     result_documents = _verify_result_refs(workspace, tuple(result_refs))
     _verify_result_evidence_links(workspace, tuple(result_refs), result_documents, tuple(claimed), evidence_documents)
-    return answer
+    return humanize_answer(answer)
 
 
 def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
@@ -457,8 +479,9 @@ def report(
         run_path = project_paths.runs_dir / returned_id
         observation = read_run_observations(run_path)
         status = "success" if completed.returncode == 0 else "failed"
-        error = None if status == "success" else _summary(completed.stderr or completed.stdout)
-        records.append(BatchRecord(ordinal, question, returned_id, answer, status, duration, str(run_path) if run_path.exists() else None, observation, error))
+        error = None if status == "success" else _batch_failure_explanation(completed.stderr, completed.stdout)
+        draft_answer = _read_draft_answer(run_path)
+        records.append(BatchRecord(ordinal, question, returned_id, answer, status, duration, str(run_path) if run_path.exists() else None, observation, error, draft_answer))
         _write_report_checkpoint(destination, batch_id=batch_id, source_name=str(questions), environment=environment, records=records)
         if output:
             append_jsonl_record(output, records[-1])

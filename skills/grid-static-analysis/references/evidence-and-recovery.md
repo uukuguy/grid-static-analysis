@@ -10,7 +10,7 @@ Do not use this to create calculations, alter evidence, substitute missing evide
 
 ## Concepts and Terminology
 
-Evidence references are opaque `evidence:sha256:*` values returned by trusted capabilities. A final answer may cite only evidence from the current run. `evidence.get` retrieves a persisted topology or analysis evidence document; it does not validate user text, create new facts, or bypass result contracts.
+Evidence references are opaque `evidence:sha256:*` values returned by trusted capabilities. A final answer may cite only evidence from the current run. `evidence.get` retrieves a persisted topology `network_fact` or analysis evidence document; it does not validate user text, create new facts, or bypass result contracts.
 
 ## Available Capabilities
 
@@ -48,6 +48,6 @@ Evidence is required for topology endpoint claims, AC numerical claims, result r
 ## Common Mistakes
 
 - Treating the existence of a ref-looking string as evidence.
-- Reading files directly instead of using `evidence.get` when the model needs a published evidence document.
+- Accessing evidence files directly rather than calling `evidence.get` when the model needs a published evidence document.
 - Omitting evidence when final answers include network-specific facts or numerical values.
 - Treating an `evidence.get` document as an unrestricted result-table query.

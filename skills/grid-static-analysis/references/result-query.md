@@ -12,7 +12,7 @@ Do not use ranking to run a new power flow, fabricate missing result rows, query
 
 `result.branches.rank` consumes a prior current-run `result_ref` from `analysis.powerflow.ac.run`. It must not rerun power flow. Ranking is a read-only result query over persisted analysis artifacts.
 
-`evidence.get` retrieves a current-run topology or analysis evidence document. It is useful for inspecting persisted facts and provenance, but it is not a substitute for result queries or a way to access arbitrary files.
+`evidence.get` retrieves a current-run topology or analysis evidence document. A topology `network_fact` document supports a structural answer (for example, a line's two terminal buses); an analysis document supports a computed conclusion. It is useful for inspecting persisted facts and provenance, but it is not a substitute for result queries or a way to access arbitrary files.
 
 ## Available Capabilities
 

@@ -141,3 +141,4 @@
 - 19:22 Corrected report context and evidence-link verification for reliable completed analyses [31e219c]
 - 19:35 Added per-question report and JSONL checkpoints for interruptible batch observation [6622c84]
 - 20:12 Verified aggregate N-1 result chains so completed answers are not falsely downgraded [6b46469]
+- 20:xx Repaired readable batch report checkpoints and preserved rejected drafts with actionable audit context [pending commit]

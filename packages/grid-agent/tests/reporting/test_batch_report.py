@@ -44,12 +44,13 @@ def test_render_markdown_explains_observed_analysis_environment_and_evidence() -
                 "3.4.0",
                 "c" * 64,
                 {"buses": 39, "lines": 35},
+                "/tmp/runs/q-1/evidence/contexts/context.json",
             ),
             steps=(
                 AnalysisStep("context.open", 0.2, "打开只读网络仿真环境上下文：ieee39", True),
                 AnalysisStep("topology.branch.endpoints.get", 0.6, "核查支路两端母线：已返回线路端点和可追溯网络事实", True),
             ),
-            evidence_sources=(EvidenceSource("evidence:sha256:" + "a" * 64, "网络拓扑事实：已持久化该支路两端母线的来源记录", "topology.branch.endpoints.get", None, "evidence/network-facts/network-fact.json"),),
+            evidence_sources=(EvidenceSource("evidence:sha256:" + "a" * 64, "网络拓扑事实：已持久化该支路两端母线的来源记录", "topology.branch.endpoints.get", None, "evidence/network-facts/network-fact.json", "/tmp/runs/q-1/evidence/network-facts/network-fact.json"),),
             result_refs=(),
         ),
         error=None,
@@ -69,6 +70,42 @@ def test_render_markdown_explains_observed_analysis_environment_and_evidence() -
     assert "证据来源" in report
     assert "打开只读网络仿真环境上下文" in report
     assert "线路11连接母线6与11。" in report
+    assert "查看冻结上下文快照" in report
+    assert "[/tmp" not in report
+    assert "](/tmp/runs/q-1/evidence/contexts/context.json)" in report
+    assert "](/tmp/runs/q-1/evidence/network-facts/network-fact.json)" in report
+    assert "evidence:sha256:" not in report
+
+
+def test_humanize_answer_removes_opaque_internal_references() -> None:
+    from grid_agent.reporting import humanize_answer
+
+    answer = "线路连接母线 6 与 11（asset:line:sha256:" + "a" * 64 + "），证据 evidence:sha256:" + "b" * 64
+
+    assert humanize_answer(answer) == "线路连接母线 6 与 11，证据"
+
+
+def test_render_markdown_explains_audit_rejection_without_hiding_the_draft() -> None:
+    record = BatchRecord(
+        ordinal=1,
+        question="母线电压正常运行范围是多少?",
+        question_id="q-1",
+        answer_output="执行限制 / execution limitation: RuntimeError",
+        status="failed",
+        duration_seconds=4.2,
+        run_path="/tmp/runs/q-1",
+        observation=RunObservation(None, (), (), ()),
+        error="最终答案证据校验未通过：声明的结果缺少当前运行的证据链。",
+        draft_answer="0.95–1.05 p.u.。",
+    )
+
+    report = render_markdown(batch_id="batch-1", source_name="questions.txt", environment={}, records=(record,))
+
+    assert "审计结论" in report
+    assert "不能作为最终提交结果" in report
+    assert "模型草稿（未采纳）" in report
+    assert "0.95–1.05 p.u.。" in report
+    assert "RuntimeError" not in report
 
 
 def test_write_jsonl_contains_only_answer_envelopes(tmp_path: Path) -> None:

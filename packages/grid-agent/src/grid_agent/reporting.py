@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ class SimulationContext:
     engine_version: str
     semantic_sha256: str | None
     counts: Mapping[str, int]
+    absolute_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class EvidenceSource:
     capability: str
     result_ref: str | None
     relative_path: str | None
+    absolute_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,7 @@ class BatchRecord:
     run_path: str | None
     observation: RunObservation
     error: str | None
+    draft_answer: str | None = None
 
 
 _ACTION_LABELS = {
@@ -96,6 +100,27 @@ _TOOL_TO_CAPABILITY = {
     "grid_submit_answer": "grid_submit_answer",
 }
 
+_OPAQUE_REFERENCE = re.compile(
+    r"\b(?:context|revision|result|evidence):sha256:[0-9a-f]{64}\b|"
+    r"\basset:[a-z0-9_-]+:sha256:[0-9a-f]{64}\b"
+)
+
+
+def humanize_answer(value: str) -> str:
+    """Remove opaque internal identifiers from operator-facing answer prose.
+
+    The original structured references remain in the run's answer draft and
+    evidence artifacts; reports link to those artifacts instead of presenting
+    hashes as if they were explanatory evidence.
+    """
+    without_parenthetical_refs = re.sub(
+        rf"[（(]\s*(?:{_OPAQUE_REFERENCE.pattern})\s*[）)]", "", value
+    )
+    cleaned = _OPAQUE_REFERENCE.sub("", without_parenthetical_refs)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"，\s*，", "，", cleaned)
+    return cleaned.strip()
+
 
 def load_questions(path: Path) -> tuple[str, ...]:
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -119,7 +144,7 @@ def render_markdown(*, batch_id: str, source_name: str, environment: Mapping[str
     ]
     lines.extend(f"- {label}：`{value}`" for label, value in environment.items())
     for record in records:
-        lines.extend(["", f"## {record.ordinal}. {record.question}", "", "### 回答", "", record.answer_output, ""])
+        lines.extend(["", f"## {record.ordinal}. {record.question}", "", "### 回答", "", _display_answer(record), ""])
         lines.extend(
             [
                 "### 执行信息",
@@ -127,7 +152,7 @@ def render_markdown(*, batch_id: str, source_name: str, environment: Mapping[str
                 f"- question_id：`{record.question_id}`",
                 f"- 状态：{_status_label(record.status)}",
                 f"- 总时长：{record.duration_seconds:.2f} 秒",
-                f"- 运行目录：`{record.run_path}`" if record.run_path else "- 运行目录：未创建（离线知识或启动前失败）",
+                f"- 运行目录：{_link(record.run_path, '打开本题运行目录')}" if record.run_path else "- 运行目录：未创建（离线知识或启动前失败）",
                 "",
                 "### 仿真环境上下文",
                 "",
@@ -144,7 +169,18 @@ def render_markdown(*, batch_id: str, source_name: str, environment: Mapping[str
         lines.extend(["", "### 证据来源", ""])
         _render_evidence(lines, record.observation)
         if record.error:
-            lines.extend(["", "### 受限或失败原因", "", record.error])
+            lines.extend(
+                [
+                    "",
+                    "### 审计结论",
+                    "",
+                    f"- 发现：{record.error}",
+                    "- 影响：该草稿不能作为最终提交结果；已完成的工具调用和工件仍保留，供复核和重跑使用。",
+                    "- 建议：打开本题运行目录中的 `answer-draft.json` 与证据工件，核对答案主张是否能由当前运行的证据直接支持，然后重跑该题。",
+                ]
+            )
+            if record.draft_answer:
+                lines.extend(["", "### 模型草稿（未采纳）", "", humanize_answer(record.draft_answer)])
     return "\n".join(lines) + "\n"
 
 
@@ -202,6 +238,11 @@ def read_run_observations(run_path: Path) -> RunObservation:
         _add_refs([result.get("evidence_ref")], evidence_refs)
         _add_refs([result.get("result_ref")], result_refs)
         _add_refs(result.get("result_refs"), result_refs)
+    if context is not None:
+        digest = context.context_ref.removeprefix("context:sha256:")
+        snapshot = run_path / "evidence" / "contexts" / f"context-{digest}.json"
+        if snapshot.is_file():
+            context = replace(context, absolute_path=str(snapshot))
     evidence_sources = tuple(_describe_evidence(run_path, reference) for reference in dict.fromkeys(evidence_refs))
     return RunObservation(context, tuple(steps), evidence_sources, tuple(dict.fromkeys(result_refs)))
 
@@ -215,21 +256,23 @@ def _render_context(lines: list[str], context: SimulationContext | None) -> None
         [
             f"- 网络模型：`{context.model}`；来源：`{context.source}`",
             f"- 仿真器：`{context.engine} {context.engine_version}`；模型规模：{counts}",
-            f"- 不可变上下文：`{_short_ref(context.context_ref)}`"
-            + (f"；语义版本：`{context.semantic_sha256[:12]}`" if context.semantic_sha256 else ""),
-            "- 本题所有网络查询、潮流和 N-1（如有）均以这份只读上下文为边界；不会从回答文本猜测网络数据。",
+            "- 上下文状态：只读、冻结；本题所有网络查询、潮流和 N-1（如有）均以此快照为边界。",
+            f"- {_link(context.absolute_path, '查看冻结上下文快照')}（包含模型版本和仿真器元数据）。",
         ]
     )
 
 
 def _render_evidence(lines: list[str], observation: RunObservation) -> None:
     if observation.evidence_sources:
-        for source in observation.evidence_sources:
-            suffix = f"；关联结果 `{_short_ref(source.result_ref)}`" if source.result_ref else ""
-            location = f"；文件 `{source.relative_path}`" if source.relative_path else ""
-            lines.append(f"- {source.description}（由 `{source.capability}` 产生{suffix}{location}；引用 `{_short_ref(source.reference)}`）")
+        sources = _representative_evidence(observation.evidence_sources)
+        for source in sources:
+            location = _link(source.absolute_path, "查看证据工件") if source.absolute_path else "证据工件不可用"
+            lines.append(f"- {source.description}（由 `{source.capability}` 产生；{location}）")
+        omitted = len(observation.evidence_sources) - len(sources)
+        if omitted:
+            lines.append(f"- 其余 {omitted} 个场景证据已保存在本题运行目录；主报告仅列出最具代表性的结果，避免用重复条目掩盖风险结论。")
     elif observation.result_refs:
-        lines.extend(f"- 已产生仿真结果：`{_short_ref(reference)}`（本题未提交单独证据引用）" for reference in observation.result_refs)
+        lines.append(f"- 已产生 {len(observation.result_refs)} 份仿真结果工件，但本题未提交可展示的单独证据引用；请在本题运行目录复核。")
     else:
         lines.append("本题没有可引用的仿真证据；报告不把知识性说明伪装为计算结果。")
 
@@ -275,10 +318,10 @@ def _describe_evidence(run_path: Path, reference: str) -> EvidenceSource:
         return EvidenceSource(reference, "当前运行中记录的证据引用（文件未找到）", "unknown", None, None)
     document = _load_document(path)
     if not isinstance(document, Mapping):
-        return EvidenceSource(reference, "当前运行中记录的证据引用（内容不可读）", "unknown", None, str(path.relative_to(run_path)))
+        return EvidenceSource(reference, "当前运行中记录的证据引用（内容不可读）", "unknown", None, str(path.relative_to(run_path)), str(path))
     capability = str(document.get("capability_id", "unknown"))
     result_ref = document.get("result_ref") if isinstance(document.get("result_ref"), str) else None
-    return EvidenceSource(reference, _evidence_description(document), capability, result_ref, str(path.relative_to(run_path)))
+    return EvidenceSource(reference, _evidence_description(document), capability, result_ref, str(path.relative_to(run_path)), str(path))
 
 
 def _evidence_description(document: Mapping[str, Any]) -> str:
@@ -334,11 +377,26 @@ def _seconds_between(start: str, end: str) -> float:
         return 0.0
 
 
-def _short_ref(reference: str | None) -> str:
-    if not reference:
-        return ""
-    prefix, _, digest = reference.rpartition(":")
-    return f"{prefix}:{digest[:12]}…" if digest else reference
+def _link(path: str | None, label: str) -> str:
+    return f"[{label}]({path})" if path and Path(path).is_absolute() else label
+
+
+def _representative_evidence(sources: Sequence[EvidenceSource]) -> tuple[EvidenceSource, ...]:
+    """Keep direct evidence plus the most stressed N-1 cases readable."""
+    scenarios = [source for source in sources if source.capability == "analysis.contingency.n_minus_one.run"]
+    direct = [source for source in sources if source.capability != "analysis.contingency.n_minus_one.run"]
+
+    def loading(source: EvidenceSource) -> float:
+        matched = re.search(r"最大负载率 ([0-9.]+)%", source.description)
+        return float(matched.group(1)) if matched else -1.0
+
+    return tuple(direct + sorted(scenarios, key=loading, reverse=True)[:3])
+
+
+def _display_answer(record: BatchRecord) -> str:
+    if record.status == "failed" and record.draft_answer:
+        return "本题未形成可验收的最终回答。下方保留模型草稿及审计说明，便于判断问题所在。"
+    return humanize_answer(record.answer_output)
 
 
 def _status_label(status: str) -> str:
