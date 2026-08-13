@@ -66,6 +66,7 @@ class AnalysisContextProjector:
                 start=start,
                 turn_id=turn_id,
                 call_id=call_id,
+                trace_sequence=trace_sequence,
             )
             return
 

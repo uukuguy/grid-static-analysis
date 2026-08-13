@@ -160,8 +160,12 @@ def test_projector_stops_on_integrity_failure_but_records_normal_tool_error(
             error={"code": "powerflow_non_convergence"},
         ),
         turn_id="analysis-test-t001",
+        trace_sequence=42,
     )
     assert context_harness.store.snapshot.unresolved_limitations
+    events = [json.loads(line) for line in context_harness.workspace.context_events_path.read_text().splitlines()]
+    observation = next(event for event in events if event["event_type"] == "tool.observation.recorded")
+    assert observation["trace_sequence"] == 42
 
     with pytest.raises(SimulatorIntegrityError):
         context_harness.projector.observe(

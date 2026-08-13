@@ -100,8 +100,6 @@ def _apply_transition(state: AnalysisContext, draft: ContextEventDraft) -> Analy
         return _complete_analysis(state, "completed")
     if draft.event_type == "analysis.failed":
         return _complete_analysis(state, "failed")
-    if draft.event_type in {"analysis_context.changed", "analysis_context.injected"}:
-        return state
     raise ContextTransitionError(f"unsupported event type: {draft.event_type}")
 
 

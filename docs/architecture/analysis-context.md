@@ -101,6 +101,12 @@ Standard traces store semantic RPC events only. Streaming token deltas,
 reasoning deltas, and repeated message snapshots are excluded from
 `trace/events.jsonl`.
 
+`analysis_context.changed` and `analysis_context.injected` are trace-only
+lifecycle records. They carry the view revision/state hash (and injection path)
+for every model injection, but never enter the authoritative context ledger or
+change its revision. Tool-derived context events retain their compact RPC
+`trace_sequence` in that ledger.
+
 ## Model-facing Context View
 
 Before every prompt, `grid-agent` writes

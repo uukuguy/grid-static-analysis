@@ -313,6 +313,41 @@ def test_runner_active_context_store_error_aborts_turn_before_failed_manifest(
     assert runner_harness.store.snapshot.turns[0].status == "failed"
     assert runner_harness.store.snapshot.status == "failed"
     assert manifest["status"] == "failed"
+    assert manifest["context_available"] is True
+
+
+def test_runner_does_not_write_context_events_after_terminal_completion(
+    runner_harness: RunnerHarness,
+    tmp_path: Path,
+) -> None:
+    from grid_agent.observability.trace import JsonlTraceWriter
+
+    runner_harness.runner._trace = JsonlTraceWriter(runner_harness.workspace.trace_path)
+    outcome = runner_harness.runner.run(AnalysisRequest(analysis_id="analysis-test", instructions=("一",)))
+
+    assert outcome.status == "completed"
+    events = [json.loads(line)["event_type"] for line in runner_harness.workspace.context_events_path.read_text().splitlines()]
+    assert events[-1] == "analysis.completed"
+
+
+def test_runner_does_not_publish_running_context_when_turn_failure_cannot_persist(
+    runner_harness: RunnerHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner_harness.pi.behavior = [PiProtocolError("provider died")]
+
+    def fail_unpersisted(*_args: Any, **_kwargs: Any) -> FinalizedTurn:
+        raise ContextStoreError("ledger unavailable")
+
+    monkeypatch.setattr(runner_harness.runner._turns, "fail", fail_unpersisted)
+    outcome = runner_harness.runner.run(AnalysisRequest(analysis_id="analysis-test", instructions=("一",)))
+
+    manifest = json.loads(runner_harness.workspace.manifest_path.read_text())
+    assert outcome.status == "failed"
+    assert runner_harness.store.snapshot.current_turn is not None
+    assert manifest["context_available"] is False
+    assert manifest["report_path"] is None
+    assert not runner_harness.workspace.report_path.exists()
 
 
 def test_runner_replays_final_ledger_and_writes_manifest(runner_harness: RunnerHarness) -> None:

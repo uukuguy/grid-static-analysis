@@ -194,6 +194,8 @@ class AnalysisRunner:
             )
 
     def _checkpoint_after_turn(self, _finalized: FinalizedTurn) -> None:
+        if self._store.snapshot.current_turn is not None:
+            return
         self._materialize_context_view()
         write_analysis_report_checkpoint(
             context=self._store.snapshot,
@@ -242,7 +244,7 @@ class AnalysisRunner:
             "status": status,
             "completed_turns": len(self._store.snapshot.turns),
             "total_turns": total_turns,
-            "report_path": str(self._workspace.report_path.relative_to(self._workspace.root_path)),
+            "report_path": str(self._workspace.report_path.relative_to(self._workspace.root_path)) if context_available else None,
             "context_path": str(self._workspace.context_snapshot_path.relative_to(self._workspace.root_path)),
             "context_events_path": str(self._workspace.context_events_path.relative_to(self._workspace.root_path)),
             "context_available": context_available,
@@ -258,14 +260,9 @@ class AnalysisRunner:
         revision = self._store.snapshot.revision
         state_hash = self._store.snapshot.state_hash
         if revision != self._last_context_revision:
-            changed_sequence = self._trace.append("analysis_context.changed", {"revision": revision, "state_hash": state_hash})
-            self._store.append(ContextEventDraft(event_type="analysis_context.changed", trace_sequence=changed_sequence, payload={"revision": revision, "state_hash": state_hash}))
-            materialize_context_view(self._store.snapshot, self._workspace.context_view_path)
-            revision = self._store.snapshot.revision
-            state_hash = self._store.snapshot.state_hash
-        injected_sequence = self._trace.append("analysis_context.injected", {"revision": revision, "state_hash": state_hash, "path": str(self._workspace.context_view_path.relative_to(self._workspace.root_path))})
-        self._store.append(ContextEventDraft(event_type="analysis_context.injected", trace_sequence=injected_sequence, payload={"revision": revision, "state_hash": state_hash}))
-        self._last_context_revision = self._store.snapshot.revision
+            self._trace.append("analysis_context.changed", {"revision": revision, "state_hash": state_hash})
+        self._trace.append("analysis_context.injected", {"revision": revision, "state_hash": state_hash, "path": str(self._workspace.context_view_path.relative_to(self._workspace.root_path))})
+        self._last_context_revision = revision
 
     def _prompt_for(self, instruction: str) -> str:
         context_view = self._workspace.context_view_path.read_text(encoding="utf-8")
