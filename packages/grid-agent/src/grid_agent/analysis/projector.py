@@ -283,8 +283,6 @@ class AnalysisContextProjector:
             self._store.append(
                 ContextEventDraft(
                     event_type="evidence.registered",
-                    turn_id=turn_id,
-                    capability=capability,
                     payload={
                         "evidence_ref": artifact.reference,
                         "path": _relative_path(artifact.path, self._verifier.workspace_root),

@@ -349,6 +349,68 @@ def test_projector_opens_context_and_promotes_topology_endpoint_facts(
     assert {"topology.branch.from_bus", "topology.branch.to_bus"} <= predicates
 
 
+def test_projector_reuses_registered_evidence_when_evidence_is_read_again(
+    context_harness: ContextHarness,
+) -> None:
+    """A content-addressed evidence artifact is not scoped to a tool call."""
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    endpoint_evidence_ref = write_topology_evidence(
+        context_harness.workspace,
+        opened,
+        branch_ref="asset:line:11",
+        from_bus="asset:bus:6",
+        to_bus="asset:bus:11",
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("open", "grid_context_open", {"model_id": "ieee39"}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result("open", "context.open", {"context_ref": opened.context_ref, "revision_ref": opened.revision_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_start("endpoints", "grid_topology_branch_endpoints", {"context_ref": opened.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "endpoints",
+            "topology.branch.endpoints.get",
+            {
+                "context_ref": opened.context_ref,
+                "revision_ref": opened.revision_ref,
+                "branch_ref": "asset:line:11",
+                "from_bus": "asset:bus:6",
+                "to_bus": "asset:bus:11",
+                "evidence_ref": endpoint_evidence_ref,
+            },
+            evidence_refs=[endpoint_evidence_ref],
+        ),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_start("evidence", "grid_evidence_get", {"evidence_ref": endpoint_evidence_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "evidence",
+            "evidence.get",
+            {"evidence_ref": endpoint_evidence_ref},
+            evidence_refs=[endpoint_evidence_ref],
+        ),
+        turn_id="analysis-test-t001",
+    )
+
+    evidence = context_harness.store.snapshot.evidence
+    assert list(evidence) == [endpoint_evidence_ref]
+    assert evidence[endpoint_evidence_ref].turn_id is None
+    assert evidence[endpoint_evidence_ref].capability is None
+
+
 def test_projector_rejects_forged_inline_topology_fact_values(
     context_harness: ContextHarness,
 ) -> None:

@@ -70,6 +70,9 @@ class FakePi:
         if isinstance(action, dict) and action.get("store_error"):
             assert callable(on_semantic_event)
             on_semantic_event({"type": "fake_store_error"}, 1)
+        if isinstance(action, dict) and action.get("projection_error"):
+            assert callable(on_semantic_event)
+            on_semantic_event({"type": "fake_projection_error"}, 1)
         if isinstance(action, dict) and action.get("write_draft", True):
             handle = _read_active_turn(self.workspace)
             _write_draft(
@@ -123,6 +126,8 @@ class FakeProjector:
             )
         if event.get("type") == "fake_store_error":
             raise ContextStoreError("durable append failed while active")
+        if event.get("type") == "fake_projection_error":
+            raise SimulatorIntegrityError("evidence projection rejected")
         if event == TAMPERED_SUCCESSFUL_RESULT:
             raise SimulatorIntegrityError("tampered result")
         if event.get("ok") is False:
@@ -225,19 +230,24 @@ def test_runner_records_submitted_answer_before_completing_turn(runner_harness: 
     assert outcome.status == "completed"
 
 
-def test_runner_continues_after_missing_answer_but_stops_on_integrity_failure(
+def test_runner_continues_after_missing_answer_and_projection_integrity_diagnostic(
     runner_harness: RunnerHarness,
 ) -> None:
-    runner_harness.pi.behavior = [NO_DRAFT_AGENT_END, TAMPERED_SUCCESSFUL_RESULT, SHOULD_NOT_RUN]
+    runner_harness.pi.behavior = [NO_DRAFT_AGENT_END, {"answer": "已提交答案", "projection_error": True}, {"answer": "后续答案"}]
 
     outcome = runner_harness.runner.run(
         AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二", "三"))
     )
 
-    assert len(runner_harness.pi.prompts) == 2
-    assert outcome.status == "failed"
+    assert len(runner_harness.pi.prompts) == 3
+    assert outcome.status == "completed"
     assert runner_harness.store.snapshot.turns[0].status == "failed"
-    assert runner_harness.store.snapshot.status == "failed"
+    assert [turn.status for turn in runner_harness.store.snapshot.turns] == ["failed", "success", "success"]
+    assert [json.loads(line)["answer_output"] for line in runner_harness.workspace.answers_path.read_text().splitlines()] == [
+        "执行限制 / execution limitation: grid_submit_answer did not create an answer draft",
+        "已提交答案",
+        "后续答案",
+    ]
 
 
 def test_runner_keeps_normal_gridctl_error_nonterminal_and_checkpoints_report(
@@ -295,7 +305,7 @@ def test_runner_start_failure_terminalizes_artifacts_and_still_stops_process(
     assert manifest["status"] == "failed"
 
 
-def test_runner_active_context_store_error_aborts_turn_before_failed_manifest(
+def test_runner_records_active_context_store_error_as_diagnostic_and_continues(
     runner_harness: RunnerHarness,
 ) -> None:
     runner_harness.pi.behavior = [{"store_error": True, "write_draft": False}, SHOULD_NOT_RUN]
@@ -305,15 +315,16 @@ def test_runner_active_context_store_error_aborts_turn_before_failed_manifest(
     )
 
     manifest = json.loads(runner_harness.workspace.manifest_path.read_text(encoding="utf-8"))
-    assert outcome.status == "failed"
-    assert "durable append failed while active" in (outcome.error or "")
+    assert outcome.status == "completed"
     assert runner_harness.pi.stop_calls == 1
-    assert len(runner_harness.pi.prompts) == 1
+    assert len(runner_harness.pi.prompts) == 2
     assert runner_harness.store.snapshot.current_turn is None
     assert runner_harness.store.snapshot.turns[0].status == "failed"
-    assert runner_harness.store.snapshot.status == "failed"
-    assert manifest["status"] == "failed"
+    assert runner_harness.store.snapshot.turns[1].status == "success"
+    assert runner_harness.store.snapshot.status == "completed"
+    assert manifest["status"] == "completed"
     assert manifest["context_available"] is True
+    assert any("durable append failed while active" in item.message for item in runner_harness.store.snapshot.unresolved_limitations)
 
 
 def test_runner_does_not_write_context_events_after_terminal_completion(

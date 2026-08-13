@@ -190,10 +190,7 @@ def _register_result(state: AnalysisContext, draft: ContextEventDraft) -> Analys
 
 
 def _register_evidence(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:
-    turn = _optional_matching_turn(state, draft)
     payload = dict(draft.payload)
-    payload.setdefault("turn_id", turn.turn_id if turn is not None else draft.turn_id)
-    payload.setdefault("capability", draft.capability)
     evidence = EvidenceRecord.model_validate(payload)
     _require_known_refs(state, evidence.refs)
     evidence_by_ref = _upsert_record(

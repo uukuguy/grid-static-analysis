@@ -114,7 +114,7 @@ class AnalysisRunner:
                     self._pi.prompt_and_wait(
                         self._prompt_for(instruction),
                         on_event=self._progress_callback,
-                        on_semantic_event=lambda event, sequence, turn_id=handle.turn_id: self._projector.observe(
+                        on_semantic_event=lambda event, sequence, turn_id=handle.turn_id: self._observe_semantic_event(
                             event,
                             turn_id=turn_id,
                             trace_sequence=sequence,
@@ -202,6 +202,49 @@ class AnalysisRunner:
             workspace=self._workspace,
             environment=self._environment,
         )
+
+    def _observe_semantic_event(
+        self,
+        event: Mapping[str, Any],
+        *,
+        turn_id: str,
+        trace_sequence: int,
+    ) -> None:
+        """Keep context projection diagnostic-only for the live Pi session.
+
+        The Pi process is the answer-producing path.  Projection enriches the
+        auditable report, but a rejected or unavailable projection must never
+        interrupt an already-running tool conversation before it can submit its
+        answer.
+        """
+        try:
+            self._projector.observe(event, turn_id=turn_id, trace_sequence=trace_sequence)
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            if self._trace is not None:
+                self._trace.append(
+                    "analysis_context.projection_failed",
+                    {"turn_id": turn_id, "trace_sequence": trace_sequence, "error": message},
+                )
+            if self._store.snapshot.current_turn is None:
+                return
+            try:
+                self._store.append(
+                    ContextEventDraft(
+                        event_type="limitation.recorded",
+                        turn_id=turn_id,
+                        payload={
+                            "limitation_ref": f"context-projection:{turn_id}:{trace_sequence}",
+                            "message": f"上下文审计诊断：{message}",
+                            "refs": [],
+                        },
+                    ),
+                    integrity="diagnostic",
+                )
+            except ContextStoreError:
+                # The trace above remains the diagnostic record when the
+                # optional context store itself is unavailable.
+                pass
 
     def _verify_running_state_before_completion(self) -> None:
         self._store.verify_materialized_snapshot()
