@@ -27,6 +27,10 @@ class ContextTransitionError(RuntimeError):
     """Raised when an analysis context event violates reducer invariants."""
 
 
+_TERMINAL_STATUSES = {"completed", "failed"}
+_SIMULATOR_PROVENANCE = {"simulator", "gridctl"}
+
+
 def canonical_state_hash(state: AnalysisContext) -> str:
     payload = state.model_dump(mode="json")
     payload.pop("state_hash", None)
@@ -51,6 +55,9 @@ def initial_context(
 
 
 def reduce_context(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:
+    if state.status in _TERMINAL_STATUSES:
+        raise ContextTransitionError("terminal analysis context cannot be mutated")
+
     try:
         next_state = _apply_transition(state, draft)
     except ValidationError as exc:
@@ -101,6 +108,8 @@ def _start_turn(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisCon
         raise ContextTransitionError("active turn already exists")
     if draft.turn_id is None:
         raise ContextTransitionError("turn.started requires turn_id")
+    if any(turn.turn_id == draft.turn_id for turn in state.turns):
+        raise ContextTransitionError("turn_id was already completed")
     payload = dict(draft.payload)
     payload["turn_id"] = draft.turn_id
     turn = ActiveTurn.model_validate(payload)
@@ -127,6 +136,8 @@ def _record_observation(state: AnalysisContext, draft: ContextEventDraft) -> Ana
     payload["capability"] = capability
     observation = ObservationRecord.model_validate(payload)
     _require_known_refs(state, observation.consumed_refs)
+    if capability == "result.branches.rank":
+        _validate_ranking_observation(state, observation)
     observations = _upsert_record(
         state.observations,
         key=observation.observation_ref,
@@ -181,14 +192,14 @@ def _register_evidence(state: AnalysisContext, draft: ContextEventDraft) -> Anal
 def _record_verified_fact(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:
     payload = dict(draft.payload)
     authored_by = payload.pop("authored_by", None)
-    if authored_by is not None and authored_by != "simulator":
-        raise ContextTransitionError("verified facts must come from simulator evidence")
+    if authored_by not in _SIMULATOR_PROVENANCE:
+        raise ContextTransitionError("fact.verified requires explicit simulator/gridctl provenance")
     capability = _require_capability(draft)
     payload["verifier_capability"] = capability
     fact = VerifiedFact.model_validate(payload)
     if not fact.evidence_refs:
         raise ContextTransitionError("verified facts must come from simulator evidence")
-    _require_known_refs(state, fact.evidence_refs)
+    _require_simulator_evidence_refs(state, fact.evidence_refs)
     facts = _upsert_record(
         state.verified_facts,
         key=fact.fact_ref,
@@ -236,6 +247,8 @@ def _resolve_limitation(state: AnalysisContext, draft: ContextEventDraft) -> Ana
 
 def _complete_turn(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:
     turn = _require_active_turn(state, draft)
+    if any(completed_turn.turn_id == turn.turn_id for completed_turn in state.turns):
+        raise ContextTransitionError("turn_id was already completed")
     payload = dict(draft.payload)
     consumed_refs = _dedupe([*turn.consumed_refs, *payload.pop("consumed_refs", [])])
     produced_refs = _dedupe([*turn.produced_refs, *payload.pop("produced_refs", [])])
@@ -288,6 +301,27 @@ def _require_known_refs(state: AnalysisContext, refs: list[str]) -> None:
     unknown = [ref for ref in refs if ref not in known_refs]
     if unknown:
         raise ContextTransitionError(f"unknown referenced context artifact: {unknown[0]}")
+
+
+def _require_simulator_evidence_refs(state: AnalysisContext, refs: list[str]) -> None:
+    unknown = [ref for ref in refs if ref not in state.evidence]
+    if unknown:
+        raise ContextTransitionError(f"verified fact references unknown simulator evidence: {unknown[0]}")
+    unsupported = [ref for ref in refs if not _has_simulator_provenance(state.evidence[ref])]
+    if unsupported:
+        raise ContextTransitionError(f"evidence provenance is not simulator/gridctl: {unsupported[0]}")
+
+
+def _has_simulator_provenance(evidence: EvidenceRecord) -> bool:
+    summary_provenance = evidence.summary.get("provenance")
+    return evidence.kind in _SIMULATOR_PROVENANCE or summary_provenance in _SIMULATOR_PROVENANCE
+
+
+def _validate_ranking_observation(state: AnalysisContext, observation: ObservationRecord) -> None:
+    if observation.produced_refs:
+        raise ContextTransitionError("result.branches.rank observations must not produce refs")
+    if not any(ref in state.results for ref in observation.consumed_refs):
+        raise ContextTransitionError("result.branches.rank must consume a preexisting result ref")
 
 
 def _merge_turn_refs(

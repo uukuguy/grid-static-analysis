@@ -65,6 +65,18 @@ RANKING_OBSERVATION = {
 }
 
 
+EVIDENCE = {
+    "evidence_ref": EVIDENCE_REF,
+    "path": "evidence/network-facts/powerflow-fact.json",
+    "kind": "simulator",
+    "refs": [RESULT_REF],
+    "summary": {
+        "provenance": "gridctl",
+        "description": "deterministic simulator evidence",
+    },
+}
+
+
 def context_with_baseline():
     state = initial_context(
         analysis_id="analysis-test",
@@ -101,6 +113,56 @@ def context_with_baseline():
             turn_id="analysis-test-t001",
             capability="context.open",
             payload=BASELINE,
+        ),
+    )
+
+
+def context_with_completed_turn():
+    state = context_with_baseline()
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="result.registered",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload=RESULT,
+        ),
+    )
+    return reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="turn.completed",
+            turn_id="analysis-test-t001",
+            payload={
+                "status": "success",
+                "answer_path": "turns/001/answer.json",
+                "answer_sha256": "d" * 64,
+                "duration_seconds": 1.5,
+                "consumed_refs": [],
+                "produced_refs": [RESULT_REF],
+            },
+        ),
+    )
+
+
+def context_with_simulator_evidence():
+    state = context_with_baseline()
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="result.registered",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload=RESULT,
+        ),
+    )
+    return reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="evidence.registered",
+            turn_id="analysis-test-t001",
+            capability="gridctl.evidence.register",
+            payload=EVIDENCE,
         ),
     )
 
@@ -229,19 +291,164 @@ def test_context_reducer_rejects_duplicate_active_turn() -> None:
 
 
 def test_context_reducer_rejects_model_authored_verified_fact() -> None:
-    state = context_with_baseline()
+    state = context_with_simulator_evidence()
 
-    with pytest.raises(ContextTransitionError, match="verified facts must come from simulator evidence"):
+    with pytest.raises(ContextTransitionError, match="explicit simulator/gridctl provenance"):
         reduce_context(
             state,
             ContextEventDraft(
                 event_type="fact.verified",
                 turn_id="analysis-test-t001",
+                capability="gridctl.fact.verify",
                 payload={
                     "fact_ref": "fact:sha256:" + "5" * 64,
                     "statement": "model-authored fact",
                     "evidence_refs": [EVIDENCE_REF],
                     "authored_by": "model",
+                },
+            ),
+        )
+
+
+def test_context_reducer_rejects_verified_fact_without_explicit_simulator_provenance() -> None:
+    state = context_with_simulator_evidence()
+
+    with pytest.raises(ContextTransitionError, match="explicit simulator/gridctl provenance"):
+        reduce_context(
+            state,
+            ContextEventDraft(
+                event_type="fact.verified",
+                turn_id="analysis-test-t001",
+                capability="gridctl.fact.verify",
+                payload={
+                    "fact_ref": "fact:sha256:" + "5" * 64,
+                    "statement": "omitted provenance",
+                    "evidence_refs": [EVIDENCE_REF],
+                },
+            ),
+        )
+
+
+def test_context_reducer_rejects_verified_fact_without_simulator_evidence_provenance() -> None:
+    state = context_with_baseline()
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="result.registered",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload=RESULT,
+        ),
+    )
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="evidence.registered",
+            turn_id="analysis-test-t001",
+            capability="manual.evidence.register",
+            payload={**EVIDENCE, "kind": "manual", "summary": {"provenance": "model"}},
+        ),
+    )
+
+    with pytest.raises(ContextTransitionError, match="evidence provenance is not simulator/gridctl"):
+        reduce_context(
+            state,
+            ContextEventDraft(
+                event_type="fact.verified",
+                turn_id="analysis-test-t001",
+                capability="gridctl.fact.verify",
+                payload={
+                    "fact_ref": "fact:sha256:" + "5" * 64,
+                    "statement": "unsupported evidence provenance",
+                    "evidence_refs": [EVIDENCE_REF],
+                    "authored_by": "gridctl",
+                },
+            ),
+        )
+
+
+def test_context_reducer_rejects_ranking_observation_that_produces_refs() -> None:
+    state = context_with_completed_turn()
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="turn.started",
+            turn_id="analysis-test-t002",
+            payload={
+                "ordinal": 2,
+                "instruction": "排序",
+                "instruction_sha256": "e" * 64,
+                "nonce_sha256": "f" * 64,
+            },
+        ),
+    )
+
+    with pytest.raises(ContextTransitionError, match="result.branches.rank observations must not produce refs"):
+        reduce_context(
+            state,
+            ContextEventDraft(
+                event_type="tool.observation.recorded",
+                turn_id="analysis-test-t002",
+                capability="result.branches.rank",
+                payload={**RANKING_OBSERVATION, "produced_refs": ["observation:sha256:" + "6" * 64], "consumed_refs": [RESULT_REF]},
+            ),
+        )
+
+
+def test_context_reducer_rejects_ranking_observation_without_preexisting_result_ref() -> None:
+    state = context_with_baseline()
+
+    with pytest.raises(ContextTransitionError, match="result.branches.rank must consume a preexisting result ref"):
+        reduce_context(
+            state,
+            ContextEventDraft(
+                event_type="tool.observation.recorded",
+                turn_id="analysis-test-t001",
+                capability="result.branches.rank",
+                payload={**RANKING_OBSERVATION, "consumed_refs": []},
+            ),
+        )
+
+
+def test_context_reducer_rejects_normal_mutations_after_terminal_status() -> None:
+    state = reduce_context(context_with_completed_turn(), ContextEventDraft(event_type="analysis.completed"))
+
+    terminal_mutations = [
+        ContextEventDraft(event_type="analysis.started"),
+        ContextEventDraft(
+            event_type="turn.started",
+            turn_id="analysis-test-t002",
+            payload={
+                "ordinal": 2,
+                "instruction": "排序",
+                "instruction_sha256": "e" * 64,
+                "nonce_sha256": "f" * 64,
+            },
+        ),
+        ContextEventDraft(
+            event_type="audit.diagnostic.recorded",
+            payload={"message": "late diagnostic"},
+        ),
+    ]
+    for draft in terminal_mutations:
+        with pytest.raises(ContextTransitionError, match="terminal analysis context cannot be mutated"):
+            reduce_context(state, draft)
+
+
+def test_context_reducer_rejects_duplicate_completed_turn_id() -> None:
+    state = context_with_completed_turn()
+
+    with pytest.raises(ContextTransitionError, match="turn_id was already completed"):
+        reduce_context(
+            state,
+            ContextEventDraft(
+                event_type="turn.started",
+                turn_id="analysis-test-t001",
+                payload={
+                    "ordinal": 2,
+                    "instruction": "重复",
+                    "instruction_sha256": "e" * 64,
+                    "nonce_sha256": "f" * 64,
                 },
             ),
         )
