@@ -119,12 +119,16 @@ def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage
             assert archived_answer["question_id"] == answer["question_id"]
             assert archived_answer["answer_output"] == answer["answer_output"]
 
-        assert "## 仿真基线" in report_text
-        for answer in answers:
-            assert answer["answer_output"] in report_text
-        assert powerflow_ref in report_text
-        assert n1_ref in report_text
-        assert report_text.count("上下文版本：") == len(prompts)
+        reader_report, audit_appendix = report_text.split("## 审计附录", maxsplit=1)
+        assert "## 结论总览" in reader_report
+        assert reader_report.count("#### 回答") == len(prompts)
+        assert reader_report.count("#### 工具执行过程") == len(prompts)
+        for prompt in prompts:
+            assert prompt in reader_report
+        assert powerflow_ref not in reader_report
+        assert n1_ref not in reader_report
+        assert powerflow_ref in audit_appendix
+        assert n1_ref in audit_appendix
         assert not any(item.get("type") in {"text_delta", "message_update"} for item in trace)
         assert AnalysisContextStore.replay(root / "context/context-events.jsonl") == context
 

@@ -249,6 +249,11 @@ class AnalysisContextProjector:
         start: Mapping[str, Any],
     ) -> None:
         for artifact in sorted(result_artifacts, key=lambda item: item.reference):
+            # A result_ref identifies one immutable simulator artifact.  Later
+            # reads of its evidence may rediscover it, but that is a reuse in a
+            # different tool observation, not a conflicting new result.
+            if artifact.reference in self._store.snapshot.results:
+                continue
             document = artifact.document
             evidence_refs = _dedupe([*_string_items(document.get("evidence_refs")), *event_evidence_refs])
             self._store.append(

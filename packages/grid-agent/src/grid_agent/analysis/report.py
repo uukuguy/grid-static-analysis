@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -22,14 +23,9 @@ from grid_agent.analysis.workspace import AnalysisWorkspace
 
 
 REPORT_SECTIONS = (
-    "分析摘要",
-    "运行环境",
-    "仿真基线",
-    "分析执行上下文",
-    "结果依赖关系",
-    "指令执行时间线",
-    "未解决限制",
-    "复核工件",
+    "结论总览",
+    "逐题分析",
+    "审计附录",
 )
 
 
@@ -41,8 +37,9 @@ def render_analysis_report(
 ) -> str:
     """Render the operator-facing report from finalized structured context.
 
-    The submitted answer body is loaded from the accepted per-turn answer JSON
-    registered in the context and is inserted without humanizing or rewriting.
+    Accepted answers and raw forensic data remain in their registered files.
+    The reader-facing body replaces opaque internal references with a short
+    provenance marker; the complete values remain in the collapsed appendix.
     """
     diagnostics: list[str] = []
     ledger = _read_context_events(workspace.context_events_path)
@@ -51,18 +48,9 @@ def render_analysis_report(
     diagnostics.extend(turn_revisions.diagnostics)
     lines = ["# 分析报告", ""]
 
-    _append_section(lines, "分析摘要", _render_summary(context))
-    _append_section(lines, "运行环境", _render_environment(context, environment))
-    _append_section(lines, "仿真基线", _render_baselines(context, workspace, diagnostics))
-    _append_section(lines, "分析执行上下文", _render_final_context(context, workspace, diagnostics))
-    _append_section(lines, "结果依赖关系", _render_dependencies(context, workspace, diagnostics))
-    _append_section(lines, "指令执行时间线", _render_timeline(context, workspace, turn_revisions.ranges, diagnostics))
-    limitation_body = _render_limitations(context)
-    if limitation_body:
-        _append_section(lines, "未解决限制", limitation_body)
-    if diagnostics:
-        _append_section(lines, "报告诊断", [f"- {_md(diagnostic)}" for diagnostic in dict.fromkeys(diagnostics)])
-    _append_section(lines, "复核工件", _render_forensic_artifacts(workspace, diagnostics))
+    _append_section(lines, "结论总览", _render_reader_summary(context, workspace, diagnostics))
+    _append_section(lines, "逐题分析", _render_reader_turns(context, workspace, ledger.events, diagnostics))
+    _append_section(lines, "审计附录", _render_audit_appendix(context, workspace, environment, diagnostics))
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -88,6 +76,24 @@ def _render_summary(context: AnalysisContext) -> list[str]:
         f"- 最终状态：`{context.status}`；最终上下文修订：`{context.revision}`",
         f"- 指令数：{context.input.instruction_count}；完成回合：{len(context.turns)}；成功：{counts['success']}；失败：{counts['failed']}",
     ]
+
+
+def _render_reader_summary(
+    context: AnalysisContext,
+    workspace: AnalysisWorkspace,
+    diagnostics: list[str],
+) -> list[str]:
+    counts = {status: sum(turn.status == status for turn in context.turns) for status in ("success", "failed")}
+    lines = [
+        f"- 共 {len(context.turns)}/{context.input.instruction_count} 题；成功 {counts['success']} 题；未完成 {counts['failed']} 题。",
+        "",
+        "| 题目 | 状态 | 结论摘要 |",
+        "| --- | --- | --- |",
+    ]
+    for turn in sorted(context.turns, key=lambda item: item.ordinal):
+        answer = _accepted_answer_text(turn, workspace, (), diagnostics)
+        lines.append(f"| {turn.ordinal}. {_md(turn.instruction)} | {_reader_status(turn.status)} | {_md(_answer_preview(answer))} |")
+    return lines
 
 
 def _render_environment(context: AnalysisContext, environment: Mapping[str, str]) -> list[str]:
@@ -297,6 +303,205 @@ def _render_timeline(
                 lines.append(f"  - {_md(limitation.message)}；相关引用：{_refs(limitation.refs)}")
         lines.append("")
     return lines
+
+
+def _render_reader_turns(
+    context: AnalysisContext,
+    workspace: AnalysisWorkspace,
+    events: Sequence[AnalysisContextEvent],
+    diagnostics: list[str],
+) -> list[str]:
+    if not context.turns:
+        return ["尚无完成题目。"]
+    limitations_by_turn: dict[str, list[LimitationRecord]] = defaultdict(list)
+    for limitation in context.unresolved_limitations:
+        if limitation.turn_id:
+            limitations_by_turn[limitation.turn_id].append(limitation)
+    observations_by_turn: dict[str, list[tuple[int, Any]]] = defaultdict(list)
+    event_order = {
+        str(event.payload.get("observation_ref")): event.sequence
+        for event in events
+        if event.event_type == "tool.observation.recorded"
+    }
+    for observation in context.observations.values():
+        observations_by_turn[observation.turn_id].append((event_order.get(observation.observation_ref, 1_000_000), observation))
+
+    lines: list[str] = []
+    for turn in sorted(context.turns, key=lambda item: item.ordinal):
+        answer = _accepted_answer_text(turn, workspace, limitations_by_turn.get(turn.turn_id, ()), diagnostics)
+        lines.extend(
+            [
+                f"### {turn.ordinal}. {_md(turn.instruction)}",
+                "",
+                f"状态：{_reader_status(turn.status)}" + (f"；耗时 {turn.duration_seconds:.1f} 秒" if turn.duration_seconds is not None else ""),
+                f"原始回答：{_answer_link_or_label(turn, workspace, diagnostics)}",
+                "",
+                "#### 回答",
+                "",
+                _reader_answer(answer),
+                "",
+                "#### 工具执行过程",
+                "",
+                *_render_tool_steps(observations_by_turn.get(turn.turn_id, ())),
+            ]
+        )
+        turn_limitations = limitations_by_turn.get(turn.turn_id, ())
+        if turn_limitations:
+            lines.extend(["", "#### 审计诊断", ""])
+            lines.extend(f"- {_reader_diagnostic(item.message)}" for item in _unique_limitations(turn_limitations))
+        lines.append("")
+    return lines
+
+
+def _render_tool_steps(observations: Sequence[tuple[int, Any]]) -> list[str]:
+    if not observations:
+        return ["- 本回合没有记录到工具调用。"]
+    lines: list[str] = []
+    for ordinal, (_, observation) in enumerate(sorted(observations, key=lambda item: (item[0], item[1].observation_ref)), start=1):
+        producer = observation.producer_observation
+        args = producer.get("args") if isinstance(producer, Mapping) else {}
+        args = args if isinstance(args, Mapping) else {}
+        label = _tool_label(observation.capability)
+        input_summary = _tool_input_summary(args)
+        outcome = _tool_outcome_summary(observation.summary)
+        detail = "；".join(item for item in (input_summary, outcome) if item)
+        lines.append(f"{ordinal}. **{label}**" + (f"：{_md(detail)}。" if detail else "。"))
+    return lines
+
+
+def _render_audit_appendix(
+    context: AnalysisContext,
+    workspace: AnalysisWorkspace,
+    environment: Mapping[str, str],
+    diagnostics: list[str],
+) -> list[str]:
+    lines = [
+        "以下内容用于复核，不影响正文中的问题、回答和工具过程阅读。",
+        "",
+        "### 运行环境",
+        "",
+        *_render_environment(context, environment),
+        "",
+        "### 仿真基线",
+        "",
+        *_render_baselines(context, workspace, diagnostics),
+    ]
+    limitation_body = _render_limitations(context)
+    if limitation_body:
+        lines.extend(["", "### 审计诊断", "", *_render_compact_limitations(context)])
+    if diagnostics:
+        lines.extend(["", "### 报告生成诊断", "", *[f"- {_md(item)}" for item in dict.fromkeys(diagnostics)]])
+    lines.extend(
+        [
+            "",
+            "### 复核工件",
+            "",
+            *_render_forensic_artifacts(workspace, diagnostics),
+            "",
+            "<details>",
+            "<summary>展开完整引用与工件索引（仅用于复核）</summary>",
+            "",
+            *_render_dependencies(context, workspace, diagnostics),
+            "",
+            "</details>",
+        ]
+    )
+    return lines
+
+
+def _reader_status(status: str) -> str:
+    return "已完成" if status == "success" else "未完成"
+
+
+def _answer_preview(answer: str) -> str:
+    return _reader_answer(answer).replace("\n", " ")[:160].rstrip() + ("…" if len(_reader_answer(answer).replace("\n", " ")) > 160 else "")
+
+
+def _reader_answer(answer: str) -> str:
+    answer = _redact_internal_refs(answer)
+    return answer if answer.strip() else "未提供回答。"
+
+
+def _reader_diagnostic(message: str) -> str:
+    return _redact_internal_refs(message)
+
+
+def _redact_internal_refs(value: str) -> str:
+    return re.sub(
+        r"(?:context|revision|result|evidence|observation):sha256:[0-9a-f]{4,64}(?:\.\.\.)?|asset:[^\s:]+:sha256:[0-9a-f]{4,64}",
+        "〔可追溯引用〕",
+        value,
+    )
+
+
+def _tool_label(capability: str) -> str:
+    return {
+        "model.list": "读取模型目录",
+        "environment.describe": "读取仿真环境",
+        "context.open": "打开电网模型",
+        "model.element.get": "查询网络元件",
+        "model.dataset.query": "查询网络数据",
+        "topology.branch.endpoints.get": "查询线路端点",
+        "evidence.get": "读取仿真证据",
+        "analysis.powerflow.ac.run": "执行交流潮流",
+        "result.branches.rank": "按负载率排序",
+        "analysis.contingency.n_minus_one.run": "执行 N-1 校核",
+        "grid_submit_answer": "提交本题回答",
+        "guide.open": "读取操作指南",
+    }.get(capability, capability)
+
+
+def _tool_input_summary(args: Mapping[str, Any]) -> str:
+    if isinstance(args.get("model_id"), str):
+        return f"模型 {args['model_id']}"
+    if isinstance(args.get("identifier"), str):
+        kind = "线路" if args.get("kind") == "line" else str(args.get("kind", "元件"))
+        return f"{kind} {args['identifier']}"
+    if isinstance(args.get("dataset"), str):
+        return {"network.buses": "查询母线数据", "network.branches": "查询支路数据"}.get(args["dataset"], f"查询 {args['dataset']}")
+    if isinstance(args.get("branch_refs"), list):
+        return f"校核 {len(args['branch_refs'])} 条线路"
+    if isinstance(args.get("result_ref"), str):
+        return "复用已注册仿真结果"
+    if isinstance(args.get("metric"), str):
+        limit = args.get("limit")
+        return f"指标 {args['metric']}" + (f"，前 {limit} 项" if isinstance(limit, int) else "")
+    if isinstance(args.get("context_ref"), str):
+        return "基于已打开模型"
+    return ""
+
+
+def _tool_outcome_summary(summary: Mapping[str, Any]) -> str:
+    if summary.get("ok") is False:
+        return "调用未成功"
+    details: list[str] = []
+    if summary.get("converged") is True:
+        details.append("潮流收敛")
+    if isinstance(summary.get("total_active_loss"), (int, float)):
+        details.append(f"有功网损 {summary['total_active_loss']:.3f} MW")
+    if isinstance(summary.get("scenario_count"), int):
+        details.append(f"完成 {summary['scenario_count']} 个场景")
+    if isinstance(summary.get("status"), str):
+        details.append(f"状态 {summary['status']}")
+    if summary.get("result_ref"):
+        details.append("已生成可追溯结果")
+    if summary.get("evidence_ref"):
+        details.append("已生成可追溯证据")
+    return "；".join(details) if details else "调用完成"
+
+
+def _unique_limitations(limitations: Sequence[LimitationRecord]) -> list[LimitationRecord]:
+    unique: dict[str, LimitationRecord] = {}
+    for item in limitations:
+        unique.setdefault(item.message, item)
+    return list(unique.values())
+
+
+def _render_compact_limitations(context: AnalysisContext) -> list[str]:
+    grouped: dict[str, list[LimitationRecord]] = defaultdict(list)
+    for limitation in context.unresolved_limitations:
+        grouped[limitation.message].append(limitation)
+    return [f"- {_reader_diagnostic(message)}（出现 {len(items)} 次）" for message, items in grouped.items()]
 
 
 def _render_limitations(context: AnalysisContext) -> list[str]:

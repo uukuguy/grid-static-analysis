@@ -411,6 +411,51 @@ def test_projector_reuses_registered_evidence_when_evidence_is_read_again(
     assert evidence[endpoint_evidence_ref].capability is None
 
 
+def test_projector_reuses_registered_result_when_its_evidence_is_read_again(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        opened,
+        converged=True,
+        total_active_loss=1.25,
+        branch_results=[],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("powerflow", "grid_analysis_powerflow_ac", {"context_ref": opened.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "powerflow",
+            "analysis.powerflow.ac.run",
+            powerflow_result,
+            evidence_refs=[powerflow_evidence_ref],
+        ),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.complete_turn("analysis-test-t001")
+    context_harness.start_turn("analysis-test-t002", ordinal=2)
+    context_harness.projector.observe(
+        tool_start("evidence", "grid_evidence_get", {"evidence_ref": powerflow_evidence_ref}),
+        turn_id="analysis-test-t002",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "evidence",
+            "evidence.get",
+            {"evidence_ref": powerflow_evidence_ref},
+            evidence_refs=[powerflow_evidence_ref],
+        ),
+        turn_id="analysis-test-t002",
+    )
+
+    assert list(context_harness.store.snapshot.results) == [powerflow_result["result_ref"]]
+
+
 def test_projector_rejects_forged_inline_topology_fact_values(
     context_harness: ContextHarness,
 ) -> None:

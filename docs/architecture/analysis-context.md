@@ -123,13 +123,19 @@ artifacts and follow-on grid tools.
 
 ## Report Projection
 
-`report.md` is a projection from the finalized context and workspace files. It
-must display one global simulator baseline table, final context links,
-result/evidence/observation dependencies, and a per-turn timeline. Every turn
-shows status, accepted answer file, exact `answer_output`, reused prior refs,
-newly produced artifacts, and the context revision range labeled
-`上下文版本`. Report diagnostics may explain missing or malformed artifacts, but
-the report must not infer simulator facts absent from the context.
+`report.md` is a projection from the finalized context and workspace files.
+Its reader-facing body starts with a conclusion overview, then presents each
+instruction as **question → accepted answer → readable tool execution
+process → non-blocking diagnostics**. Internal content-addressed references
+are replaced by a provenance marker in this body so that conclusions are not
+buried under hashes; the accepted original answer remains linked as an
+artifact. Tool execution is derived only from recorded observations and shows
+the tool purpose, relevant human-readable input, and compact verified outcome;
+it does not reproduce hidden model reasoning. Runtime metadata, baseline,
+diagnostics, forensic artifact links, and the full result/evidence/observation
+reference index appear only in the collapsed audit appendix. Report diagnostics
+may explain missing or malformed artifacts, but the report must not infer
+simulator facts absent from the context.
 
 ## Schema Evolution Rules
 

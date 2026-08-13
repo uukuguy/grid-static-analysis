@@ -42,22 +42,25 @@ class ReportFixture:
         return _append_context_event(self.workspace, self.context, draft, integrity="diagnostic")
 
 
-def test_report_renders_baseline_once_and_turn_context_deltas(report_fixture: ReportFixture) -> None:
+def test_report_prioritizes_questions_answers_and_readable_tool_steps(report_fixture: ReportFixture) -> None:
     report = render_analysis_report(
         context=report_fixture.context,
         workspace=report_fixture.workspace,
         environment=report_fixture.environment,
     )
+    reader_report, audit_appendix = report.split("## 审计附录", maxsplit=1)
 
-    assert report.count("## 仿真基线") == 1
-    assert report.count("pandapower.networks.case39") == 1
-    assert "## 分析执行上下文" in report
-    assert "上下文版本：5 → 9" in report
-    assert "复用前序结果" in report
-    assert RESULT_REF in report
-    assert "结果依赖关系" in report
-    assert "context/analysis-context.json" in report
-    assert "context/context-events.jsonl" in report
+    assert reader_report.index("## 结论总览") < reader_report.index("## 逐题分析")
+    assert "### 1. 运行潮流并复用前序结果" in reader_report
+    assert "#### 回答" in reader_report
+    assert "#### 工具执行过程" in reader_report
+    assert "按负载率排序" in reader_report
+    assert "result:sha256:" not in reader_report
+    assert "evidence:sha256:" not in reader_report
+    assert "asset:line:sha256:" not in reader_report
+    assert "结果依赖关系" not in reader_report
+    assert RESULT_REF in audit_appendix
+    assert "context/analysis-context.json" in audit_appendix
 
 
 def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: ReportFixture) -> None:
@@ -67,7 +70,7 @@ def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: Rep
         environment={},
     )
 
-    assert report_fixture.answer_text in report
+    assert "接受答案保持原文 〔可追溯引用〕" in report
     assert "审计诊断" in report
     assert "模型草稿（未采纳）" not in report
 
@@ -79,9 +82,9 @@ def test_report_renders_failed_turns_and_unresolved_limitations(report_fixture: 
         environment=report_fixture.environment,
     )
 
-    assert "状态：failed" in report
+    assert "状态：未完成" in report
     assert "执行限制 / execution limitation: solver unavailable" in report
-    assert "## 未解决限制" in report
+    assert "## 审计附录" in report
     assert "solver unavailable" in report
 
 
@@ -141,7 +144,7 @@ def test_report_rejects_absolute_and_traversal_artifact_paths(report_fixture: Re
     assert "../outside-result.json" not in report
     assert "evidence/../secret.json" not in report
     assert report.count("路径不可用") >= 4
-    assert "报告诊断" in report
+    assert "报告生成诊断" in report
 
 
 def test_report_marks_turn_revision_unavailable_when_ledger_is_missing(report_fixture: ReportFixture) -> None:
@@ -149,9 +152,8 @@ def test_report_marks_turn_revision_unavailable_when_ledger_is_missing(report_fi
 
     report = render_analysis_report(context=report_fixture.context, workspace=report_fixture.workspace, environment={})
 
-    assert "上下文版本：不可用" in report
+    assert "上下文版本：不可用" not in report
     assert "事件账本不可用" in report
-    assert "上下文版本：0 →" not in report
 
 
 def test_report_marks_turn_revision_unavailable_when_ledger_is_malformed(report_fixture: ReportFixture) -> None:
@@ -159,9 +161,8 @@ def test_report_marks_turn_revision_unavailable_when_ledger_is_malformed(report_
 
     report = render_analysis_report(context=report_fixture.context, workspace=report_fixture.workspace, environment={})
 
-    assert "上下文版本：不可用" in report
+    assert "上下文版本：不可用" not in report
     assert "事件账本第 1 行格式错误" in report
-    assert "上下文版本：0 →" not in report
 
 
 def test_write_analysis_report_checkpoint_atomically_replaces_report(report_fixture: ReportFixture) -> None:
