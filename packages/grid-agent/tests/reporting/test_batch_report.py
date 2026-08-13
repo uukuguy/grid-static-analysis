@@ -123,6 +123,31 @@ def test_render_markdown_keeps_accepted_answer_with_audit_diagnostics(tmp_path: 
     ]
 
 
+def test_accepted_answer_references_match_between_markdown_and_jsonl(tmp_path: Path) -> None:
+    answer = "结果 result:sha256:" + "a" * 64 + "；证据 evidence:sha256:" + "b" * 64
+    record = BatchRecord(
+        ordinal=1,
+        question="线路11连接哪两个母线?",
+        question_id="q-opaque-refs",
+        answer_output=answer,
+        status="success",
+        duration_seconds=1.0,
+        run_path=None,
+        observation=RunObservation(None, (), (), ()),
+        error=None,
+    )
+
+    report = render_markdown(batch_id="batch-1", source_name="questions.txt", environment={}, records=(record,))
+    destination = tmp_path / "answers.jsonl"
+    write_jsonl(destination, (record,))
+
+    assert answer in report
+    assert json.loads(destination.read_text(encoding="utf-8")) == {
+        "question_id": "q-opaque-refs",
+        "answer_output": answer,
+    }
+
+
 def test_write_jsonl_contains_only_answer_envelopes(tmp_path: Path) -> None:
     destination = tmp_path / "answers.jsonl"
     records = (

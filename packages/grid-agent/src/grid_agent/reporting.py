@@ -459,7 +459,7 @@ def _representative_evidence(sources: Sequence[EvidenceSource]) -> tuple[Evidenc
 def _display_answer(record: BatchRecord) -> str:
     if record.status == "failed" and record.draft_answer:
         return "本题未形成可验收的最终回答。下方保留模型草稿及审计说明，便于判断问题所在。"
-    return humanize_answer(record.answer_output)
+    return record.answer_output
 
 
 def _status_label(status: str) -> str:
