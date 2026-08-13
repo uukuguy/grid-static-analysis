@@ -59,6 +59,7 @@ run-llm:
 	uv run --project packages/grid-agent grid-agent run $(if $(PROVIDER),--provider "$(PROVIDER)") "$(QUESTION)"
 
 QUESTIONS ?= validation/questions/task.md.txt
+OUTPUT ?=
 
 report:
 	@test -f "$(QUESTIONS)" || (echo "Question file not found: $(QUESTIONS)" >&2; exit 2)
