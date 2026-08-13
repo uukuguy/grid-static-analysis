@@ -4,6 +4,7 @@ import json
 import os
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -43,20 +44,25 @@ def render_analysis_report(
     The submitted answer body is loaded from the accepted per-turn answer JSON
     registered in the context and is inserted without humanizing or rewriting.
     """
-    events = _read_context_events(workspace.context_events_path)
-    turn_revisions = _turn_revision_ranges(events)
+    diagnostics: list[str] = []
+    ledger = _read_context_events(workspace.context_events_path)
+    diagnostics.extend(ledger.diagnostics)
+    turn_revisions = _turn_revision_ranges(ledger.events, context.turns)
+    diagnostics.extend(turn_revisions.diagnostics)
     lines = ["# 分析报告", ""]
 
     _append_section(lines, "分析摘要", _render_summary(context))
     _append_section(lines, "运行环境", _render_environment(context, environment))
-    _append_section(lines, "仿真基线", _render_baselines(context))
-    _append_section(lines, "分析执行上下文", _render_final_context(context, workspace))
-    _append_section(lines, "结果依赖关系", _render_dependencies(context))
-    _append_section(lines, "指令执行时间线", _render_timeline(context, workspace, turn_revisions))
+    _append_section(lines, "仿真基线", _render_baselines(context, workspace, diagnostics))
+    _append_section(lines, "分析执行上下文", _render_final_context(context, workspace, diagnostics))
+    _append_section(lines, "结果依赖关系", _render_dependencies(context, workspace, diagnostics))
+    _append_section(lines, "指令执行时间线", _render_timeline(context, workspace, turn_revisions.ranges, diagnostics))
     limitation_body = _render_limitations(context)
     if limitation_body:
         _append_section(lines, "未解决限制", limitation_body)
-    _append_section(lines, "复核工件", _render_forensic_artifacts(workspace))
+    if diagnostics:
+        _append_section(lines, "报告诊断", [f"- {_md(diagnostic)}" for diagnostic in dict.fromkeys(diagnostics)])
+    _append_section(lines, "复核工件", _render_forensic_artifacts(workspace, diagnostics))
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -98,7 +104,25 @@ def _render_environment(context: AnalysisContext, environment: Mapping[str, str]
     return lines
 
 
-def _render_baselines(context: AnalysisContext) -> list[str]:
+@dataclass(frozen=True, slots=True)
+class _ResolvedWorkspacePath:
+    absolute: Path
+    relative: str
+
+
+@dataclass(frozen=True, slots=True)
+class _LedgerRead:
+    events: tuple[AnalysisContextEvent, ...]
+    diagnostics: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TurnRevisionRanges:
+    ranges: dict[str, tuple[int, int]]
+    diagnostics: tuple[str, ...]
+
+
+def _render_baselines(context: AnalysisContext, workspace: AnalysisWorkspace, diagnostics: list[str]) -> list[str]:
     if not context.baselines:
         return ["未注册仿真基线。"]
     rows = ["| 模型 | 来源 | 仿真器 | 工件 |", "| --- | --- | --- | --- |"]
@@ -122,7 +146,14 @@ def _render_baselines(context: AnalysisContext) -> list[str]:
                     _md(model),
                     _md(source),
                     _md(engine_display),
-                    _link(baseline.path, baseline.path),
+                    _workspace_link(
+                        workspace,
+                        baseline.path,
+                        label=baseline.path,
+                        unavailable_label="路径不可用",
+                        diagnostics=diagnostics,
+                        description="仿真基线工件",
+                    ),
                 )
             )
             + " |"
@@ -132,16 +163,16 @@ def _render_baselines(context: AnalysisContext) -> list[str]:
     return rows
 
 
-def _render_final_context(context: AnalysisContext, workspace: AnalysisWorkspace) -> list[str]:
+def _render_final_context(context: AnalysisContext, workspace: AnalysisWorkspace, diagnostics: list[str]) -> list[str]:
     return [
-        f"- 上下文文件：{_link(workspace.context_snapshot_path.relative_to(workspace.root_path), 'context/analysis-context.json')}",
-        f"- 事件账本：{_link(workspace.context_events_path.relative_to(workspace.root_path), 'context/context-events.jsonl')}",
+        f"- 上下文文件：{_workspace_link(workspace, workspace.context_snapshot_path.relative_to(workspace.root_path), label='context/analysis-context.json', unavailable_label='上下文文件不可用', diagnostics=diagnostics, description='上下文文件')}",
+        f"- 事件账本：{_workspace_link(workspace, workspace.context_events_path.relative_to(workspace.root_path), label='context/context-events.jsonl', unavailable_label='事件账本不可用', diagnostics=diagnostics, description='事件账本')}",
         f"- 当前活动回合：{context.current_turn.turn_id if context.current_turn else '无'}",
         f"- 已注册结果：{len(context.results)}；证据：{len(context.evidence)}；已验证事实：{len(context.verified_facts)}；诊断：{len(context.diagnostics)}",
     ]
 
 
-def _render_dependencies(context: AnalysisContext) -> list[str]:
+def _render_dependencies(context: AnalysisContext, workspace: AnalysisWorkspace, diagnostics: list[str]) -> list[str]:
     rows = ["| 引用 | 类型 | 生产回合 | 依赖 | 工件 |", "| --- | --- | --- | --- | --- |"]
     for result in context.results.values():
         rows.append(
@@ -151,6 +182,8 @@ def _render_dependencies(context: AnalysisContext) -> list[str]:
                 turn_id=result.turn_id,
                 deps=[result.revision_ref, *result.evidence_refs],
                 path=result.path,
+                workspace=workspace,
+                diagnostics=diagnostics,
             )
         )
     for evidence in context.evidence.values():
@@ -161,6 +194,8 @@ def _render_dependencies(context: AnalysisContext) -> list[str]:
                 turn_id=evidence.turn_id,
                 deps=evidence.refs,
                 path=evidence.path,
+                workspace=workspace,
+                diagnostics=diagnostics,
             )
         )
     for observation in context.observations.values():
@@ -171,6 +206,8 @@ def _render_dependencies(context: AnalysisContext) -> list[str]:
                 turn_id=observation.turn_id,
                 deps=observation.consumed_refs,
                 path=observation.path,
+                workspace=workspace,
+                diagnostics=diagnostics,
             )
         )
     return rows if len(rows) > 2 else ["没有注册结果、证据或工具观察。"]
@@ -183,6 +220,8 @@ def _dependency_row(
     turn_id: str | None,
     deps: Sequence[str],
     path: str,
+    workspace: AnalysisWorkspace,
+    diagnostics: list[str],
 ) -> str:
     return (
         "| "
@@ -192,7 +231,14 @@ def _dependency_row(
                 _md(kind),
                 _md(turn_id or "全局"),
                 "<br>".join(f"`{_md(dep)}`" for dep in deps) if deps else "—",
-                _link(path, path),
+                _workspace_link(
+                    workspace,
+                    path,
+                    label=path,
+                    unavailable_label="路径不可用",
+                    diagnostics=diagnostics,
+                    description=f"{kind} 工件",
+                ),
             )
         )
         + " |"
@@ -203,6 +249,7 @@ def _render_timeline(
     context: AnalysisContext,
     workspace: AnalysisWorkspace,
     turn_revisions: Mapping[str, tuple[int, int]],
+    diagnostics: list[str],
 ) -> list[str]:
     if not context.turns:
         return ["尚无完成回合。"]
@@ -219,26 +266,27 @@ def _render_timeline(
 
     lines: list[str] = []
     for turn in sorted(context.turns, key=lambda item: item.ordinal):
-        start_revision, end_revision = turn_revisions.get(turn.turn_id, (0, context.revision))
+        revision_range = turn_revisions.get(turn.turn_id)
+        revision_display = f"{revision_range[0]} → {revision_range[1]}" if revision_range else "不可用"
         lines.extend(
             [
                 f"### {turn.ordinal}. {turn.instruction}",
                 "",
-                f"- turn_id：`{turn.turn_id}`；状态：{turn.status}；上下文版本：{start_revision} → {end_revision}",
+                f"- turn_id：`{turn.turn_id}`；状态：{turn.status}；上下文版本：{revision_display}",
                 f"- 耗时：{turn.duration_seconds:.2f} 秒" if turn.duration_seconds is not None else "- 耗时：未记录",
-                f"- 接受答案：{_answer_link_or_label(turn)}",
+                f"- 接受答案：{_answer_link_or_label(turn, workspace, diagnostics)}",
                 "- answer_output：",
                 "",
-                _accepted_answer_text(turn, workspace, limitations_by_turn.get(turn.turn_id, ())),
+                _accepted_answer_text(turn, workspace, limitations_by_turn.get(turn.turn_id, ()), diagnostics),
                 "",
                 f"- 复用前序结果：{_refs(turn.consumed_refs)}",
                 f"- 新增工件：{_refs(turn.produced_refs)}",
             ]
         )
-        diagnostics = diagnostics_by_turn.get(turn.turn_id, [])
-        if diagnostics:
+        turn_diagnostics = diagnostics_by_turn.get(turn.turn_id, [])
+        if turn_diagnostics:
             lines.extend(["- 审计诊断："])
-            for diagnostic in diagnostics:
+            for diagnostic in turn_diagnostics:
                 lines.append(
                     f"  - `{_md(diagnostic.details.get('severity', 'diagnostic'))}` {_md(diagnostic.message)}"
                     + (f"（引用 `{_md(str(diagnostic.details.get('reference')))}`）" if diagnostic.details.get("reference") else "")
@@ -270,7 +318,7 @@ def _render_limitations(context: AnalysisContext) -> list[str]:
     return lines
 
 
-def _render_forensic_artifacts(workspace: AnalysisWorkspace) -> list[str]:
+def _render_forensic_artifacts(workspace: AnalysisWorkspace, diagnostics: list[str]) -> list[str]:
     artifact_paths = (
         workspace.manifest_path,
         workspace.copied_instructions_path,
@@ -282,7 +330,9 @@ def _render_forensic_artifacts(workspace: AnalysisWorkspace) -> list[str]:
     lines = []
     for path in artifact_paths:
         relative = path.relative_to(workspace.root_path)
-        lines.append(f"- {_link(relative, str(relative))}")
+        lines.append(
+            f"- {_workspace_link(workspace, relative, label=str(relative), unavailable_label='路径不可用', diagnostics=diagnostics, description='复核工件')}"
+        )
     return lines
 
 
@@ -290,10 +340,15 @@ def _accepted_answer_text(
     turn: TurnRecord,
     workspace: AnalysisWorkspace,
     limitations: Sequence[LimitationRecord],
+    diagnostics: list[str],
 ) -> str:
     if turn.answer_path:
-        answer_path = _workspace_path(workspace, turn.answer_path)
-        document = _read_json(answer_path)
+        document = _read_workspace_json(
+            workspace,
+            turn.answer_path,
+            diagnostics=diagnostics,
+            description=f"回合 {turn.turn_id} 接受答案",
+        )
         if isinstance(document, Mapping) and isinstance(document.get("answer_output"), str):
             return str(document["answer_output"])
         return "接受答案文件不可读；请复核注册路径。"
@@ -302,28 +357,41 @@ def _accepted_answer_text(
     return "本回合未注册接受答案。"
 
 
-def _answer_link_or_label(turn: TurnRecord) -> str:
+def _answer_link_or_label(turn: TurnRecord, workspace: AnalysisWorkspace, diagnostics: list[str]) -> str:
     if not turn.answer_path:
         return "无接受答案文件"
-    return _link(turn.answer_path, turn.answer_path)
+    return _workspace_link(
+        workspace,
+        turn.answer_path,
+        label=turn.answer_path,
+        unavailable_label="路径不可用",
+        diagnostics=diagnostics,
+        description=f"回合 {turn.turn_id} 接受答案",
+    )
 
 
-def _read_context_events(path: Path) -> tuple[AnalysisContextEvent, ...]:
+def _read_context_events(path: Path) -> _LedgerRead:
     if not path.is_file():
-        return ()
+        return _LedgerRead((), ("事件账本不可用：context/context-events.jsonl 缺失",))
     events: list[AnalysisContextEvent] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    diagnostics: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return _LedgerRead((), ("事件账本不可用：context/context-events.jsonl 不可读",))
+    for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
         try:
             events.append(AnalysisContextEvent.model_validate_json(line))
         except (ValueError, ValidationError):
-            continue
-    return tuple(events)
+            diagnostics.append(f"事件账本第 {line_number} 行格式错误；该报告不推断回合修订范围")
+    return _LedgerRead(tuple(events), tuple(diagnostics))
 
 
-def _turn_revision_ranges(events: Sequence[AnalysisContextEvent]) -> dict[str, tuple[int, int]]:
+def _turn_revision_ranges(events: Sequence[AnalysisContextEvent], turns: Sequence[TurnRecord]) -> _TurnRevisionRanges:
     ranges: dict[str, list[int]] = {}
+    diagnostics: list[str] = []
     for event in events:
         if not event.turn_id:
             continue
@@ -331,25 +399,71 @@ def _turn_revision_ranges(events: Sequence[AnalysisContextEvent]) -> dict[str, t
             ranges[event.turn_id] = [event.next_revision, event.next_revision]
         elif event.turn_id in ranges:
             ranges[event.turn_id][1] = max(ranges[event.turn_id][1], event.next_revision)
-    return {turn_id: (values[0], values[1]) for turn_id, values in ranges.items()}
+    completed_turn_ids = {turn.turn_id for turn in turns}
+    for turn_id in sorted(completed_turn_ids - set(ranges)):
+        diagnostics.append(f"事件账本缺少回合 {turn_id} 的修订数据；上下文版本标记为不可用")
+    return _TurnRevisionRanges({turn_id: (values[0], values[1]) for turn_id, values in ranges.items()}, tuple(diagnostics))
 
 
-def _read_json(path: Path) -> object:
+def _read_workspace_json(
+    workspace: AnalysisWorkspace,
+    value: str | Path,
+    *,
+    diagnostics: list[str],
+    description: str,
+) -> object:
+    resolved = _normalize_workspace_relative_path(workspace, value, diagnostics=diagnostics, description=description)
+    if resolved is None:
+        return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(resolved.absolute.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        diagnostics.append(f"{description} 不可读")
         return None
 
 
-def _workspace_path(workspace: AnalysisWorkspace, value: str | Path) -> Path:
-    path = Path(value)
+def _normalize_workspace_relative_path(
+    workspace: AnalysisWorkspace,
+    value: str | Path,
+    *,
+    diagnostics: list[str],
+    description: str,
+) -> _ResolvedWorkspacePath | None:
+    raw = str(value)
+    path = Path(raw)
     if path.is_absolute():
-        try:
-            path.relative_to(workspace.root_path)
-        except ValueError:
-            return workspace.root_path / path.name
-        return path
-    return workspace.root_path / path
+        diagnostics.append(f"{description} 路径不可用：拒绝绝对路径")
+        return None
+    if ".." in path.parts:
+        diagnostics.append(f"{description} 路径不可用：拒绝路径穿越")
+        return None
+    try:
+        root = workspace.root_path.resolve(strict=False)
+        resolved = (root / path).resolve(strict=False)
+        relative = resolved.relative_to(root)
+    except ValueError:
+        diagnostics.append(f"{description} 路径不可用：解析结果不在工作区内")
+        return None
+    if str(relative) in {"", "."}:
+        diagnostics.append(f"{description} 路径不可用：路径为空")
+        return None
+    return _ResolvedWorkspacePath(absolute=resolved, relative=relative.as_posix())
+
+
+def _workspace_link(
+    workspace: AnalysisWorkspace,
+    value: str | Path,
+    *,
+    label: str,
+    unavailable_label: str,
+    diagnostics: list[str],
+    description: str,
+) -> str:
+    resolved = _normalize_workspace_relative_path(workspace, value, diagnostics=diagnostics, description=description)
+    if resolved is None:
+        return unavailable_label
+    safe_label = label if label == resolved.relative else resolved.relative
+    return _link(resolved.relative, safe_label)
 
 
 def _link(path: Path | str, label: str) -> str:

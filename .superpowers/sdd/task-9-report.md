@@ -19,3 +19,14 @@ Implemented and verified.
   - Result: `17 passed in 0.24s`
 - `make test`
   - Result: grid-agent `228 passed`; grid-simulator `79 passed, 18 warnings`; pi-grid-tools `14 passed`
+
+## Review follow-up
+
+- Centralized report artifact path handling through a workspace-relative normalizer.
+- Rejected absolute paths and traversal segments for baseline, dependency, accepted-answer, and forensic report paths.
+- Reported missing or malformed context ledgers explicitly and rendered affected turn revision ranges as unavailable.
+- Added regression coverage for rejected artifact paths, missing ledgers, and malformed ledgers.
+- `uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_report.py packages/grid-agent/tests/reporting/test_batch_report.py -q`
+  - Result: `20 passed in 0.23s`
+- `uv run --project packages/grid-agent pyright packages/grid-agent/src/grid_agent/analysis/report.py packages/grid-agent/tests/analysis/test_report.py`
+  - Result: `0 errors, 0 warnings, 0 informations`

@@ -109,6 +109,61 @@ def test_report_uses_relative_forensic_links_without_absolute_path_leakage(repor
     assert str(report_fixture.workspace.root_path.parent) not in report
 
 
+def test_report_rejects_absolute_and_traversal_artifact_paths(report_fixture: ReportFixture, tmp_path: Path) -> None:
+    outside_answer = tmp_path / "outside-answer.json"
+    outside_answer.write_text(
+        json.dumps({"question_id": "outside", "answer_output": "外部答案不得读取"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    first_turn = report_fixture.context.turns[1].model_copy(update={"answer_path": str(outside_answer)})
+    first_baseline = next(iter(report_fixture.context.baselines.values())).model_copy(update={"path": str(outside_answer)})
+    first_result_key = next(iter(report_fixture.context.results))
+    first_result = report_fixture.context.results[first_result_key].model_copy(update={"path": "../outside-result.json"})
+    first_evidence_key = next(iter(report_fixture.context.evidence))
+    first_evidence = report_fixture.context.evidence[first_evidence_key].model_copy(update={"path": "evidence/../secret.json"})
+    context = report_fixture.context.model_copy(
+        update={
+            "turns": [
+                report_fixture.context.turns[0],
+                first_turn,
+                *report_fixture.context.turns[2:],
+            ],
+            "baselines": {BASELINE_REF: first_baseline},
+            "results": {first_result_key: first_result},
+            "evidence": {first_evidence_key: first_evidence},
+        }
+    )
+
+    report = render_analysis_report(context=context, workspace=report_fixture.workspace, environment={})
+
+    assert "外部答案不得读取" not in report
+    assert str(outside_answer) not in report
+    assert "../outside-result.json" not in report
+    assert "evidence/../secret.json" not in report
+    assert report.count("路径不可用") >= 4
+    assert "报告诊断" in report
+
+
+def test_report_marks_turn_revision_unavailable_when_ledger_is_missing(report_fixture: ReportFixture) -> None:
+    report_fixture.workspace.context_events_path.unlink()
+
+    report = render_analysis_report(context=report_fixture.context, workspace=report_fixture.workspace, environment={})
+
+    assert "上下文版本：不可用" in report
+    assert "事件账本不可用" in report
+    assert "上下文版本：0 →" not in report
+
+
+def test_report_marks_turn_revision_unavailable_when_ledger_is_malformed(report_fixture: ReportFixture) -> None:
+    report_fixture.workspace.context_events_path.write_text("{not-json}\n", encoding="utf-8")
+
+    report = render_analysis_report(context=report_fixture.context, workspace=report_fixture.workspace, environment={})
+
+    assert "上下文版本：不可用" in report
+    assert "事件账本第 1 行格式错误" in report
+    assert "上下文版本：0 →" not in report
+
+
 def test_write_analysis_report_checkpoint_atomically_replaces_report(report_fixture: ReportFixture) -> None:
     report_fixture.workspace.report_path.write_text("old report\n", encoding="utf-8")
 
