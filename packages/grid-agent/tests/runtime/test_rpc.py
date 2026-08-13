@@ -13,6 +13,48 @@ from grid_agent.runtime.rpc import PiProtocolError, PiRpcClient
 from grid_agent.runtime.environment import PiLaunch
 
 
+OPEN_RESULT = {
+    "context_ref": "context:sha256:" + "a" * 64,
+    "model": "ieee39",
+}
+
+
+def scripted_rpc_client(tmp_path: Path, *, events: list[dict[str, object]]) -> tuple[PiRpcClient, RunWorkspace]:
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json\n"
+        "json.loads(input())\n"
+        f"events={json.dumps(events, ensure_ascii=False)!r}\n"
+        "for event in json.loads(events):\n"
+        " print(json.dumps(event, ensure_ascii=False), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    return PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path)), workspace
+
+
+def successful_tool_end(tool_call_id: str, tool_name: str, capability: str, result: dict[str, object]) -> dict[str, object]:
+    return {
+        "type": "tool_execution_end",
+        "toolCallId": tool_call_id,
+        "toolName": tool_name,
+        "isError": False,
+        "result": {
+            "details": {
+                "event": "tool_result",
+                "capability": capability,
+                "ok": True,
+                "result": result,
+                "evidence_refs": [],
+            }
+        },
+    }
+
+
 def test_rpc_requires_ack_before_agent_end(tmp_path: Path) -> None:
     fake = tmp_path / "fake_pi.py"
     fake.write_text("import json; print(json.dumps({'type':'agent_end'}), flush=True)", encoding="utf-8")
@@ -142,6 +184,40 @@ def test_rpc_collects_text_from_current_pi_message_updates(tmp_path: Path) -> No
         client.stop()
 
 
+def test_rpc_emits_semantic_tools_and_omits_streaming_snapshots(tmp_path: Path) -> None:
+    client, workspace = scripted_rpc_client(
+        tmp_path,
+        events=[
+            {"type": "response", "command": "prompt", "success": True},
+            {"type": "text_delta", "text": "答"},
+            {"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "案"}},
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "call-1",
+                "toolName": "grid_context_open",
+                "args": {"model_id": "ieee39"},
+            },
+            successful_tool_end("call-1", "grid_context_open", "context.open", OPEN_RESULT),
+            {"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "答案"}]}]},
+        ],
+    )
+    semantic: list[dict[str, object]] = []
+
+    client.start()
+    try:
+        assert client.prompt_and_wait("question", on_semantic_event=semantic.append) == "答案"
+    finally:
+        client.stop()
+
+    traced = [json.loads(line)["payload"] for line in workspace.events_path.read_text().splitlines()]
+    assert any(item.get("type") == "tool_execution_start" and item["tool_call_id"] == "call-1" for item in semantic)
+    assert any(item.get("event") == "tool_result" and item["tool_call_id"] == "call-1" for item in semantic)
+    assert {"type": "assistant_message", "text": "答案"} in semantic
+    assert {"type": "assistant_message", "text": "答案"} in traced
+    assert not any(item.get("type") in {"text_delta", "message_update"} for item in traced)
+    assert not any("messages" in item for item in traced)
+
+
 def test_rpc_persists_canonical_tool_result_from_extension_tool_end_event(tmp_path: Path) -> None:
     evidence_ref = "evidence:sha256:" + "a" * 64
     fake = tmp_path / "fake_pi.py"
@@ -186,18 +262,21 @@ def test_rpc_persists_canonical_tool_result_from_extension_tool_end_event(tmp_pa
         json.loads(line)["payload"]
         for line in workspace.events_path.read_text(encoding="utf-8").splitlines()
     ]
-    assert {
-        "event": "tool_result",
-        "capability": "topology.branch.endpoints.get",
-        "ok": True,
-        "result": {"branch": {"identifier": "11"}, "evidence_ref": evidence_ref},
-        "evidence_refs": [evidence_ref],
-    } in traced_payloads
-    assert {
-        "type": "tool_execution_start",
-        "toolName": "grid_topology_branch_endpoints",
-        "args": {"identifier": "11"},
-    } in traced_payloads
+    assert any(
+        payload.get("event") == "tool_result"
+        and payload.get("capability") == "topology.branch.endpoints.get"
+        and payload.get("ok") is True
+        and payload.get("result") == {"branch": {"identifier": "11"}, "evidence_ref": evidence_ref}
+        and payload.get("evidence_refs") == [evidence_ref]
+        and payload.get("tool_name") == "grid_topology_branch_endpoints"
+        for payload in traced_payloads
+    )
+    assert any(
+        payload.get("type") == "tool_execution_start"
+        and payload.get("tool_name") == "grid_topology_branch_endpoints"
+        and payload.get("args") == {"identifier": "11"}
+        for payload in traced_payloads
+    )
 
 
 def test_rpc_rejects_successful_agent_end_without_answer_text(tmp_path: Path) -> None:
