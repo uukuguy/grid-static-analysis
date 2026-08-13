@@ -101,3 +101,45 @@ PYTHONPATH=packages/grid-agent/src pyright packages/grid-agent/src/grid_agent/an
 ```
 
 Result: `0 errors, 0 warnings, 0 informations`.
+
+## Final atomicity high finding fix
+
+Final follow-up commit fixes the remaining `start(...)` activation atomicity finding.
+
+- `start(...)` now snapshots prior `active-turn.json` and `answer-draft.json` bytes.
+- It performs filesystem activation first by clearing the active draft and writing the new active turn record.
+- Only after filesystem activation succeeds does it append `turn.started` to `AnalysisContext`.
+- If filesystem activation fails, the prior active files are restored and the context is not mutated.
+- If context append fails, the prior active files are restored.
+
+Final RED:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_turns.py -q
+```
+
+Result: `1 failed, 12 passed`; simulated active-record write failure deleted the prior draft.
+
+Final focused verification:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_turns.py -q
+```
+
+Result: `13 passed`.
+
+Final required verification:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_turns.py packages/grid-agent/tests/cli/test_app.py -q
+```
+
+Result: `29 passed`.
+
+Final pyright:
+
+```sh
+PYTHONPATH=packages/grid-agent/src pyright packages/grid-agent/src/grid_agent/analysis/turns.py packages/grid-agent/tests/analysis/test_turns.py
+```
+
+Result: `0 errors, 0 warnings, 0 informations`.

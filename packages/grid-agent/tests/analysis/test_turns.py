@@ -9,6 +9,7 @@ import pytest
 
 from grid_agent.analysis.integrity import ReferenceDiagnostic
 from grid_agent.analysis.store import AnalysisContextStore
+from grid_agent.analysis import turns as turns_module
 from grid_agent.analysis.turns import StaleAnswerDraftError, TurnController
 from grid_agent.analysis.workspace import AnalysisWorkspace
 
@@ -228,6 +229,31 @@ def test_turn_start_preserves_active_files_when_store_append_fails(harness: Harn
     harness.store.append = fail_append
 
     with pytest.raises(RuntimeError, match="store append failed"):
+        harness.turns.start(1, "第一条")
+
+    assert harness.workspace.active_turn_path.read_text(encoding="utf-8") == active_record_before
+    assert harness.workspace.active_answer_draft_path.read_text(encoding="utf-8") == draft_before
+    assert harness.store.snapshot == context_before
+
+
+def test_turn_start_preserves_active_files_and_context_when_filesystem_activation_fails(
+    harness: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness.workspace.active_turn_path.write_text('{"turn_id":"previous"}\n', encoding="utf-8")
+    harness.workspace.active_answer_draft_path.write_text('{"answer_output":"previous"}\n', encoding="utf-8")
+    active_record_before = harness.workspace.active_turn_path.read_text(encoding="utf-8")
+    draft_before = harness.workspace.active_answer_draft_path.read_text(encoding="utf-8")
+    context_before = harness.store.snapshot
+
+    def fail_active_record_write(path: Path, payload: object) -> bytes:
+        if path == harness.workspace.active_turn_path:
+            raise OSError("simulated active turn write failure")
+        raise AssertionError(f"unexpected JSON write: {path}")
+
+    monkeypatch.setattr(turns_module, "_write_json_atomic", fail_active_record_write)
+
+    with pytest.raises(OSError, match="simulated active turn write failure"):
         harness.turns.start(1, "第一条")
 
     assert harness.workspace.active_turn_path.read_text(encoding="utf-8") == active_record_before

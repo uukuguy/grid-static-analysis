@@ -51,6 +51,12 @@ class FinalizedTurn:
     error: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _FileState:
+    exists: bool
+    content: bytes | None = None
+
+
 class TurnController:
     def __init__(
         self,
@@ -66,6 +72,8 @@ class TurnController:
     def start(self, ordinal: int, instruction: str) -> ActiveTurnHandle:
         if self._store.snapshot.current_turn is not None:
             raise ActiveTurnInProgressError("active turn already exists in analysis context")
+        previous_active_turn = _read_file_state(self._workspace.active_turn_path)
+        previous_answer_draft = _read_file_state(self._workspace.active_answer_draft_path)
         turn_nonce = secrets.token_urlsafe(32)
         handle = ActiveTurnHandle(
             ordinal=ordinal,
@@ -75,32 +83,39 @@ class TurnController:
             turn_nonce=turn_nonce,
             started_monotonic=time.monotonic(),
         )
-        self._store.append(
-            ContextEventDraft(
-                event_type="turn.started",
-                turn_id=handle.turn_id,
-                payload={
-                    "ordinal": handle.ordinal,
-                    "instruction": handle.instruction,
-                    "instruction_sha256": handle.instruction_sha256,
-                    "nonce_sha256": _sha256_text(handle.turn_nonce),
-                },
-            )
-        )
-        self._clear_active_answer_draft()
-        _write_json_atomic(
-            self._workspace.active_turn_path,
-            {
-                "schema_version": "grid-agent-active-turn/1.0",
-                "analysis_id": self._workspace.analysis_id,
+        event = ContextEventDraft(
+            event_type="turn.started",
+            turn_id=handle.turn_id,
+            payload={
                 "ordinal": handle.ordinal,
-                "turn_id": handle.turn_id,
                 "instruction": handle.instruction,
                 "instruction_sha256": handle.instruction_sha256,
-                "turn_nonce": handle.turn_nonce,
-                "started_monotonic": handle.started_monotonic,
+                "nonce_sha256": _sha256_text(handle.turn_nonce),
             },
         )
+        active_record = {
+            "schema_version": "grid-agent-active-turn/1.0",
+            "analysis_id": self._workspace.analysis_id,
+            "ordinal": handle.ordinal,
+            "turn_id": handle.turn_id,
+            "instruction": handle.instruction,
+            "instruction_sha256": handle.instruction_sha256,
+            "turn_nonce": handle.turn_nonce,
+            "started_monotonic": handle.started_monotonic,
+        }
+        try:
+            self._clear_active_answer_draft()
+            _write_json_atomic(self._workspace.active_turn_path, active_record)
+        except Exception:
+            _restore_file_state(self._workspace.active_turn_path, previous_active_turn)
+            _restore_file_state(self._workspace.active_answer_draft_path, previous_answer_draft)
+            raise
+        try:
+            self._store.append(event)
+        except Exception:
+            _restore_file_state(self._workspace.active_turn_path, previous_active_turn)
+            _restore_file_state(self._workspace.active_answer_draft_path, previous_answer_draft)
+            raise
         return handle
 
     def finalize(self, handle: ActiveTurnHandle, *, duration_seconds: float) -> FinalizedTurn:
@@ -253,6 +268,25 @@ def _load_answer_draft(raw_draft: bytes) -> Mapping[str, Any]:
     if not isinstance(draft, Mapping):
         raise AnswerDraftError("grid_submit_answer draft must be a JSON object")
     return draft
+
+
+def _read_file_state(path: Path) -> _FileState:
+    try:
+        return _FileState(exists=True, content=path.read_bytes())
+    except FileNotFoundError:
+        return _FileState(exists=False)
+
+
+def _restore_file_state(path: Path, state: _FileState) -> None:
+    if not state.exists:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        return
+    if state.content is None:
+        raise RuntimeError(f"file snapshot for {path} is missing content")
+    _write_bytes_atomic(path, state.content)
 
 
 def _require_current_turn_binding(draft: Mapping[str, Any], handle: ActiveTurnHandle) -> None:
