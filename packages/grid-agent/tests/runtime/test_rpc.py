@@ -4,6 +4,7 @@ import json
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from threading import Thread
 
 import pytest
 
@@ -136,6 +137,44 @@ def test_rpc_uses_current_pi_prompt_message_protocol(tmp_path: Path) -> None:
     client.start()
     try:
         assert client.prompt_and_wait("question") == "answer"
+    finally:
+        client.stop()
+
+
+def test_rpc_handles_two_sequential_prompts_in_one_process(tmp_path: Path) -> None:
+    fake = tmp_path / "fake_pi.py"
+    fake.write_text(
+        "import json\n"
+        "for index in range(2):\n"
+        " request=json.loads(input())\n"
+        " print(json.dumps({'type':'response','command':'prompt','success':True,'seen':request['message']}), flush=True)\n"
+        " print(json.dumps({'type':'text_delta','text':f'answer-{index + 1}'}), flush=True)\n"
+        " print(json.dumps({'type':'agent_end'}), flush=True)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(path=fake, source="explicit_override", package_version="0.80.6", lock_sha256="lock"),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+    second: dict[str, object] = {}
+
+    client.start()
+    try:
+        assert client.prompt_and_wait("first", heartbeat_seconds=0.01) == "answer-1"
+
+        def run_second_prompt() -> None:
+            try:
+                second["answer"] = client.prompt_and_wait("second", heartbeat_seconds=0.01)
+            except Exception as exc:  # pragma: no cover - asserted below for readable failure
+                second["error"] = exc
+
+        worker = Thread(target=run_second_prompt)
+        worker.start()
+        worker.join(timeout=2)
+        assert not worker.is_alive(), "second prompt did not receive its events from the persistent Pi process"
+        assert second == {"answer": "answer-2"}
     finally:
         client.stop()
 

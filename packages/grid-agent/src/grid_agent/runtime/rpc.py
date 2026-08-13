@@ -33,10 +33,14 @@ class PiRpcClient:
         self.trace = trace
         self.environment = environment
         self.process: subprocess.Popen[bytes] | None = None
+        self._stdout_lines: Queue[bytes | None] | None = None
 
     def start(self) -> None:
         launch_environment = self.command.environment if isinstance(self.command, PiLaunch) else self.environment
         self.process = subprocess.Popen(list(self.command.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.workspace.root_path, env=launch_environment)
+        self._stdout_lines = Queue()
+        if self.process.stdout is not None:
+            Thread(target=_read_lines, args=(self.process.stdout, self._stdout_lines), daemon=True).start()
 
     def prompt_and_wait(
         self,
@@ -52,8 +56,9 @@ class PiRpcClient:
             raise PiProtocolError("Pi RPC process is not started")
         self.process.stdin.write((json.dumps({"type": "prompt", "message": question}, separators=(",", ":")) + "\n").encode())
         self.process.stdin.flush()
-        lines: Queue[bytes | None] = Queue()
-        Thread(target=_read_lines, args=(self.process.stdout, lines), daemon=True).start()
+        if self._stdout_lines is None:
+            raise PiProtocolError("Pi RPC stdout reader is not started")
+        lines = self._stdout_lines
         text: list[str] = []
         acknowledged = False
         pending_tool_calls: list[dict[str, str]] = []
@@ -117,6 +122,7 @@ class PiRpcClient:
                 self.process.kill()
                 self.process.wait(timeout=2)
         self.process = None
+        self._stdout_lines = None
 
 
 def _read_lines(stream: Any, lines: Queue[bytes | None]) -> None:
