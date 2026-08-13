@@ -17,7 +17,8 @@
 | 安装依赖 | `make setup` | agent、simulator、Pi tools 三套依赖均完成安装。 |
 | 本机健康检查 | `make doctor` | 输出 JSON；不发送模型请求。 |
 | 主产品/评测路径 | `make run-llm QUESTION="..."` | Pi/LLM 解释自然语言并组合 domain tools；stdout 是单个答案 JSON，stderr 有 Pi 工具轨迹。 |
-| 批量系统仿真分析 | `make report [QUESTIONS=...] [OUTPUT=...]` | 缺省运行 TASK 问题集，实时显示分步日志，并写入易读报告；`OUTPUT` 可选 JSONL 标准结果。 |
+| 连续系统仿真分析 | `make analysis [INSTRUCTIONS=...]` | 缺省运行 TASK 指令集；stdout 是单个最终报告 envelope，stderr 有进度与检查点，所有工件位于一个 `runs/<analysis_id>/` 目录。 |
+| 兼容报告入口 | `make report [INSTRUCTIONS=...]` | `make analysis` 的兼容别名；不再启动每题一个子进程。 |
 | 离线冒烟 | `make run QUESTION="..."` | 只验证确定性离线知识/诊断路由；不代替智能体能力验证。 |
 | Pi 安装/认证 | `make install-pi`、`make auth-import-pi`、`make auth-login` | 仅在使用托管 Pi 或 `openai-codex` OAuth 时需要。 |
 | 单元与契约测试 | `make test` | Python agent、pandapower simulator 和 Node tools 全部通过。 |
@@ -48,23 +49,25 @@ make run-llm QUESTION="筛选负载率最高的5条线路;"
 
 先按 RUNBOOK 配置 provider/Pi。检查 stdout 的单一 JSON 外壳、stderr 的受控工具轨迹，以及 `runs/<question_id>/` 下的当前运行证据。不要把离线固定路由的成功当成模型理解或工具编排成功。
 
-## 批量“系统仿真分析报告”
+## 连续“系统仿真分析报告”
 
-不带参数即可运行版本化的 TASK 示例问题集：
-
-```sh
-make report
-```
-
-输入文件每行一个问题；可指定自己的文件和供评测/后处理读取的标准结果：
+不带参数即可运行版本化的 TASK 示例指令集：
 
 ```sh
-make report QUESTIONS=questions.txt OUTPUT=answers.jsonl
+make analysis
 ```
 
-终端用 `========== 问题 N/总数 开始/结束 ==========` 分隔每题，并在边界内实时显示模型推理摘要、工具开始/完成/失败和本题摘要。每题结束时立即原子刷新 Markdown 报告；如指定 `OUTPUT`，立即追加并刷新一行标准 JSONL。因此中断批次时，已完成题目的报告和 JSONL 均可直接查看和使用。Markdown 报告在 `runs/reports/`，每题以问题本身为标题并先给最终回答；随后记录本题实际打开的**仿真环境上下文**（模型来源、pandapower 版本、网络规模和只读快照）、可观察的分析动作与时长，以及可读的证据说明。报告中的“查看冻结上下文快照”“查看证据工件”和“打开本题运行目录”均可直接打开对应文件；不会把 SHA-256 或内部 asset/context/result ID 当作说明文字展示。这个上下文是问题分析和仿真结果的共同边界，不是由回答文字推断的标签。它只记录可审计的执行信息，不展示模型隐藏推理。`OUTPUT` 文件每行严格只含 `question_id` 与 `answer_output`，答案同样不包含内部 ID。
+输入文件每行一个指令；可指定自己的文件：
 
-若最终答案审计不通过，报告不会只给出截断日志或悄悄把草稿当作成功答案：它会明确写出发现、对最终结果的影响和复核建议，并在其下保留“模型草稿（未采纳）”。标准 JSONL 仍只输出受控的最终结果，避免把未经证据校验的草稿交给下游系统。
+```sh
+make analysis INSTRUCTIONS=questions.txt
+```
+
+stdout 必须只有一个最终 `AnswerEnvelope`，`question_id` 形如 `analysis-20260814T120000Z`，`answer_output` 是项目相对报告路径，例如 `runs/analysis-20260814T120000Z/report.md`。stderr 实时显示模型请求、工具开始/完成/失败、重试、等待提示和报告检查点。每次运行只创建一个 `runs/<analysis_id>/` 目录，输入副本在 `input/instructions.md.txt`，逐回合答案在 `output/answers.jsonl`，上下文快照在 `context/analysis-context.json`，最终报告在 `report.md`。
+
+`make report` 和 `grid-agent report --questions PATH` 仅为迁移期兼容别名，委托同一条连续分析路径。它们不再接受独立 `OUTPUT`、`--output` 或 `--report-path`，也不再为每个问题启动一个 `grid-agent run` 子进程。当前版本没有 resume、命名 session 或 session 切换；中断后应检查已写入的同一分析目录并重新运行指令集。
+
+若最终答案审计不通过，报告不会只给出截断日志或悄悄把草稿当作成功答案：它会明确写出发现、对最终结果的影响和复核建议，并在其下保留“模型草稿（未采纳）”。同一分析目录中的 `output/answers.jsonl` 仍只记录受控的逐回合答案 envelope，避免把未经证据校验的草稿交给下游系统。
 
 ## 3. 离线知识与确定性诊断
 

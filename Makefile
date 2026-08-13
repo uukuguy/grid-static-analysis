@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm report test test-agent test-simulator test-tools test-e2e validate validate-provider
+.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm analysis report test test-agent test-simulator test-tools test-e2e validate validate-provider
 
 help:
 	@echo "Grid Static Analysis commands"
@@ -8,7 +8,8 @@ help:
 	@echo "  make doctor                Inspect local runtime readiness"
 	@echo "  make run QUESTION='...'    Run a local deterministic smoke/offline check"
 	@echo "  make run-llm QUESTION='...'  Primary natural-language agent path via Pi/LLM"
-	@echo "  make report [QUESTIONS=...] [OUTPUT=...]  Batch analysis report; default TASK question set"
+	@echo "  make analysis [INSTRUCTIONS=...]  Continuous analysis report; default TASK instruction set"
+	@echo "  make report [INSTRUCTIONS=...]  Compatibility alias for make analysis"
 	@echo "  make install-pi            Install the pinned Pi runtime"
 	@echo "  make auth-import-pi        Import local Pi Codex OAuth to this project"
 	@echo "  make auth-login            Log in to Pi Codex OAuth for this project"
@@ -58,12 +59,13 @@ run-llm:
 	@test -n "$(QUESTION)" || (echo "Usage: make run-llm QUESTION='...' [PROVIDER=openai]" >&2; exit 2)
 	uv run --project packages/grid-agent grid-agent run $(if $(PROVIDER),--provider "$(PROVIDER)") "$(QUESTION)"
 
-QUESTIONS ?= validation/questions/task.md.txt
-OUTPUT ?=
+INSTRUCTIONS ?= validation/questions/task.md.txt
 
-report:
-	@test -f "$(QUESTIONS)" || (echo "Question file not found: $(QUESTIONS)" >&2; exit 2)
-	uv run --project packages/grid-agent grid-agent report --questions "$(QUESTIONS)" $(if $(PROVIDER),--provider "$(PROVIDER)") $(if $(MODEL),--model "$(MODEL)") $(if $(OUTPUT),--output "$(OUTPUT)")
+analysis:
+	@test -f "$(INSTRUCTIONS)" || (echo "Instruction file not found: $(INSTRUCTIONS)" >&2; exit 2)
+	uv run --project packages/grid-agent grid-agent analysis --instructions "$(INSTRUCTIONS)" $(if $(PROVIDER),--provider "$(PROVIDER)") $(if $(MODEL),--model "$(MODEL)")
+
+report: analysis
 
 test: test-agent test-simulator test-tools
 

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import json
-import sys
 import os
 import time
-import subprocess
-from datetime import UTC, datetime
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from pathlib import Path
@@ -15,6 +12,11 @@ import typer
 from dotenv import dotenv_values
 
 from grid_agent.analysis.integrity import ContentReferenceVerifier, ReferenceDiagnostic
+from grid_agent.analysis.projector import AnalysisContextProjector
+from grid_agent.analysis.runner import AnalysisOutcome, AnalysisRequest, AnalysisRunner
+from grid_agent.analysis.store import AnalysisContextStore
+from grid_agent.analysis.turns import TurnController
+from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.contracts import AnswerEnvelope, RunRequest
 from grid_agent.knowledge.offline import answer_diagnostic, answer_information, plan_diagnostic
 from grid_agent.simulator.client import GridctlClient
@@ -35,7 +37,7 @@ from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
 from grid_agent.tools.catalog import ToolCatalog, load_packaged_capability_documents
 from grid_agent.tools.guide import GuideIndex
-from grid_agent.reporting import AuditDiagnostic, BatchRecord, append_jsonl_record, humanize_answer, load_questions, read_answer_audit, read_run_observations, render_markdown, write_jsonl
+from grid_agent.reporting import AuditDiagnostic, humanize_answer, load_questions
 
 
 app = typer.Typer(add_completion=False)
@@ -52,7 +54,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[5]
 
 
-def _install_gridctl(workspace: RunWorkspace) -> None:
+def _install_gridctl(workspace: RunWorkspace | AnalysisWorkspace) -> None:
     """Expose the approved simulator executable to Pi's restricted PATH."""
     executable = GridctlLocator(_repo_root()).resolve()
     target = workspace.bin_path / "gridctl"
@@ -137,28 +139,6 @@ class _ProgressReporter:
 def _summary(value: str, limit: int = 200) -> str:
     normalized = " ".join(value.split())
     return normalized if len(normalized) <= limit else f"{normalized[:limit]}…"
-
-
-def _read_draft_answer(run_path: Path) -> str | None:
-    """Keep an unaccepted draft visible to report readers without trusting it."""
-    draft_path = run_path / "answer-draft.json"
-    try:
-        document = json.loads(draft_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    answer = document.get("answer_output") if isinstance(document, Mapping) else None
-    return humanize_answer(answer) if isinstance(answer, str) and answer.strip() else None
-
-
-def _batch_failure_explanation(stderr: str, stdout: str) -> str:
-    """Preserve the actionable failure rather than a truncated terminal trace."""
-    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
-    explicit = next((line.removeprefix("grid-agent error:").strip() for line in reversed(lines) if line.startswith("grid-agent error:")), None)
-    if explicit:
-        return explicit
-    if stdout.strip():
-        return "子进程未返回可验收结果；请结合本题运行目录中的事件和证据工件复核。"
-    return "子进程在返回结果前结束；请检查运行日志中的模型请求或工具调用错误。"
 
 
 def _redact_event(value: Any) -> Any:
@@ -339,124 +319,208 @@ def _verify_result_evidence_links(
     )
 
 
-def _run_child_with_live_stderr(
-    command: Sequence[str], cwd: Path, on_stderr_line: Callable[[str], None]
-) -> subprocess.CompletedProcess[str]:
-    process = subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert process.stdout is not None and process.stderr is not None
-    stderr_lines: list[str] = []
-    from threading import Thread
-
-    def forward_stderr() -> None:
-        for line in process.stderr:
-            stderr_lines.append(line)
-            on_stderr_line(line.rstrip("\r\n"))
-
-    thread = Thread(target=forward_stderr, daemon=True)
-    thread.start()
-    stdout = process.stdout.read()
-    returncode = process.wait()
-    thread.join()
-    return subprocess.CompletedProcess(list(command), returncode, stdout, "".join(stderr_lines))
+def _resolve_artifact_root(project_root: Path, artifact_root: Path | None) -> Path:
+    root = artifact_root or project_root / "runs"
+    resolved = (project_root / root if not root.is_absolute() else root).resolve()
+    if not resolved.is_relative_to(project_root):
+        raise ValueError(f"artifact root must be under project root: {resolved}")
+    return resolved
 
 
-def _question_boundary(ordinal: int, total: int, question: str, phase: str) -> str:
-    return f"========== 问题 {ordinal}/{total} {phase}：{question} =========="
+def _project_relative(path: Path, project_root: Path) -> str:
+    resolved = path.resolve()
+    if not resolved.is_relative_to(project_root):
+        raise ValueError(f"analysis report path is outside project root: {resolved}")
+    return resolved.relative_to(project_root).as_posix()
 
 
-def _write_report_checkpoint(destination: Path, *, batch_id: str, source_name: str, environment: Mapping[str, str], records: Sequence[BatchRecord]) -> None:
-    temporary = destination.with_name(f".{destination.name}.tmp")
-    temporary.write_text(render_markdown(batch_id=batch_id, source_name=source_name, environment=environment, records=records), encoding="utf-8")
-    temporary.replace(destination)
+def _runtime_record(resolved_provider: str, resolved_model: str, environment_description: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "provider": resolved_provider,
+        "model": resolved_model,
+        "grid_capability_protocol": str(environment_description.get("protocol_version", "1.0")),
+        "pandapower_version": str(environment_description.get("pandapower_version", "3.4.0")),
+    }
 
 
-@app.command()
-def report(
-    questions: Path = typer.Option(_repo_root() / "validation/questions/task.md.txt", "--questions", exists=True, readable=True),
-    output: Path | None = typer.Option(None, "--output", help="Optional JSONL file containing only answer envelopes."),
-    report_path: Path | None = typer.Option(None, "--report-path", help="Markdown report destination."),
-    provider: str | None = typer.Option(None, "--provider"),
-    model: str | None = typer.Option(None, "--model"),
-) -> None:
-    """Run a question file sequentially and write a readable simulation-analysis report."""
+def _input_record(copied_instructions: Any) -> dict[str, str | int]:
+    return {
+        "source_path": copied_instructions.source_path,
+        "copied_path": copied_instructions.copied_path,
+        "sha256": copied_instructions.sha256,
+        "instruction_count": copied_instructions.instruction_count,
+    }
+
+
+def _analysis_report_envelope(outcome: AnalysisOutcome, project_root: Path) -> AnswerEnvelope:
+    if outcome.status == "completed":
+        answer_output = _project_relative(outcome.report_path, project_root)
+    else:
+        answer_output = f"执行限制 / execution limitation: {outcome.error or 'analysis failed'}"
+    return AnswerEnvelope(question_id=outcome.analysis_id, answer_output=answer_output)
+
+
+def _emit_analysis_outcome(outcome: AnalysisOutcome, project_root: Path) -> None:
+    envelope = _analysis_report_envelope(outcome, project_root)
+    typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
+    if outcome.status != "completed":
+        raise typer.Exit(1)
+
+
+def _execute_analysis(
+    *,
+    instructions: Path,
+    artifact_root: Path | None,
+    provider: str | None,
+    model: str | None,
+) -> AnalysisOutcome:
     project_paths = ProjectPaths.from_root(Path.cwd())
+    root = _resolve_artifact_root(project_paths.root, artifact_root)
+    workspace = AnalysisWorkspace.create(root)
+    copied_instructions = workspace.copy_instructions(instructions)
+    instruction_items = load_questions(instructions)
     runtime_env = _runtime_environment(project_paths.root)
+    auth_store = ProjectAuthStore.from_pi_agent_dir(project_paths.pi_agent_dir)
     resolved = resolve_llm(
         catalog=ProviderCatalog.load(),
         cli=CliLLMOptions(provider=provider, model=model),
         environ=runtime_env,
         env_file=project_paths.root / ".env",
-        oauth_configured=lambda profile: ProjectAuthStore(project_paths.state_dir / "auth").status(profile).configured,
-    ).config
-    batch_id = f"batch-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-    total = len(load_questions(questions))
-    records: list[BatchRecord] = []
-    destination = report_path or project_paths.runs_dir / "reports" / f"{batch_id}-系统仿真分析报告.md"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    environment = {
-        "执行时间（UTC）": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "LLM Provider": resolved.provider,
-        "LLM 模型": resolved.model,
-        "单次请求时限": f"{resolved.timeout_seconds:g} 秒",
-        "SDK 自动重试": f"{resolved.max_retries} 次",
-        "仿真器边界": "pandapower 3.4.0（经 gridctl）",
-        "gridctl": str(GridctlLocator(_repo_root()).resolve()),
-    }
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text("", encoding="utf-8")
-    typer.echo(f"开始批量系统仿真分析 batch={batch_id} 问题文件={questions}")
-    for ordinal, question in enumerate(load_questions(questions), start=1):
-        question_id = f"{batch_id}-q{ordinal:03d}"
-        typer.echo(f"\n{_question_boundary(ordinal, total, question, '开始')}", err=True)
-        command = ["grid-agent", "run", "--question-id", question_id]
-        command.extend(["--provider", resolved.provider, "--model", resolved.model])
-        command.append(question)
-        started = time.monotonic()
-        completed = _run_child_with_live_stderr(command, project_paths.root, lambda line: typer.echo(line, err=True))
-        duration = time.monotonic() - started
-        try:
-            payload = json.loads(completed.stdout)
-            envelope = AnswerEnvelope.model_validate(payload)
-            answer = envelope.answer_output
-            returned_id = envelope.question_id
-        except Exception:
-            answer = "执行限制 / execution limitation: invalid batch child output"
-            returned_id = question_id
-        run_path = project_paths.runs_dir / returned_id
-        observation = read_run_observations(run_path)
-        audit_diagnostics = read_answer_audit(run_path)
-        status = "success" if completed.returncode == 0 else "failed"
-        error = None if status == "success" else _batch_failure_explanation(completed.stderr, completed.stdout)
-        draft_answer = _read_draft_answer(run_path)
-        records.append(
-            BatchRecord(
-                ordinal,
-                question,
-                returned_id,
-                answer,
-                status,
-                duration,
-                str(run_path) if run_path.exists() else None,
-                observation,
-                error,
-                draft_answer,
-                audit_diagnostics,
-            )
+        oauth_configured=lambda profile: auth_store.status(profile).configured,
+    )
+    runtime_lock = PiRuntimeLock.load(project_paths.runtime_lock)
+    command = PiRuntimeLocator(project_paths.pi_runtime_dir, runtime_env, runtime_lock=runtime_lock).resolve()
+    _install_gridctl(workspace)
+    gridctl = GridctlClient(
+        executable=workspace.bin_path / "gridctl",
+        workspace=workspace.root_path,
+        timeout_seconds=60,
+    )
+    environment_description = gridctl.invoke("environment.describe", {})
+    tool_catalog_path = ToolCatalog.from_environment(
+        load_packaged_capability_documents(_repo_root()),
+        environment_description,
+    ).materialize(workspace.root_path / "tool-catalog.json")
+    guide_index_path = GuideIndex.load(_repo_root() / "skills/grid-static-analysis").materialize(
+        workspace.root_path / "guide-index.json"
+    )
+    PiConfigMaterializer(project_paths.pi_agent_dir).materialize(resolved)
+    launch = build_pi_launch(
+        resolved,
+        RuntimePaths(
+            command=command,
+            project_pi_dir=project_paths.pi_agent_dir,
+            session_dir=workspace.pi_path,
+            workspace=workspace.root_path,
+            gridctl_dir=workspace.bin_path,
+            extension_path=_repo_root() / "packages/pi-grid-tools/src/domain-tools.mjs",
+            tool_catalog_path=tool_catalog_path,
+            guide_index_path=guide_index_path,
+            answer_draft_path=workspace.active_answer_draft_path,
+            system_policy_path=_repo_root() / "configs/agent/system-policy.md",
+            active_turn_path=workspace.active_turn_path,
+            analysis_context_view_path=workspace.context_view_path,
+        ),
+        base_environment=runtime_env,
+    )
+    store = AnalysisContextStore.initialize(
+        workspace,
+        input_record=_input_record(copied_instructions),
+        runtime_record=_runtime_record(
+            resolved.config.provider,
+            resolved.config.model,
+            environment_description,
+        ),
+    )
+    verifier = ContentReferenceVerifier(workspace.root_path)
+    trace = JsonlTraceWriter(
+        workspace.trace_path,
+        secret_values={resolved.secret.value} if resolved.secret is not None else set(),
+    )
+    progress = _ProgressReporter("\n".join(instruction_items))
+    typer.echo(
+        f"开始连续系统仿真分析 analysis={workspace.analysis_id} 指令文件={instructions} "
+        f"provider={resolved.config.provider} model={resolved.config.model}",
+        err=True,
+    )
+    runner = AnalysisRunner(
+        workspace=workspace,
+        store=store,
+        turn_controller=TurnController(
+            workspace,
+            store,
+            audit_callback=lambda claimed, results: verifier.audit_answer_references(claimed, results),
+        ),
+        pi_client=PiRpcClient(launch, workspace, trace),
+        projector=AnalysisContextProjector(store, verifier),
+        environment={
+            "provider": resolved.config.provider,
+            "model": resolved.config.model,
+            "pandapower": str(environment_description.get("pandapower_version", "3.4.0")),
+            "gridctl": str(workspace.bin_path / "gridctl"),
+        },
+        progress_callback=progress.on_event,
+    )
+    outcome = runner.run(AnalysisRequest(analysis_id=workspace.analysis_id, instructions=instruction_items))
+    typer.echo(
+        f"连续分析结束 analysis={outcome.analysis_id} status={outcome.status} "
+        f"completed={outcome.completed_turns}/{outcome.total_turns} report={_project_relative(outcome.report_path, project_paths.root)}",
+        err=True,
+    )
+    return outcome
+
+
+@app.command()
+def analysis(
+    instructions: Path = typer.Option(_repo_root() / "validation/questions/task.md.txt", "--instructions", exists=True, readable=True),
+    artifact_root: Path | None = typer.Option(None, "--artifact-root"),
+    provider: str | None = typer.Option(None, "--provider"),
+    model: str | None = typer.Option(None, "--model"),
+) -> None:
+    """Run an ordered instruction file as one continuous static-analysis session."""
+    project_root = ProjectPaths.from_root(Path.cwd()).root
+    try:
+        outcome = _execute_analysis(
+            instructions=instructions,
+            artifact_root=artifact_root,
+            provider=provider,
+            model=model,
         )
-        _write_report_checkpoint(destination, batch_id=batch_id, source_name=str(questions), environment=environment, records=records)
-        if output:
-            append_jsonl_record(output, records[-1])
-        typer.echo(f"[{ordinal}] {'完成' if status == 'success' else '失败'}：{duration:.2f}s；工具步骤 {len(observation.steps)}；证据 {len(observation.evidence_sources)}", err=True)
-        typer.echo(f"报告检查点：{destination}", err=True)
-        if output:
-            typer.echo(f"标准结果检查点：{output}", err=True)
-        typer.echo(_question_boundary(ordinal, total, question, "结束"), err=True)
-    typer.echo(f"\n报告已写入：{destination}")
-    if output:
-        typer.echo(f"标准结果 JSONL 已写入：{output}")
-    if any(record.status == "failed" for record in records):
+    except Exception as exc:
+        typer.echo(f"grid-agent error: {exc}", err=True)
+        envelope = AnswerEnvelope(
+            question_id="analysis-error",
+            answer_output=f"执行限制 / execution limitation: {type(exc).__name__}",
+        )
+        typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
         raise typer.Exit(1)
+    _emit_analysis_outcome(outcome, project_root)
+
+
+@app.command()
+def report(
+    questions: Path = typer.Option(_repo_root() / "validation/questions/task.md.txt", "--questions", exists=True, readable=True),
+    provider: str | None = typer.Option(None, "--provider"),
+    model: str | None = typer.Option(None, "--model"),
+) -> None:
+    """Compatibility alias for ``analysis --instructions``."""
+    project_root = ProjectPaths.from_root(Path.cwd()).root
+    try:
+        outcome = _execute_analysis(
+            instructions=questions,
+            artifact_root=None,
+            provider=provider,
+            model=model,
+        )
+    except Exception as exc:
+        typer.echo(f"grid-agent error: {exc}", err=True)
+        envelope = AnswerEnvelope(
+            question_id="analysis-error",
+            answer_output=f"执行限制 / execution limitation: {type(exc).__name__}",
+        )
+        typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))
+        raise typer.Exit(1)
+    _emit_analysis_outcome(outcome, project_root)
 
 
 @app.command()

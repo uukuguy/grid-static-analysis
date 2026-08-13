@@ -2,17 +2,88 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
 from grid_agent.application.workspace import RunWorkspace
-from grid_agent.cli.app import _load_submitted_answer, _load_verified_answer_draft, _verify_evidence_refs
+from grid_agent.analysis.runner import AnalysisOutcome
+from grid_agent.cli.app import app, _load_submitted_answer, _load_verified_answer_draft, _verify_evidence_refs
+from grid_agent.contracts import AnswerEnvelope
 from grid_agent.simulator.client import GridctlClient
 from grid_agent.simulator.locator import GridctlLocator
 
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+@pytest.fixture
+def cli_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CliRunner, Path]:
+    instructions = tmp_path / "task.md.txt"
+    instructions.write_text("运行交流潮流\n筛选负载率最高的5条线路\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    return CliRunner(), instructions
+
+
+def _fake_execute_analysis(*, instructions: Path, artifact_root: Path | None, provider: str | None, model: str | None) -> AnalysisOutcome:
+    project_root = Path.cwd()
+    root = artifact_root or project_root / "runs"
+    analysis_id = "analysis-test"
+    analysis_root = root / analysis_id
+    (analysis_root / "input").mkdir(parents=True)
+    (analysis_root / "output").mkdir()
+    (analysis_root / "context").mkdir()
+    (analysis_root / "input/instructions.md.txt").write_text(instructions.read_text(encoding="utf-8"), encoding="utf-8")
+    (analysis_root / "output/answers.jsonl").write_text("", encoding="utf-8")
+    (analysis_root / "context/analysis-context.json").write_text("{}", encoding="utf-8")
+    (analysis_root / "report.md").write_text("# report\n", encoding="utf-8")
+    return AnalysisOutcome(
+        analysis_id=analysis_id,
+        status="completed",
+        report_path=analysis_root / "report.md",
+        completed_turns=2,
+        total_turns=2,
+    )
+
+
+def _fail_if_called(*_args: Any, **_kwargs: Any) -> subprocess.Popen[str]:
+    raise AssertionError("report must not launch child grid-agent run subprocesses")
+
+
+def test_analysis_cli_emits_one_envelope_and_uses_self_contained_paths(
+    cli_harness: tuple[CliRunner, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, instructions = cli_harness
+    monkeypatch.setattr("grid_agent.cli.app._execute_analysis", _fake_execute_analysis)
+
+    result = runner.invoke(app, ["analysis", "--instructions", str(instructions)])
+
+    assert result.exit_code == 0
+    assert len(result.stdout.splitlines()) == 1
+    envelope = AnswerEnvelope.model_validate_json(result.stdout)
+    analysis_root = instructions.parent / "runs" / envelope.question_id
+    assert envelope.answer_output == f"runs/{envelope.question_id}/report.md"
+    assert (analysis_root / "input/instructions.md.txt").is_file()
+    assert (analysis_root / "output/answers.jsonl").is_file()
+    assert (analysis_root / "context/analysis-context.json").is_file()
+
+
+def test_report_command_delegates_to_analysis_without_child_run(
+    cli_harness: tuple[CliRunner, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, instructions = cli_harness
+    monkeypatch.setattr("grid_agent.cli.app._execute_analysis", _fake_execute_analysis)
+    monkeypatch.setattr(subprocess, "Popen", _fail_if_called)
+
+    result = runner.invoke(app, ["report", "--questions", str(instructions)])
+
+    assert result.exit_code == 0
+    assert AnswerEnvelope.model_validate_json(result.stdout).question_id.startswith("analysis-")
 
 
 def _canonical_json(document: object) -> str:
