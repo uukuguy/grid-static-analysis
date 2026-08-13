@@ -62,3 +62,29 @@ make validate
 Result: exit 0 for offline `task-required` and scripted-Pi `static-analysis-core` validation suites.
 
 No billed provider validation was invoked.
+
+## Reviewer Strengthening Follow-up
+
+Added continuous E2E assertions for:
+
+- copied input bytes, copied path, source path, SHA-256 hash, and instruction count;
+- each turn's archived `answer_path` existence and exact `answer_output` match against `output/answers.jsonl`;
+- report projection coverage for the baseline heading, every turn answer, reused power-flow result ref, N-1 result ref, and one context revision line per turn.
+
+Verification:
+
+```sh
+uv run --project packages/grid-agent pytest \
+  packages/grid-agent/tests/contract/test_analysis_context_docs.py \
+  packages/grid-agent/tests/e2e/test_continuous_analysis.py \
+  packages/grid-agent/tests/e2e/test_semantic_pi_path.py \
+  packages/grid-agent/tests/runtime/test_rpc.py -q
+```
+
+Result: `15 passed in 14.65s`.
+
+```sh
+make test-e2e
+```
+
+Result: `16 passed in 38.80s`.

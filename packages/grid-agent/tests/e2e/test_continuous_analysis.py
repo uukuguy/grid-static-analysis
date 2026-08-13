@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -74,11 +75,13 @@ def scripted_analysis(tmp_path: Path) -> ScriptedAnalysis:
 def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage(
     scripted_analysis: ScriptedAnalysis,
 ) -> None:
-    completed = scripted_analysis.run(("运行交流潮流", "筛选负载率最高的5条线路", "对最高负载线路开展N-1校核"))
+    prompts = ("运行交流潮流", "筛选负载率最高的5条线路", "对最高负载线路开展N-1校核")
+    completed = scripted_analysis.run(prompts)
     assert completed.returncode == 0, completed.stderr
     envelope = AnswerEnvelope.model_validate_json(completed.stdout)
     root = scripted_analysis.artifact_root / envelope.question_id
     try:
+        expected_input = "\n".join(prompts) + "\n"
         answers = [json.loads(line) for line in (root / "output/answers.jsonl").read_text().splitlines()]
         context = AnalysisContext.model_validate_json((root / "context/analysis-context.json").read_text())
         trace = [json.loads(line)["payload"] for line in (root / "trace/events.jsonl").read_text().splitlines()]
@@ -86,18 +89,42 @@ def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage
             json.loads(line)
             for line in (root / "context/context-events.jsonl").read_text(encoding="utf-8").splitlines()
         ]
+        report_text = (root / "report.md").read_text(encoding="utf-8")
 
         assert len(answers) == 3
         assert [item["question_id"] for item in answers] == [turn.turn_id for turn in context.turns]
+        assert (root / context.input.copied_path).read_text(encoding="utf-8") == expected_input
+        assert context.input.source_path == str(scripted_analysis.tmp_path / "instructions.md.txt")
+        assert context.input.copied_path == "input/instructions.md.txt"
+        assert context.input.sha256 == sha256(expected_input.encode("utf-8")).hexdigest()
+        assert context.input.instruction_count == len(prompts)
         assert scripted_analysis.pi_process_start_count == 1
         powerflow_ref = next(
             result.result_ref for result in context.results.values() if result.capability == "analysis.powerflow.ac.run"
+        )
+        n1_ref = next(
+            result.result_ref
+            for result in context.results.values()
+            if result.capability == "analysis.contingency.n_minus_one.run"
         )
         ranking = next(item for item in context.observations.values() if item.capability == "result.branches.rank")
         assert ranking.consumed_refs == [powerflow_ref]
         assert context.turns[1].consumed_refs == [powerflow_ref]
         assert context.turns[2].consumed_refs
-        assert "上下文版本" in (root / "report.md").read_text(encoding="utf-8")
+        for turn, answer in zip(context.turns, answers, strict=True):
+            assert turn.answer_path is not None
+            archived_answer_path = root / turn.answer_path
+            assert archived_answer_path.is_file()
+            archived_answer = json.loads(archived_answer_path.read_text(encoding="utf-8"))
+            assert archived_answer["question_id"] == answer["question_id"]
+            assert archived_answer["answer_output"] == answer["answer_output"]
+
+        assert "## 仿真基线" in report_text
+        for answer in answers:
+            assert answer["answer_output"] in report_text
+        assert powerflow_ref in report_text
+        assert n1_ref in report_text
+        assert report_text.count("上下文版本：") == len(prompts)
         assert not any(item.get("type") in {"text_delta", "message_update"} for item in trace)
         assert AnalysisContextStore.replay(root / "context/context-events.jsonl") == context
 
