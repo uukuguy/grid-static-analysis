@@ -1,0 +1,649 @@
+{
+  "$defs": {
+    "ActiveTurn": {
+      "additionalProperties": false,
+      "properties": {
+        "consumed_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumed Refs",
+          "type": "array"
+        },
+        "instruction": {
+          "title": "Instruction",
+          "type": "string"
+        },
+        "instruction_sha256": {
+          "title": "Instruction Sha256",
+          "type": "string"
+        },
+        "nonce_sha256": {
+          "title": "Nonce Sha256",
+          "type": "string"
+        },
+        "ordinal": {
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "produced_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Produced Refs",
+          "type": "array"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "ordinal",
+        "instruction",
+        "instruction_sha256",
+        "nonce_sha256"
+      ],
+      "title": "ActiveTurn",
+      "type": "object"
+    },
+    "BaselineRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "context_ref": {
+          "title": "Context Ref",
+          "type": "string"
+        },
+        "network": {
+          "additionalProperties": true,
+          "title": "Network",
+          "type": "object"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision_ref": {
+          "title": "Revision Ref",
+          "type": "string"
+        },
+        "source": {
+          "additionalProperties": true,
+          "title": "Source",
+          "type": "object"
+        }
+      },
+      "required": [
+        "context_ref",
+        "revision_ref",
+        "path",
+        "source",
+        "network"
+      ],
+      "title": "BaselineRecord",
+      "type": "object"
+    },
+    "DiagnosticRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability"
+        },
+        "details": {
+          "additionalProperties": true,
+          "title": "Details",
+          "type": "object"
+        },
+        "event_type": {
+          "title": "Event Type",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "event_type",
+        "message"
+      ],
+      "title": "DiagnosticRecord",
+      "type": "object"
+    },
+    "EvidenceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability"
+        },
+        "evidence_ref": {
+          "title": "Evidence Ref",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Refs",
+          "type": "array"
+        },
+        "summary": {
+          "additionalProperties": true,
+          "title": "Summary",
+          "type": "object"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "evidence_ref",
+        "path",
+        "kind"
+      ],
+      "title": "EvidenceRecord",
+      "type": "object"
+    },
+    "InputRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "copied_path": {
+          "title": "Copied Path",
+          "type": "string"
+        },
+        "instruction_count": {
+          "title": "Instruction Count",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_path": {
+          "title": "Source Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "copied_path",
+        "source_path",
+        "sha256",
+        "instruction_count"
+      ],
+      "title": "InputRecord",
+      "type": "object"
+    },
+    "LimitationRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "limitation_ref": {
+          "title": "Limitation Ref",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Refs",
+          "type": "array"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "limitation_ref",
+        "message"
+      ],
+      "title": "LimitationRecord",
+      "type": "object"
+    },
+    "ObservationRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "consumed_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumed Refs",
+          "type": "array"
+        },
+        "observation_ref": {
+          "title": "Observation Ref",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "produced_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Produced Refs",
+          "type": "array"
+        },
+        "producer_observation": {
+          "additionalProperties": true,
+          "title": "Producer Observation",
+          "type": "object"
+        },
+        "summary": {
+          "additionalProperties": true,
+          "title": "Summary",
+          "type": "object"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_ref",
+        "turn_id",
+        "capability",
+        "path"
+      ],
+      "title": "ObservationRecord",
+      "type": "object"
+    },
+    "ResultRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "producer_observation": {
+          "additionalProperties": true,
+          "title": "Producer Observation",
+          "type": "object"
+        },
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        },
+        "revision_ref": {
+          "title": "Revision Ref",
+          "type": "string"
+        },
+        "solver_summary": {
+          "additionalProperties": true,
+          "title": "Solver Summary",
+          "type": "object"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result_ref",
+        "turn_id",
+        "capability",
+        "revision_ref",
+        "path",
+        "solver_summary",
+        "producer_observation"
+      ],
+      "title": "ResultRecord",
+      "type": "object"
+    },
+    "RuntimeRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "grid_capability_protocol": {
+          "title": "Grid Capability Protocol",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "pandapower_version": {
+          "title": "Pandapower Version",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "grid_capability_protocol",
+        "pandapower_version"
+      ],
+      "title": "RuntimeRecord",
+      "type": "object"
+    },
+    "TurnRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "answer_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answer Path"
+        },
+        "answer_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answer Sha256"
+        },
+        "consumed_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumed Refs",
+          "type": "array"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Seconds"
+        },
+        "instruction": {
+          "title": "Instruction",
+          "type": "string"
+        },
+        "instruction_sha256": {
+          "title": "Instruction Sha256",
+          "type": "string"
+        },
+        "nonce_sha256": {
+          "title": "Nonce Sha256",
+          "type": "string"
+        },
+        "ordinal": {
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "produced_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Produced Refs",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "success",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "ordinal",
+        "instruction",
+        "instruction_sha256",
+        "nonce_sha256",
+        "status"
+      ],
+      "title": "TurnRecord",
+      "type": "object"
+    },
+    "VerifiedFact": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "fact_ref": {
+          "title": "Fact Ref",
+          "type": "string"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        },
+        "verifier_capability": {
+          "title": "Verifier Capability",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fact_ref",
+        "statement",
+        "evidence_refs",
+        "verifier_capability"
+      ],
+      "title": "VerifiedFact",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "active_context_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Active Context Ref"
+    },
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "baselines": {
+      "additionalProperties": {
+        "$ref": "#/$defs/BaselineRecord"
+      },
+      "title": "Baselines",
+      "type": "object"
+    },
+    "current_turn": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActiveTurn"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "diagnostics": {
+      "items": {
+        "$ref": "#/$defs/DiagnosticRecord"
+      },
+      "title": "Diagnostics",
+      "type": "array"
+    },
+    "evidence": {
+      "additionalProperties": {
+        "$ref": "#/$defs/EvidenceRecord"
+      },
+      "title": "Evidence",
+      "type": "object"
+    },
+    "input": {
+      "$ref": "#/$defs/InputRecord"
+    },
+    "observations": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ObservationRecord"
+      },
+      "title": "Observations",
+      "type": "object"
+    },
+    "results": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ResultRecord"
+      },
+      "title": "Results",
+      "type": "object"
+    },
+    "revision": {
+      "title": "Revision",
+      "type": "integer"
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeRecord"
+    },
+    "schema_version": {
+      "const": "analysis-context/1.0",
+      "default": "analysis-context/1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "state_hash": {
+      "title": "State Hash",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "initializing",
+        "running",
+        "completed",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "turns": {
+      "items": {
+        "$ref": "#/$defs/TurnRecord"
+      },
+      "title": "Turns",
+      "type": "array"
+    },
+    "unresolved_limitations": {
+      "items": {
+        "$ref": "#/$defs/LimitationRecord"
+      },
+      "title": "Unresolved Limitations",
+      "type": "array"
+    },
+    "verified_facts": {
+      "additionalProperties": {
+        "$ref": "#/$defs/VerifiedFact"
+      },
+      "title": "Verified Facts",
+      "type": "object"
+    }
+  },
+  "required": [
+    "analysis_id",
+    "revision",
+    "state_hash",
+    "status",
+    "input",
+    "runtime"
+  ],
+  "title": "AnalysisContext",
+  "type": "object"
+}
