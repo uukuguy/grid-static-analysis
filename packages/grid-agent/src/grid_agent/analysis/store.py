@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ValidationError
 
@@ -52,7 +52,7 @@ class AnalysisContextStore:
         self,
         draft: ContextEventDraft,
         *,
-        integrity: str = "verified",
+        integrity: Literal["verified", "diagnostic"] = "verified",
     ) -> AnalysisContextEvent:
         if integrity not in {"verified", "diagnostic"}:
             raise ContextStoreError(f"unsupported integrity value: {integrity}")
