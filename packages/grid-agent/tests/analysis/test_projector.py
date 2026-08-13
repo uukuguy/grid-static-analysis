@@ -140,6 +140,8 @@ def test_projector_registers_powerflow_and_ranking_dependency(context_harness: C
     assert any(
         fact_statement(fact)["predicate"] == "branch.loading_percent"
         and fact_statement(fact)["source_observation_id"] == ranking.observation_ref
+        and fact_statement(fact)["context_ref"] == opened.context_ref
+        and fact_statement(fact)["revision_ref"] == opened.revision_ref
         for fact in state.verified_facts.values()
     )
 
@@ -163,10 +165,82 @@ def test_projector_stops_on_integrity_failure_but_records_normal_tool_error(
 
     with pytest.raises(SimulatorIntegrityError):
         context_harness.projector.observe(
+            tool_start("call-2", "grid_analysis_powerflow_ac", {"context_ref": "context:sha256:" + "9" * 64}),
+            turn_id="analysis-test-t001",
+        )
+        context_harness.projector.observe(
             tool_result(
                 "call-2",
                 "analysis.powerflow.ac.run",
                 {"context_ref": "context:sha256:" + "9" * 64, "result_ref": "result:sha256:" + "8" * 64},
+            ),
+            turn_id="analysis-test-t001",
+        )
+
+
+def test_projector_requires_start_for_success_but_not_for_normal_failure(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        opened,
+        converged=True,
+        total_active_loss=1.25,
+        branch_results=[],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+
+    with pytest.raises(SimulatorIntegrityError, match="matching tool start"):
+        context_harness.projector.observe(
+            tool_result(
+                "call-1",
+                "analysis.powerflow.ac.run",
+                powerflow_result,
+                evidence_refs=[powerflow_evidence_ref],
+            ),
+            turn_id="analysis-test-t001",
+        )
+
+    context_harness.projector.observe(
+        tool_result(
+            "call-2",
+            "analysis.powerflow.ac.run",
+            {},
+            ok=False,
+            error={"code": "powerflow_non_convergence"},
+        ),
+        turn_id="analysis-test-t001",
+    )
+    assert context_harness.store.snapshot.unresolved_limitations
+
+
+def test_projector_rejects_forged_inline_powerflow_fact_values(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        opened,
+        converged=True,
+        total_active_loss=1.25,
+        branch_results=[],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_analysis_powerflow_ac", {"context_ref": opened.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+
+    with pytest.raises(SimulatorIntegrityError, match="total_active_loss"):
+        context_harness.projector.observe(
+            tool_result(
+                "call-1",
+                "analysis.powerflow.ac.run",
+                {**powerflow_result, "total_active_loss": 9999.0},
+                evidence_refs=[powerflow_evidence_ref],
             ),
             turn_id="analysis-test-t001",
         )
@@ -239,6 +313,50 @@ def test_projector_opens_context_and_promotes_topology_endpoint_facts(
     assert state.active_context_ref == opened.context_ref
     predicates = {fact_statement(fact)["predicate"] for fact in state.verified_facts.values()}
     assert {"topology.branch.from_bus", "topology.branch.to_bus"} <= predicates
+
+
+def test_projector_rejects_forged_inline_topology_fact_values(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    endpoint_evidence_ref = write_topology_evidence(
+        context_harness.workspace,
+        opened,
+        branch_ref="asset:line:11",
+        from_bus="asset:bus:6",
+        to_bus="asset:bus:11",
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_context_open", {"model_id": "ieee39"}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result("call-1", "context.open", {"context_ref": opened.context_ref, "revision_ref": opened.revision_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_start("call-2", "grid_topology_branch_endpoints", {"context_ref": opened.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+    with pytest.raises(SimulatorIntegrityError, match="from_bus"):
+        context_harness.projector.observe(
+            tool_result(
+                "call-2",
+                "topology.branch.endpoints.get",
+                {
+                    "context_ref": opened.context_ref,
+                    "revision_ref": opened.revision_ref,
+                    "branch_ref": "asset:line:11",
+                    "from_bus": "asset:bus:999",
+                    "to_bus": "asset:bus:998",
+                    "evidence_ref": endpoint_evidence_ref,
+                },
+                evidence_refs=[endpoint_evidence_ref],
+            ),
+            turn_id="analysis-test-t001",
+        )
 
 
 def test_projector_promotes_n_minus_one_aggregate_and_scenario_facts(
@@ -325,6 +443,42 @@ def test_projector_deduplicates_references_and_ignores_unknown_fields(
     assert not any("untrusted_extra_loss" in fact.statement for fact in state.verified_facts.values())
 
 
+def test_projector_records_observation_before_projected_artifacts(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    powerflow_result, powerflow_evidence_ref = write_powerflow_result(
+        context_harness.workspace,
+        opened,
+        converged=True,
+        total_active_loss=1.25,
+        branch_results=[],
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("call-1", "grid_analysis_powerflow_ac", {"context_ref": opened.context_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result("call-1", "analysis.powerflow.ac.run", powerflow_result, evidence_refs=[powerflow_evidence_ref]),
+        turn_id="analysis-test-t001",
+    )
+
+    event_types = [
+        json.loads(line)["event_type"]
+        for line in context_harness.workspace.context_events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    projected = event_types[event_types.index("tool.observation.recorded") :]
+    assert projected[:5] == [
+        "tool.observation.recorded",
+        "simulator.context.opened",
+        "result.registered",
+        "evidence.registered",
+        "fact.verified",
+    ]
+
+
 def test_projector_rejects_successful_result_that_does_not_match_started_context(
     context_harness: ContextHarness,
 ) -> None:
@@ -370,6 +524,10 @@ def test_projector_surfaces_store_rejection_for_mismatched_active_baseline(
 
     context_harness.start_turn("analysis-test-t001", ordinal=1)
     context_harness.projector.observe(
+        tool_start("call-1", "grid_context_open", {"model_id": "ieee39"}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
         tool_result(
             "call-1",
             "context.open",
@@ -379,6 +537,10 @@ def test_projector_surfaces_store_rejection_for_mismatched_active_baseline(
     )
 
     with pytest.raises(ContextStoreError, match="revision_ref"):
+        context_harness.projector.observe(
+            tool_start("call-2", "grid_analysis_powerflow_ac", {"context_ref": opened.context_ref}),
+            turn_id="analysis-test-t001",
+        )
         context_harness.projector.observe(
             tool_result(
                 "call-2",

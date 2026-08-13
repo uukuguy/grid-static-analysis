@@ -50,12 +50,12 @@ class AnalysisContextProjector:
         if not isinstance(capability, str):
             return
         call_id = _tool_call_id(event)
-        start = self._starts.pop(call_id, {}) if call_id is not None else {}
         result = event.get("result")
         if not isinstance(result, Mapping):
             result = {}
         evidence_refs = _event_evidence_refs(event, result)
         ok = event.get("ok") is True
+        start = self._starts.pop(call_id, {}) if call_id is not None and call_id in self._starts else {}
 
         if not ok:
             self._record_tool_error(
@@ -68,10 +68,13 @@ class AnalysisContextProjector:
             )
             return
 
+        if not start:
+            raise SimulatorIntegrityError(f"successful {capability} result has no matching tool start")
         self._assert_result_matches_started_inputs(capability, result, start)
 
+        context_artifacts: tuple[VerifiedArtifact, ...] = ()
         if capability == "result.branches.rank":
-            references = ()
+            ranking_source_artifact = self._verified_ranking_source(start)
             result_artifacts: tuple[VerifiedArtifact, ...] = ()
             evidence_artifacts: tuple[VerifiedArtifact, ...] = ()
         else:
@@ -82,7 +85,8 @@ class AnalysisContextProjector:
             )
             result_artifacts = references.results
             evidence_artifacts = references.evidence
-            self._append_missing_baselines(capability, result, references.context, turn_id=turn_id)
+            context_artifacts = references.context
+            ranking_source_artifact = None
 
         observation_ref = self._append_observation(
             capability,
@@ -92,12 +96,16 @@ class AnalysisContextProjector:
             turn_id=turn_id,
             call_id=call_id,
         )
+        if capability != "result.branches.rank":
+            self._append_missing_baselines(capability, result, context_artifacts, turn_id=turn_id)
         self._append_results(capability, result_artifacts, evidence_refs, observation_ref, turn_id=turn_id, start=start)
         self._append_evidence(capability, evidence_artifacts, turn_id=turn_id)
         self._append_facts(
             capability,
             result,
             result_artifacts,
+            evidence_artifacts,
+            ranking_source_artifact,
             observation_ref,
             turn_id=turn_id,
             start=start,
@@ -136,15 +144,6 @@ class AnalysisContextProjector:
         }
         self._store.append(
             ContextEventDraft(
-                event_type="tool.failed",
-                turn_id=turn_id,
-                capability=capability,
-                payload=diagnostic_payload,
-            ),
-            integrity="diagnostic",
-        )
-        self._store.append(
-            ContextEventDraft(
                 event_type="limitation.recorded",
                 turn_id=turn_id,
                 capability=capability,
@@ -153,6 +152,15 @@ class AnalysisContextProjector:
                     "message": str(message),
                     "refs": [observation_ref],
                 },
+            ),
+            integrity="diagnostic",
+        )
+        self._store.append(
+            ContextEventDraft(
+                event_type="tool.failed",
+                turn_id=turn_id,
+                capability=capability,
+                payload=diagnostic_payload,
             ),
             integrity="diagnostic",
         )
@@ -280,6 +288,8 @@ class AnalysisContextProjector:
         capability: str,
         result: Mapping[str, Any],
         result_artifacts: tuple[VerifiedArtifact, ...],
+        evidence_artifacts: tuple[VerifiedArtifact, ...],
+        ranking_source_artifact: VerifiedArtifact | None,
         observation_ref: str,
         *,
         turn_id: str,
@@ -292,6 +302,8 @@ class AnalysisContextProjector:
             capability,
             result,
             result_artifacts,
+            evidence_artifacts,
+            ranking_source_artifact,
             self._store.snapshot.results,
             observation_ref,
             turn_id=turn_id,
@@ -312,6 +324,14 @@ class AnalysisContextProjector:
                     },
                 )
             )
+
+    def _verified_ranking_source(self, start: Mapping[str, Any]) -> VerifiedArtifact:
+        result_ref = _start_args(start).get("result_ref")
+        if not isinstance(result_ref, str):
+            raise SimulatorIntegrityError("result.branches.rank requires started result_ref")
+        if result_ref not in self._store.snapshot.results:
+            raise SimulatorIntegrityError(f"result.branches.rank references unregistered result: {result_ref}")
+        return self._verifier.verify_result(result_ref)
 
     def _assert_result_matches_started_inputs(
         self,
@@ -421,6 +441,8 @@ def _promoted_fact_payloads(
     capability: str,
     result: Mapping[str, Any],
     result_artifacts: tuple[VerifiedArtifact, ...],
+    evidence_artifacts: tuple[VerifiedArtifact, ...],
+    ranking_source_artifact: VerifiedArtifact | None,
     registered_results: Mapping[str, ResultRecord],
     observation_ref: str,
     *,
@@ -428,7 +450,15 @@ def _promoted_fact_payloads(
     start: Mapping[str, Any],
     evidence_refs: list[str],
 ) -> list[dict[str, Any]]:
-    source = _fact_source(capability, result, result_artifacts, registered_results, evidence_refs, start)
+    source = _fact_source(
+        capability,
+        result,
+        result_artifacts,
+        ranking_source_artifact,
+        registered_results,
+        evidence_refs,
+        start,
+    )
     if not source["evidence_refs"]:
         return []
     common = {
@@ -442,17 +472,23 @@ def _promoted_fact_payloads(
     }
     facts: list[dict[str, Any]] = []
     if capability == "topology.branch.endpoints.get":
-        branch_ref = _first_string(result.get("branch_ref"), _nested(result, "branch", "branch_ref"), _nested(result, "facts", "branch_ref"))
+        evidence_facts = _verified_evidence_facts(capability, evidence_artifacts)
+        branch_ref = _first_string(
+            evidence_facts.get("branch_ref"),
+            result.get("branch_ref"),
+            _nested(result, "branch", "branch_ref"),
+        )
         for field, predicate in (("from_bus", "topology.branch.from_bus"), ("to_bus", "topology.branch.to_bus")):
-            value = _first_string(result.get(field), _nested(result, "facts", field))
+            value = _verified_evidence_value(capability, evidence_facts, result, field)
             if value is not None:
                 facts.append({**common, "predicate": predicate, "branch_ref": branch_ref, "value": value})
     elif capability == "analysis.powerflow.ac.run":
+        document = _single_result_document(capability, result_artifacts)
         for field, predicate in (
             ("converged", "powerflow.converged"),
             ("total_active_loss", "powerflow.total_active_loss"),
         ):
-            value = _first_present(result, field, result_artifacts)
+            value = _verified_result_value(capability, document, result, field)
             if value is not None:
                 fact = {**common, "predicate": predicate, "value": value}
                 if field == "total_active_loss":
@@ -479,12 +515,13 @@ def _promoted_fact_payloads(
                         }
                     )
     elif capability == "analysis.contingency.n_minus_one.run":
-        scenarios = result.get("scenarios")
+        document = _single_result_document(capability, result_artifacts)
+        scenarios = document.get("scenarios")
         scenario_count = len(scenarios) if isinstance(scenarios, list) else 0
         max_loading = _max_scenario_loading(scenarios)
         violation_count = _violation_count(scenarios)
         for predicate, value in (
-            ("n1.status", result.get("status")),
+            ("n1.status", _verified_result_value(capability, document, result, "status")),
             ("n1.scenario_count", scenario_count),
             ("n1.max_loading_percent", max_loading),
             ("n1.violation_count", violation_count),
@@ -501,6 +538,7 @@ def _fact_source(
     capability: str,
     result: Mapping[str, Any],
     result_artifacts: tuple[VerifiedArtifact, ...],
+    ranking_source_artifact: VerifiedArtifact | None,
     registered_results: Mapping[str, ResultRecord],
     evidence_refs: list[str],
     start: Mapping[str, Any],
@@ -509,9 +547,10 @@ def _fact_source(
         consumed_result_ref = _start_args(start).get("result_ref")
         if isinstance(consumed_result_ref, str) and consumed_result_ref in registered_results:
             registered = registered_results[consumed_result_ref]
+            document = ranking_source_artifact.document if ranking_source_artifact is not None else {}
             return {
-                "context_ref": None,
-                "revision_ref": registered.revision_ref,
+                "context_ref": document.get("context_ref"),
+                "revision_ref": document.get("revision_ref") or registered.revision_ref,
                 "source_ref": consumed_result_ref,
                 "evidence_refs": registered.evidence_refs,
             }
@@ -526,6 +565,55 @@ def _fact_source(
         "source_ref": source_ref,
         "evidence_refs": evidence_refs,
     }
+
+
+def _single_result_document(capability: str, result_artifacts: tuple[VerifiedArtifact, ...]) -> Mapping[str, Any]:
+    if not result_artifacts:
+        raise SimulatorIntegrityError(f"{capability} has no verified result artifact for fact projection")
+    return result_artifacts[0].document
+
+
+def _verified_result_value(
+    capability: str,
+    document: Mapping[str, Any],
+    inline_result: Mapping[str, Any],
+    field: str,
+) -> object:
+    if field not in document:
+        return None
+    verified = document[field]
+    inline = inline_result.get(field)
+    if _is_scalar(inline) and inline != verified:
+        raise SimulatorIntegrityError(f"{capability} inline {field} does not match verified result artifact")
+    return verified
+
+
+def _verified_evidence_facts(
+    capability: str,
+    evidence_artifacts: tuple[VerifiedArtifact, ...],
+) -> Mapping[str, Any]:
+    for artifact in evidence_artifacts:
+        if artifact.document.get("capability_id") != capability:
+            continue
+        facts = artifact.document.get("facts")
+        if isinstance(facts, Mapping):
+            return facts
+    raise SimulatorIntegrityError(f"{capability} has no verified evidence facts for fact projection")
+
+
+def _verified_evidence_value(
+    capability: str,
+    evidence_facts: Mapping[str, Any],
+    inline_result: Mapping[str, Any],
+    field: str,
+) -> object:
+    if field not in evidence_facts:
+        return None
+    verified = evidence_facts[field]
+    inline = inline_result.get(field)
+    if _is_scalar(inline) and inline != verified:
+        raise SimulatorIntegrityError(f"{capability} inline {field} does not match verified evidence artifact")
+    return verified
 
 
 def _event_evidence_refs(event: Mapping[str, Any], result: Mapping[str, Any]) -> list[str]:
@@ -681,11 +769,13 @@ def _first_present(keyed_result: Mapping[str, Any], key: str, result_artifacts: 
 def _max_scenario_loading(scenarios: object) -> float | int | None:
     if not isinstance(scenarios, list):
         return None
-    values = [
-        scenario.get("max_loading_percent")
-        for scenario in scenarios
-        if isinstance(scenario, Mapping) and isinstance(scenario.get("max_loading_percent"), int | float)
-    ]
+    values: list[float | int] = []
+    for scenario in scenarios:
+        if not isinstance(scenario, Mapping):
+            continue
+        value = scenario.get("max_loading_percent")
+        if isinstance(value, int | float):
+            values.append(value)
     return max(values) if values else None
 
 

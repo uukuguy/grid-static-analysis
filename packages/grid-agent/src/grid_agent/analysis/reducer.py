@@ -135,7 +135,7 @@ def _record_observation(state: AnalysisContext, draft: ContextEventDraft) -> Ana
     payload["turn_id"] = turn.turn_id
     payload["capability"] = capability
     observation = ObservationRecord.model_validate(payload)
-    _require_known_refs(state, observation.consumed_refs)
+    _require_known_refs(state, observation.consumed_refs, allow_unregistered_context_refs=True)
     if capability == "result.branches.rank":
         _validate_ranking_observation(state, observation)
     observations = _upsert_record(
@@ -294,11 +294,20 @@ def _require_capability(draft: ContextEventDraft) -> str:
     return draft.capability
 
 
-def _require_known_refs(state: AnalysisContext, refs: list[str]) -> None:
+def _require_known_refs(
+    state: AnalysisContext,
+    refs: list[str],
+    *,
+    allow_unregistered_context_refs: bool = False,
+) -> None:
     known_refs = set(state.baselines) | set(state.results) | set(state.evidence) | set(state.verified_facts)
     if state.active_context_ref is not None:
         known_refs.add(state.active_context_ref)
-    unknown = [ref for ref in refs if ref not in known_refs]
+    unknown = [
+        ref
+        for ref in refs
+        if ref not in known_refs and not (allow_unregistered_context_refs and ref.startswith("context:sha256:"))
+    ]
     if unknown:
         raise ContextTransitionError(f"unknown referenced context artifact: {unknown[0]}")
 
