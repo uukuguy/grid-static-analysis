@@ -7,7 +7,7 @@ import os
 import time
 import subprocess
 from datetime import UTC, datetime
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 from pathlib import Path
 
@@ -324,6 +324,27 @@ def _sha256_canonical_json(document: object) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _run_child_with_live_stderr(
+    command: Sequence[str], cwd: Path, on_stderr_line: Callable[[str], None]
+) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert process.stdout is not None and process.stderr is not None
+    stderr_lines: list[str] = []
+    from threading import Thread
+
+    def forward_stderr() -> None:
+        for line in process.stderr:
+            stderr_lines.append(line)
+            on_stderr_line(line.rstrip("\r\n"))
+
+    thread = Thread(target=forward_stderr, daemon=True)
+    thread.start()
+    stdout = process.stdout.read()
+    returncode = process.wait()
+    thread.join()
+    return subprocess.CompletedProcess(list(command), returncode, stdout, "".join(stderr_lines))
+
+
 @app.command()
 def report(
     questions: Path = typer.Option(_repo_root() / "validation/questions/task.md.txt", "--questions", exists=True, readable=True),
@@ -347,9 +368,7 @@ def report(
             command.extend(["--model", model])
         command.append(question)
         started = time.monotonic()
-        completed = subprocess.run(command, cwd=project_paths.root, text=True, capture_output=True)
-        if completed.stderr:
-            typer.echo(completed.stderr, nl=not completed.stderr.endswith("\n"), err=True)
+        completed = _run_child_with_live_stderr(command, project_paths.root, lambda line: typer.echo(line, err=True))
         duration = time.monotonic() - started
         try:
             payload = json.loads(completed.stdout)

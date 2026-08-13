@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
+from grid_agent.cli.app import _run_child_with_live_stderr
 from grid_agent.reporting import BatchRecord, load_questions, read_run_observations, render_markdown, write_jsonl
 
 
@@ -78,3 +80,19 @@ def test_read_run_observations_pairs_tool_start_and_canonical_result(tmp_path: P
     assert steps == (("topology.branch.endpoints.get", 2.0),)
     assert evidence_refs == ("evidence:sha256:" + "a" * 64,)
     assert result_refs == ()
+
+
+def test_batch_child_forwards_stderr_lines_before_process_completion(tmp_path: Path) -> None:
+    script = (
+        "import json,sys,time\n"
+        "print('模型推理: 正在识别线路', file=sys.stderr, flush=True)\n"
+        "time.sleep(0.03)\n"
+        "print('工具开始: topology.branch.endpoints.get', file=sys.stderr, flush=True)\n"
+        "print(json.dumps({'question_id':'q-1','answer_output':'答案'}), flush=True)\n"
+    )
+    observed: list[str] = []
+
+    completed = _run_child_with_live_stderr([sys.executable, "-c", script], tmp_path, observed.append)
+
+    assert observed == ["模型推理: 正在识别线路", "工具开始: topology.branch.endpoints.get"]
+    assert json.loads(completed.stdout)["answer_output"] == "答案"
