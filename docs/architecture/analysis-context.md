@@ -81,9 +81,11 @@ small, model-usable fact statements from verified simulator artifacts only.
 answer. `limitation.resolved` removes an unresolved limitation by reference.
 `turn.completed` archives the accepted answer JSON path and freezes per-turn
 ref lineage. `analysis.completed` and `analysis.failed` set terminal status.
-`answer.submitted` is reserved for explicit answer submission events; accepted
-per-turn answers are currently represented by archived answer files plus
-`turn.completed`.
+`answer.submitted` is the authoritative ledger event for an accepted answer.
+It is appended before `turn.completed` and records the turn binding, accepted
+answer artifact path and hash, archived draft path, result refs, and claimed
+evidence refs. `turn.completed` then freezes the turn lifecycle and answer
+artifact summary.
 
 ## Content Integrity and Failure Boundaries
 

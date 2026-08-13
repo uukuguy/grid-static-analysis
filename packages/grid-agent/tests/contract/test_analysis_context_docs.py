@@ -21,5 +21,6 @@ def test_architecture_doc_names_every_normative_event_and_schema() -> None:
     text = (root / "docs/architecture/analysis-context.md").read_text(encoding="utf-8")
     assert "schemas/analysis-context-v1.schema.json" in text
     assert "schemas/analysis-context-event-v1.schema.json" in text
+    assert "`answer.submitted` is the authoritative ledger event" in text
     for event_type in get_args(EventType):
         assert f"`{event_type}`" in text
