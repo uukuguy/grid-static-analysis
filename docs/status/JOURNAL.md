@@ -134,3 +134,4 @@
 - 01:55 Typed corrupt/unknown ranking failures to preserve read-only JSONL behavior [0be8265]
 - 15:28 Integrated v0.1-based WP-A semantic capabilities and preserved prior GSE main on archive branch [8a16c9b]
 - 15:28 Added Makefile-aligned human verification manual for reproducible acceptance [f683e30]
+- 15:29 Recorded WP-A cutover state and recovery instructions after main integration [00f5cb1]
