@@ -41,7 +41,14 @@ doctor:
 	uv run --project packages/grid-agent grid-agent doctor --json
 
 QUESTION ?= IEEE-39节点系统中线路11连接哪两个母线?
-
+# QUESTION ?= 母线电压正常运行范围是多少?
+# QUESTION ?= N-1静态安全校核需要检查哪些越限类型?
+# QUESTION ?= ‘潮流计算工具（pandapower runpp）需要输入哪些参数？’
+# QUESTION ?= 对IEEE-39节点系统运行交流潮流，并输出有功网损;
+# QUESTION ?= 筛选负载率最高的5条线路
+# QUESTION ?= 对线路17开展N-1校核
+# QUESTION ?= 母线低电压、线路过载等风险及证据（仿真结果）
+#
 run:
 	@test -n "$(QUESTION)" || (echo "Usage: make run QUESTION='IEEE-39节点系统中线路11连接哪两个母线?'" >&2; exit 2)
 	uv run --project packages/grid-agent grid-agent run --offline "$(QUESTION)"
