@@ -143,3 +143,4 @@
 - 20:12 Verified aggregate N-1 result chains so completed answers are not falsely downgraded [6b46469]
 - 20:xx Repaired readable batch report checkpoints and preserved rejected drafts with actionable audit context [pending commit]
 - 20:xx Corrected: readable report checkpoints and transparent audit handling landed [6867467]
+- 20:xx Recorded the report-recovery fix for durable session continuity [28fd2df]
