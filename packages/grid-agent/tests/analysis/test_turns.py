@@ -118,6 +118,72 @@ def test_turn_controller_missing_draft_fails_turn_records_limitation_and_increme
     assert not (harness.workspace.turn_path(1) / "answer.json").exists()
 
 
+@pytest.mark.parametrize(
+    ("draft_writer", "expected_error"),
+    [
+        (lambda path, turn: path.write_text("{not-json", encoding="utf-8"), "not valid JSON"),
+        (lambda path, turn: path.write_text(json.dumps(["not", "object"]), encoding="utf-8"), "must be a JSON object"),
+        (
+            lambda path, turn: write_payload(
+                path,
+                {
+                    "turn_id": turn.turn_id,
+                    "turn_nonce": turn.turn_nonce,
+                    "claim_evidence_refs": [],
+                    "result_refs": [],
+                },
+            ),
+            "must include answer_output",
+        ),
+        (
+            lambda path, turn: write_payload(
+                path,
+                {
+                    "turn_id": turn.turn_id,
+                    "turn_nonce": turn.turn_nonce,
+                    "answer_output": "答案",
+                    "claim_evidence_refs": "not-a-list",
+                    "result_refs": [],
+                },
+            ),
+            "must include claim_evidence_refs",
+        ),
+        (
+            lambda path, turn: write_payload(
+                path,
+                {
+                    "turn_id": turn.turn_id,
+                    "turn_nonce": turn.turn_nonce,
+                    "answer_output": "答案",
+                    "claim_evidence_refs": [],
+                    "result_refs": [123],
+                },
+            ),
+            "must include result_refs",
+        ),
+    ],
+)
+def test_turn_controller_malformed_current_draft_fails_turn_with_limitation_and_jsonl(
+    harness: Harness,
+    draft_writer,
+    expected_error: str,
+) -> None:
+    turn = harness.turns.start(1, "提交坏草稿")
+    draft_writer(harness.workspace.active_answer_draft_path, turn)
+
+    finalized = harness.turns.finalize(turn, duration_seconds=0.75)
+
+    assert finalized.status == "failed"
+    assert finalized.answer_path is None
+    assert expected_error in (finalized.error or "")
+    assert expected_error in finalized.answer_output
+    assert harness.store.snapshot.current_turn is None
+    assert harness.store.snapshot.turns[-1].status == "failed"
+    assert harness.store.snapshot.unresolved_limitations[-1].message == finalized.error
+    assert json.loads(harness.workspace.answers_path.read_text(encoding="utf-8"))["answer_output"] == finalized.answer_output
+    assert not (harness.workspace.turn_path(1) / "answer.json").exists()
+
+
 def test_turn_start_atomically_replaces_active_turn_and_clears_active_draft(harness: Harness) -> None:
     first = harness.turns.start(1, "第一条")
     stale_draft = harness.workspace.active_answer_draft_path
@@ -134,6 +200,41 @@ def test_turn_start_atomically_replaces_active_turn_and_clears_active_draft(harn
     assert not list(harness.workspace.root_path.glob(".active-turn.json*.tmp"))
 
 
+def test_turn_start_while_store_turn_active_preserves_active_files_and_context(harness: Harness) -> None:
+    first = harness.turns.start(1, "第一条")
+    write_draft(harness.workspace.active_answer_draft_path, first, answer="草稿")
+    active_record_before = harness.workspace.active_turn_path.read_text(encoding="utf-8")
+    draft_before = harness.workspace.active_answer_draft_path.read_text(encoding="utf-8")
+    context_before = harness.store.snapshot
+
+    with pytest.raises(RuntimeError, match="active turn"):
+        harness.turns.start(2, "第二条")
+
+    assert harness.workspace.active_turn_path.read_text(encoding="utf-8") == active_record_before
+    assert harness.workspace.active_answer_draft_path.read_text(encoding="utf-8") == draft_before
+    assert harness.store.snapshot == context_before
+
+
+def test_turn_start_preserves_active_files_when_store_append_fails(harness: Harness) -> None:
+    harness.workspace.active_turn_path.write_text('{"turn_id":"previous"}\n', encoding="utf-8")
+    harness.workspace.active_answer_draft_path.write_text('{"answer_output":"previous"}\n', encoding="utf-8")
+    active_record_before = harness.workspace.active_turn_path.read_text(encoding="utf-8")
+    draft_before = harness.workspace.active_answer_draft_path.read_text(encoding="utf-8")
+    context_before = harness.store.snapshot
+
+    def fail_append(*args, **kwargs):
+        raise RuntimeError("store append failed")
+
+    harness.store.append = fail_append
+
+    with pytest.raises(RuntimeError, match="store append failed"):
+        harness.turns.start(1, "第一条")
+
+    assert harness.workspace.active_turn_path.read_text(encoding="utf-8") == active_record_before
+    assert harness.workspace.active_answer_draft_path.read_text(encoding="utf-8") == draft_before
+    assert harness.store.snapshot == context_before
+
+
 def test_turn_context_hashes_nonce_without_recording_raw_nonce(harness: Harness) -> None:
     turn = harness.turns.start(1, "哈希 nonce")
 
@@ -145,6 +246,10 @@ def test_turn_context_hashes_nonce_without_recording_raw_nonce(harness: Harness)
     assert turn.turn_nonce not in events_text
     assert harness.store.snapshot.current_turn is not None
     assert harness.store.snapshot.current_turn.nonce_sha256 == sha256(turn.turn_nonce.encode("utf-8")).hexdigest()
+
+
+def write_payload(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def write_draft(

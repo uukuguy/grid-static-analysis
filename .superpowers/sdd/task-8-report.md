@@ -55,3 +55,49 @@ Result: `21 passed`.
 
 - Runner and CLI wiring were intentionally not changed.
 - Existing unrelated working-tree changes were left untouched.
+
+## High finding fixes
+
+Follow-up commit fixes both Task 8 high findings.
+
+- `finalize(...)` now converts structural current-draft errors into failed turns with limitations and incremental JSONL answers:
+  - invalid JSON,
+  - non-object JSON,
+  - missing `answer_output`,
+  - malformed `claim_evidence_refs`,
+  - malformed `result_refs`.
+- Stale turn binding still raises `StaleAnswerDraftError` and does not complete the active turn.
+- `start(...)` now preflights that the context store has no active turn before touching active prompt files.
+- `start(...)` now preserves the previous active record and draft when the context store rejects `turn.started`.
+
+Follow-up RED:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_turns.py -q
+```
+
+Result: `7 failed, 5 passed`, covering malformed drafts and start rollback/preservation regressions.
+
+Follow-up GREEN:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_turns.py -q
+```
+
+Result: `12 passed`.
+
+Follow-up required verification:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_turns.py packages/grid-agent/tests/cli/test_app.py -q
+```
+
+Result: `28 passed`.
+
+Pyright:
+
+```sh
+PYTHONPATH=packages/grid-agent/src pyright packages/grid-agent/src/grid_agent/analysis/turns.py packages/grid-agent/tests/analysis/test_turns.py
+```
+
+Result: `0 errors, 0 warnings, 0 informations`.

@@ -27,6 +27,10 @@ class StaleAnswerDraftError(AnswerDraftError):
     """Raised when a draft was bound to a different turn id or nonce."""
 
 
+class ActiveTurnInProgressError(RuntimeError):
+    """Raised when a new turn is requested before the context store completed the active one."""
+
+
 @dataclass(frozen=True, slots=True)
 class ActiveTurnHandle:
     ordinal: int
@@ -60,6 +64,8 @@ class TurnController:
         self._audit_callback = audit_callback
 
     def start(self, ordinal: int, instruction: str) -> ActiveTurnHandle:
+        if self._store.snapshot.current_turn is not None:
+            raise ActiveTurnInProgressError("active turn already exists in analysis context")
         turn_nonce = secrets.token_urlsafe(32)
         handle = ActiveTurnHandle(
             ordinal=ordinal,
@@ -68,6 +74,18 @@ class TurnController:
             instruction_sha256=sha256(instruction.encode("utf-8")).hexdigest(),
             turn_nonce=turn_nonce,
             started_monotonic=time.monotonic(),
+        )
+        self._store.append(
+            ContextEventDraft(
+                event_type="turn.started",
+                turn_id=handle.turn_id,
+                payload={
+                    "ordinal": handle.ordinal,
+                    "instruction": handle.instruction,
+                    "instruction_sha256": handle.instruction_sha256,
+                    "nonce_sha256": _sha256_text(handle.turn_nonce),
+                },
+            )
         )
         self._clear_active_answer_draft()
         _write_json_atomic(
@@ -83,18 +101,6 @@ class TurnController:
                 "started_monotonic": handle.started_monotonic,
             },
         )
-        self._store.append(
-            ContextEventDraft(
-                event_type="turn.started",
-                turn_id=handle.turn_id,
-                payload={
-                    "ordinal": handle.ordinal,
-                    "instruction": handle.instruction,
-                    "instruction_sha256": handle.instruction_sha256,
-                    "nonce_sha256": _sha256_text(handle.turn_nonce),
-                },
-            )
-        )
         return handle
 
     def finalize(self, handle: ActiveTurnHandle, *, duration_seconds: float) -> FinalizedTurn:
@@ -105,12 +111,17 @@ class TurnController:
                 duration_seconds=duration_seconds,
             )
 
-        raw_draft = self._workspace.active_answer_draft_path.read_bytes()
-        draft = _load_answer_draft(raw_draft)
-        _require_current_turn_binding(draft, handle)
-        answer = _require_non_empty_string(draft, "answer_output")
-        claim_evidence_refs = _require_string_list(draft, "claim_evidence_refs")
-        result_refs = _require_string_list(draft, "result_refs")
+        try:
+            raw_draft = self._workspace.active_answer_draft_path.read_bytes()
+            draft = _load_answer_draft(raw_draft)
+            _require_current_turn_binding(draft, handle)
+            answer = _require_non_empty_string(draft, "answer_output")
+            claim_evidence_refs = _require_string_list(draft, "claim_evidence_refs")
+            result_refs = _require_string_list(draft, "result_refs")
+        except StaleAnswerDraftError:
+            raise
+        except AnswerDraftError as exc:
+            return self.fail(handle, error=str(exc), duration_seconds=duration_seconds)
         diagnostics = self._audit_answer(claim_evidence_refs, result_refs)
 
         turn_path = self._workspace.turn_path(handle.ordinal)
@@ -320,6 +331,7 @@ def _limitation_ref(turn_id: str, error: str) -> str:
 
 __all__ = [
     "ActiveTurnHandle",
+    "ActiveTurnInProgressError",
     "AnswerDraftError",
     "FinalizedTurn",
     "StaleAnswerDraftError",
