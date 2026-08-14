@@ -1,0 +1,15 @@
+* { box-sizing: border-box; }
+
+html { background: var(--wb-bg); color: var(--wb-text); font-family: var(--wb-font-sans); }
+
+body { min-width: 320px; min-height: 100vh; margin: 0; }
+
+button, input, select, textarea { font: inherit; }
+
+button, [href], input, select, textarea, [tabindex]:not([tabindex='-1']) { outline-offset: 3px; }
+
+button:focus-visible, [href]:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:not([tabindex='-1']):focus-visible { outline: 2px solid var(--wb-accent); }
+
+#root, .workbench-bootstrap { min-height: 100vh; }
+
+.workbench-bootstrap { background: var(--wb-bg); }

@@ -1,0 +1,54 @@
+:root {
+  color-scheme: dark;
+  --wb-bg: #080b10;
+  --wb-panel: #0d1118;
+  --wb-panel-raised: #111722;
+  --wb-line: rgb(255 255 255 / 7.5%);
+  --wb-line-strong: rgb(255 255 255 / 13%);
+  --wb-text: #edf2f7;
+  --wb-muted: #9ba8b8;
+  --wb-dim: #718093;
+  --wb-accent: #79e0bc;
+  --wb-accent-soft: rgb(121 224 188 / 11%);
+  --wb-blue: #78aef7;
+  --wb-gold: #f1c96c;
+  --wb-violet: #bfa1ff;
+  --wb-danger: #ff9da1;
+  --wb-space-1: 4px;
+  --wb-space-2: 8px;
+  --wb-space-3: 12px;
+  --wb-space-4: 16px;
+  --wb-space-5: 24px;
+  --wb-space-6: 32px;
+  --wb-radius: 12px;
+  --wb-radius-small: 8px;
+  --wb-font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --wb-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --wb-shadow-1: 0 1px 2px rgb(0 0 0 / 18%);
+  --wb-shadow-2: 0 8px 24px rgb(0 0 0 / 24%);
+  --wb-shadow-3: 0 20px 48px rgb(0 0 0 / 34%);
+  --wb-motion-fast: 120ms;
+  --wb-motion: 180ms;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --wb-bg: #f7f9fc;
+  --wb-panel: #ffffff;
+  --wb-panel-raised: #eef3f8;
+  --wb-line: rgb(29 43 61 / 13%);
+  --wb-line-strong: rgb(29 43 61 / 22%);
+  --wb-text: #152131;
+  --wb-muted: #536276;
+  --wb-dim: #66768b;
+  --wb-accent: #08785c;
+  --wb-accent-soft: #d7f2e9;
+  --wb-blue: #1766b5;
+  --wb-gold: #8b5b00;
+  --wb-violet: #6841b8;
+  --wb-danger: #b4232b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --wb-motion-fast: 0ms; --wb-motion: 0ms; }
+}
