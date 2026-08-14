@@ -2,6 +2,15 @@
 export type NodeSource = 'observed' | 'derived' | 'agent-declared';
 export type LifecycleStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'unavailable';
 
+/** JSON values emitted by the API after Pydantic serializes context mappings. */
+export type JsonPrimitive = boolean | number | string | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject { [key: string]: JsonValue; }
+
+/** Backend `ContextFrame` state mappings and typed state deltas. */
+export type ContextState = JsonObject;
+export type ContextDelta = JsonObject;
+
 export interface ProjectionPage<T> {
   items: T[];
   older_cursor: string | null;
@@ -82,18 +91,30 @@ export interface BusinessProblem extends ProjectionNode {
   nodes: BusinessNode[];
 }
 
-export interface ContextFrame extends ProjectionNode {
+interface ContextFrameBase extends ProjectionNode {
   source_sequence: number;
   before_revision: number;
   after_revision: number;
   before_state_hash: string;
   after_state_hash: string;
-  before_state: Record<string, unknown>;
-  delta: Record<string, unknown>;
-  after_state: Record<string, unknown>;
-  request_artifact_ref: string | null;
+  before_state: ContextState;
+  delta: ContextDelta;
+  after_state: ContextState;
   max_sequence: number;
 }
+
+/** A native frame has the immutable request input captured by the backend. */
+export interface ContextFrameWithRequest extends ContextFrameBase {
+  request_artifact_ref: string;
+}
+
+/** Legacy frames must state why the exact model input cannot be shown. */
+export interface ContextFrameWithoutRequest extends ContextFrameBase {
+  request_artifact_ref: null;
+  unavailable_reason: string;
+}
+
+export type ContextFrame = ContextFrameWithRequest | ContextFrameWithoutRequest;
 
 export interface RunSummary {
   analysis_id: string;
