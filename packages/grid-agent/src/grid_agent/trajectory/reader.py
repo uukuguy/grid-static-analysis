@@ -14,6 +14,25 @@ from grid_agent.trajectory.canonical import canonical_json_bytes, sha256_ref
 from grid_agent.trajectory.events import PAYLOAD_MODELS, ZERO_PREDECESSOR_HASH, RunEvent
 
 
+_REQUIRED_EVENT_MEMBERS = frozenset(
+    {
+        "schema_version",
+        "analysis_id",
+        "sequence",
+        "timestamp",
+        "event_type",
+        "previous_event_hash",
+        "event_hash",
+        "scope",
+        "causation",
+        "source",
+        "context",
+        "refs",
+        "payload",
+    }
+)
+
+
 ReplayFailureCode = Literal[
     "malformed_json",
     "invalid_event",
@@ -57,8 +76,8 @@ class RunEventReader:
             self.events_path.read_bytes().splitlines(), start=1
         ):
             try:
-                decoded = json.loads(raw)
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                decoded = json.loads(raw, parse_constant=_reject_non_finite_constant)
+            except (ValueError, UnicodeDecodeError) as exc:
                 return self._failure(trusted, line_number, "malformed_json", str(exc))
 
             if not isinstance(decoded, Mapping):
@@ -72,6 +91,14 @@ class RunEventReader:
                     line_number,
                     "unknown_event",
                     f"unknown event type: {event_type!r}",
+                )
+            missing_members = _REQUIRED_EVENT_MEMBERS.difference(decoded)
+            if missing_members:
+                return self._failure(
+                    trusted,
+                    line_number,
+                    "invalid_event",
+                    f"event envelope is missing: {', '.join(sorted(missing_members))}",
                 )
             try:
                 event = RunEvent.model_validate(decoded)
@@ -91,7 +118,7 @@ class RunEventReader:
                     "previous_hash_mismatch",
                     "previous hash does not match trusted prefix",
                 )
-            if recompute_event_hash(event) != event.event_hash:
+            if recompute_event_hash(decoded) != event.event_hash:
                 return self._failure(
                     trusted,
                     line_number,
@@ -112,8 +139,12 @@ class RunEventReader:
         return ReplayPrefix(tuple(trusted), ReplayFailure(line_number, code, message))
 
 
-def recompute_event_hash(event: RunEvent) -> str:
+def _reject_non_finite_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is not permitted: {value}")
+
+
+def recompute_event_hash(event: RunEvent | Mapping[str, object]) -> str:
     """Return the canonical hash for an event's content excluding its hash field."""
-    content = event.model_dump(mode="json")
+    content = event.model_dump(mode="json") if isinstance(event, RunEvent) else dict(event)
     del content["event_hash"]
     return sha256_ref(canonical_json_bytes(content))

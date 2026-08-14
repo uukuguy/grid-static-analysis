@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
+from typing import BinaryIO
+
 from grid_agent.trajectory.canonical import canonical_json_bytes
 from grid_agent.trajectory.events import (
     ZERO_PREDECESSOR_HASH,
@@ -20,16 +24,21 @@ class RecorderIntegrityError(RuntimeError):
     """Raised when a draft is unsafe or a durable append cannot complete."""
 
 
-_PROHIBITED_FIELD_TOKENS = frozenset(
+_PROHIBITED_FIELD_NAMES = frozenset(
     {
+        "access_token",
         "api_key",
         "authorization",
+        "chain_of_thought",
+        "client_secret",
         "credential",
+        "credentials",
+        "hidden_reasoning",
         "password",
+        "reasoning",
+        "refresh_token",
         "secret",
         "token",
-        "reasoning",
-        "chain_of_thought",
     }
 )
 _HIDDEN_REASONING = re.compile(r"\b(?:chain[- ]of[- ]thought|hidden reasoning)\b", re.IGNORECASE)
@@ -55,47 +64,100 @@ class RunEventRecorder:
         self._subscriber_failures: list[str] = []
         self._next_sequence = 1
         self._previous_hash = ZERO_PREDECESSOR_HASH
-        self._closed = False
+        self._append_lock = Lock()
+        self._lock_stream: BinaryIO | None = None
+        self._closed = True
+        self._claim_ownership()
 
     def append(self, draft: EventDraft) -> RunEvent:
         """Durably append *draft* and then publish the recorded event."""
-        if self._closed:
-            raise RecorderIntegrityError("trajectory recorder is closed")
-        self._reject_prohibited_content(draft.model_dump(mode="json"))
-        event = build_event(
-            draft,
-            analysis_id=self.analysis_id,
-            sequence=self._next_sequence,
-            timestamp=datetime.now(UTC),
-            previous_event_hash=self._previous_hash,
-        )
-        encoded_event = canonical_json_bytes(event.model_dump(mode="json"))
-        try:
-            self.events_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.events_path.open("ab") as stream:
-                written = stream.write(encoded_event)
-                if written != len(encoded_event):
-                    raise OSError(
-                        f"short write: expected {len(encoded_event)} bytes, wrote {written}"
-                    )
-                stream.flush()
-                os.fsync(stream.fileno())
-        except OSError as exc:
-            self._closed = True
-            raise RecorderIntegrityError(f"trajectory append failed: {exc}") from exc
-
-        self._next_sequence += 1
-        self._previous_hash = event.event_hash
-        for subscriber in self._subscribers:
+        with self._append_lock:
+            if self._closed:
+                raise RecorderIntegrityError("trajectory recorder is closed")
+            self._reject_prohibited_content(draft.model_dump(mode="json"))
+            event = build_event(
+                draft,
+                analysis_id=self.analysis_id,
+                sequence=self._next_sequence,
+                timestamp=datetime.now(UTC),
+                previous_event_hash=self._previous_hash,
+            )
+            encoded_event = canonical_json_bytes(event.model_dump(mode="json"))
             try:
-                subscriber(event)
-            except Exception as exc:  # Subscribers are explicitly best effort.
-                self._subscriber_failures.append(f"{type(exc).__name__}: {exc}")
-        return event
+                with self.events_path.open("ab") as stream:
+                    written = stream.write(encoded_event)
+                    if written != len(encoded_event):
+                        raise OSError(
+                            f"short write: expected {len(encoded_event)} bytes, "
+                            f"wrote {written}"
+                        )
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except OSError as exc:
+                self._close_locked()
+                raise RecorderIntegrityError(f"trajectory append failed: {exc}") from exc
+
+            self._next_sequence += 1
+            self._previous_hash = event.event_hash
+            for subscriber in self._subscribers:
+                try:
+                    subscriber(event)
+                except Exception as exc:  # Subscribers are explicitly best effort.
+                    self._subscriber_failures.append(f"{type(exc).__name__}: {exc}")
+            return event
 
     def close(self) -> None:
         """Prevent subsequent appends."""
+        with self._append_lock:
+            self._close_locked()
+
+    def _claim_ownership(self) -> None:
+        lock_path = self.events_path.with_name(f"{self.events_path.name}.lock")
+        try:
+            self.events_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_stream = lock_path.open("a+b")
+        except OSError as exc:
+            raise RecorderIntegrityError(
+                f"trajectory ownership failed: {exc}"
+            ) from exc
+        try:
+            try:
+                fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RecorderIntegrityError(
+                    f"trajectory path is already owned: {self.events_path}"
+                ) from None
+            if self.events_path.exists() and self.events_path.stat().st_size > 0:
+                raise RecorderIntegrityError(
+                    f"trajectory path already contains events: {self.events_path}"
+                )
+        except RecorderIntegrityError:
+            self._release_lock_stream(lock_stream)
+            raise
+        except OSError as exc:
+            self._release_lock_stream(lock_stream)
+            raise RecorderIntegrityError(
+                f"trajectory ownership failed: {exc}"
+            ) from exc
+        self._lock_stream = lock_stream
+        self._closed = False
+
+    def _close_locked(self) -> None:
         self._closed = True
+        lock_stream = self._lock_stream
+        self._lock_stream = None
+        if lock_stream is None:
+            return
+        self._release_lock_stream(lock_stream)
+
+    @staticmethod
+    def _release_lock_stream(lock_stream: BinaryIO) -> None:
+        try:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            lock_stream.close()
 
     def _reject_prohibited_content(self, value: object) -> None:
         if self._contains_prohibited_content(value):
@@ -122,4 +184,4 @@ class RunEventRecorder:
         if not isinstance(value, str):
             return False
         normalized = value.lower().replace("-", "_").replace(" ", "_")
-        return any(token in normalized for token in _PROHIBITED_FIELD_TOKENS)
+        return normalized in _PROHIBITED_FIELD_NAMES

@@ -90,6 +90,63 @@ def test_reader_rejects_untrusted_first_line(
     assert prefix.failure.code == code
 
 
+@pytest.mark.parametrize("constant", ["Infinity", "-Infinity", "NaN"])
+def test_reader_rejects_raw_non_finite_json_constants(
+    tmp_path: Path, constant: str
+) -> None:
+    path = write_three_valid_events(tmp_path)
+    rows = path.read_text().splitlines()
+    rows[0] = rows[0].replace(
+        '"event_type":"analysis.started"', '"event_type":"turn.completed"'
+    )
+    rows[0] = rows[0].replace(
+        '"payload":{}',
+        f'"payload":{{"duration_seconds":{constant},"status":"success"}}',
+    )
+    path.write_text("\n".join(rows) + "\n")
+
+    prefix = RunEventReader(path).read_prefix()
+
+    assert prefix.events == ()
+    assert prefix.failure is not None
+    assert prefix.failure.line_number == 1
+    assert prefix.failure.code == "malformed_json"
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "schema_version",
+        "analysis_id",
+        "sequence",
+        "timestamp",
+        "event_type",
+        "previous_event_hash",
+        "event_hash",
+        "scope",
+        "causation",
+        "source",
+        "context",
+        "refs",
+        "payload",
+    ],
+)
+def test_reader_requires_every_native_envelope_member(
+    tmp_path: Path, member: str
+) -> None:
+    path = write_three_valid_events(tmp_path)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    del rows[0][member]
+    path.write_bytes(b"".join(canonical_json_bytes(row) for row in rows))
+
+    prefix = RunEventReader(path).read_prefix()
+
+    assert prefix.events == ()
+    assert prefix.failure is not None
+    assert prefix.failure.line_number == 1
+    assert prefix.failure.code == "invalid_event"
+
+
 @pytest.mark.parametrize(
     ("mutate", "code"),
     [
