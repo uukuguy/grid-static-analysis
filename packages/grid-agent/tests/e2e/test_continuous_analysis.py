@@ -14,6 +14,7 @@ import pytest
 from grid_agent.analysis.models import AnalysisContext
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.contracts import AnswerEnvelope
+from grid_agent.trajectory.reader import RunEventReader
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -177,6 +178,82 @@ def test_continuous_analysis_generalizes_active_model_constraints_and_result_reu
         shutil.rmtree(scripted_analysis.artifact_root, ignore_errors=True)
 
 
+def test_scripted_analysis_writes_replayable_native_trajectory(
+    scripted_analysis: ScriptedAnalysis,
+) -> None:
+    completed = scripted_analysis.run(("载入 IEEE-39 并说明第11号线路的连接端",))
+    assert completed.returncode == 0, completed.stderr
+    assert len(completed.stdout.splitlines()) == 1
+    envelope = AnswerEnvelope.model_validate_json(completed.stdout)
+    root = scripted_analysis.artifact_root / envelope.question_id
+    try:
+        prefix = RunEventReader(root / "events/run-events.jsonl").read_prefix()
+        assert prefix.failure is None
+        event_types = [event.event_type for event in prefix.events]
+        assert event_types[0] == "analysis.started"
+        assert event_types[-1] == "analysis.completed"
+        assert "model.request.started" in event_types
+        assert "tool.completed" in event_types
+        assert "answer.submitted" in event_types
+
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["events_path"] == "events/run-events.jsonl"
+        assert manifest["trajectory_schema_version"] == "grid-run-event/1.0"
+
+        request = json.loads(
+            next((root / "requests").glob("*/input.json")).read_text(encoding="utf-8")
+        )
+        assert request["provider"] == "openai"
+        assert request["model"] == "gpt-5.5"
+        assert "test-only-secret" not in json.dumps(request)
+        assert "test-only-secret" not in (root / "events/run-events.jsonl").read_text(
+            encoding="utf-8"
+        )
+
+        tool_start = next(
+            event for event in prefix.events if event.event_type == "tool.started"
+        )
+        assert tool_start.scope.turn_id is not None
+        assert tool_start.scope.tool_call_id is not None
+        native_path = (
+            root
+            / "tool-results"
+            / tool_start.scope.turn_id
+            / f"{tool_start.scope.tool_call_id}.json"
+        )
+        native_bytes = native_path.read_bytes()
+        assert json.loads(native_bytes)["schema_version"] == "grid-tool-invocation/1.0"
+
+        context = AnalysisContext.model_validate_json(
+            (root / "context/analysis-context.json").read_text(encoding="utf-8")
+        )
+        compatibility_paths = {
+            root / observation.path for observation in context.observations.values()
+        }
+        assert compatibility_paths
+        assert all("compatibility" in path.parts for path in compatibility_paths)
+        assert native_path not in compatibility_paths
+        assert native_path.read_bytes() == native_bytes
+        trace_page = (root / "turns/001/trace.md").read_text(encoding="utf-8")
+        assert "compatibility" in trace_page
+        assert "原始工具结果工件不可用" not in trace_page
+    finally:
+        shutil.rmtree(scripted_analysis.artifact_root, ignore_errors=True)
+
+
+def test_analysis_stdout_contract_survives_native_capture(
+    scripted_analysis: ScriptedAnalysis,
+) -> None:
+    completed = scripted_analysis.run(("载入 IEEE-39 并说明第11号线路的连接端",))
+    assert completed.returncode == 0, completed.stderr
+    try:
+        assert len(completed.stdout.splitlines()) == 1
+        assert set(json.loads(completed.stdout)) == {"question_id", "answer_output"}
+        assert "trajectory" not in completed.stdout
+    finally:
+        shutil.rmtree(scripted_analysis.artifact_root, ignore_errors=True)
+
+
 def _tool_start(trace: list[dict[str, Any]], tool_name: str) -> dict[str, Any]:
     for index, item in enumerate(trace):
         if item.get("type") == "tool_execution_start" and item.get("tool_name") == tool_name:
@@ -194,6 +271,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -203,6 +281,42 @@ def emit(payload):
 
 def load_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def capture_provider_request(prompt):
+    global request_index
+    requests_path = os.environ.get("GRID_AGENT_TRAJECTORY_REQUESTS")
+    if requests_path is None:
+        return
+    request_index += 1
+    turn = load_json(os.environ["GRID_AGENT_ACTIVE_TURN"])
+    capture_state = load_json(os.environ["GRID_AGENT_TRAJECTORY_CAPTURE_STATE"])
+    request_id = f"{{turn['turn_id']}}-r{{request_index:03d}}"
+    request_path = Path(requests_path) / request_id / "input.json"
+    request_path.parent.mkdir()
+    request_path.write_text(
+        json.dumps(
+            {{
+                "schema_version": "grid-model-request-input/1.0",
+                "request_id": request_id,
+                "request_index": request_index,
+                "turn_id": turn["turn_id"],
+                "provider": os.environ["GRID_AGENT_PROVIDER_ID"],
+                "model": os.environ["GRID_AGENT_MODEL_ID"],
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "source_event_sequences": capture_state["source_event_sequences"],
+                "context_revision": capture_state["context_revision"],
+                "context_state_hash": capture_state["context_state_hash"],
+                "provider_payload": {{
+                    "model": os.environ["GRID_AGENT_MODEL_ID"],
+                    "messages": [{{"role": "user", "content": prompt}}],
+                    "tools": [],
+                }},
+            }},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def tool_name_for(capability):
@@ -394,15 +508,26 @@ CATALOG = load_json(os.environ["GRID_AGENT_TOOL_CATALOG"])
 STATE = {{}}
 TURN_HANDLERS = [answer_first_turn, answer_second_turn, answer_third_turn, answer_fourth_turn, answer_fifth_turn]
 turn_index = 0
+request_index = 0
 
 for raw in sys.stdin:
     if not raw.strip():
         continue
-    json.loads(raw)
+    prompt = json.loads(raw)
+    capture_provider_request(prompt)
     emit({{"type": "response", "command": "prompt", "success": True}})
     if turn_index >= len(TURN_HANDLERS):
         raise RuntimeError("received more prompts than scripted turns")
     TURN_HANDLERS[turn_index]()
     turn_index += 1
+    emit({{
+        "type": "message_end",
+        "message": {{
+            "role": "assistant",
+            "content": [{{"type": "text", "text": "scripted answer submitted"}}],
+            "usage": {{"input": 1, "output": 1}},
+            "stopReason": "stop",
+        }},
+    }})
     emit({{"type": "agent_end", "messages": []}})
 """

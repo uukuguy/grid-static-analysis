@@ -65,6 +65,8 @@ def test_analysis_cli_emits_one_envelope_and_uses_self_contained_paths(
     assert result.exit_code == 0
     assert len(result.stdout.splitlines()) == 1
     envelope = AnswerEnvelope.model_validate_json(result.stdout)
+    assert set(json.loads(result.stdout)) == {"question_id", "answer_output"}
+    assert "trajectory" not in result.stdout
     analysis_root = instructions.parent / "runs" / envelope.question_id
     assert envelope.answer_output == f"runs/{envelope.question_id}/report.md"
     assert (analysis_root / "input/instructions.md.txt").is_file()

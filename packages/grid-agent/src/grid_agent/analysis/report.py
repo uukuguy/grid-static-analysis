@@ -363,12 +363,30 @@ def _turn_trace_tool_result_link(
 ) -> str:
     if tool_call_id is None:
         return "原始工具结果工件不可用"
-    relative = Path("tool-results") / turn_id / f"{tool_call_id}.json"
-    resolved = _normalize_workspace_relative_path(workspace, relative, diagnostics=diagnostics, description="原始工具结果工件")
-    if resolved is None or not resolved.absolute.is_file():
-        return "原始工具结果工件不可用"
-    href = Path(os.path.relpath(resolved.absolute, start=trace_path.parent)).as_posix()
-    return _link(href, "查看原始工具结果")
+    candidates = [
+        Path("tool-results")
+        / turn_id
+        / "compatibility"
+        / f"{tool_call_id}.json"
+    ]
+    if not workspace.events_path.is_file():
+        candidates.append(
+            Path("tool-results") / turn_id / f"{tool_call_id}.json"
+        )
+    for relative in candidates:
+        resolved = _normalize_workspace_relative_path(
+            workspace,
+            relative,
+            diagnostics=diagnostics,
+            description="原始工具结果工件",
+        )
+        if resolved is None or not resolved.absolute.is_file():
+            continue
+        href = Path(
+            os.path.relpath(resolved.absolute, start=trace_path.parent)
+        ).as_posix()
+        return _link(href, "查看原始工具结果")
+    return "原始工具结果工件不可用"
 
 
 def _render_audit_review(context: AnalysisContext, workspace: AnalysisWorkspace, diagnostics: list[str]) -> list[str]:

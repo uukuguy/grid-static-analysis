@@ -45,11 +45,20 @@ runtime records, the active simulator baseline, the current turn, completed
 turns, observations, registered result artifacts, registered evidence,
 verified facts, diagnostics, and unresolved limitations.
 
-The ledger event has `schema_version: "analysis-context-event/1.0"` and is
-validated by `schemas/analysis-context-event-v1.schema.json`. Every event
-records `analysis_id`, monotonic `sequence`, `previous_revision`,
+New Analysis runs use `events/run-events.jsonl` as the authoritative native
+trajectory. Its `grid-run-event/1.0` envelopes form one replay-verified hash
+chain across model requests, public model responses, tools, context changes,
+accepted answers, and terminal lifecycle events. The manifest publishes this
+path as `events_path` together with `trajectory_schema_version`.
+
+The older context ledger remains at `context/context-events.jsonl` with
+`schema_version: "analysis-context-event/1.0"` and validation by
+`schemas/analysis-context-event-v1.schema.json`. For native runs it is a
+compatibility projection: each native context event is made durable first and
+its native sequence is retained by the projected event. Every compatibility
+event records `analysis_id`, monotonic `sequence`, `previous_revision`,
 `previous_state_hash`, `next_revision`, `next_state_hash`, and `integrity`
-(`verified` or `diagnostic`). Normative event names are:
+(`verified` or `diagnostic`). Its normative event names are:
 
 - `analysis.started`
 - `turn.started`
@@ -82,7 +91,11 @@ integrity failures record `analysis.failed` when no active turn remains.
 No new turn may begin while `current_turn` is set. Result and evidence
 registration requires an active matching turn unless the reducer explicitly
 allows a global diagnostic. Replay of `context/context-events.jsonl` must
-equal `context/analysis-context.json` and the in-memory snapshot.
+equal `context/analysis-context.json` and the in-memory snapshot. Before a
+completed manifest is published, native replay must also be failure-free and
+end with `analysis.completed`. If native replay or capture verification fails,
+the manifest remains failed and no event is appended after an invalid native
+prefix.
 
 ## Event-to-State Reduction Rules
 
@@ -122,9 +135,17 @@ unregistered dependencies fails the turn and prevents later turns from
 continuing on untrusted state. Audit diagnostics do not replace accepted
 answers; they are diagnostic events and report annotations.
 
-Standard traces store semantic RPC events only. Streaming token deltas,
-reasoning deltas, and repeated message snapshots are excluded from
-`trace/events.jsonl`.
+`trace/events.jsonl` is likewise a compatibility projection for native runs.
+It continues to store semantic RPC events for existing reports, while native
+event sequences provide authoritative lifecycle links. Streaming token deltas,
+reasoning deltas, and repeated message snapshots are excluded from both
+persisted surfaces.
+
+Native tool-invocation sidecars are immutable at
+`tool-results/<turn_id>/<tool_call_id>.json`. Compatibility observation
+documents use the disjoint
+`tool-results/<turn_id>/compatibility/<tool_call_id>.json` path and must never
+replace or edit the native sidecar.
 
 `analysis_context.changed` and `analysis_context.injected` are trace-only
 lifecycle records. They carry the view revision/state hash (and injection path)

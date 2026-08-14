@@ -18,8 +18,9 @@ from grid_agent.runtime.rpc import PiProtocolError
 from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
 from grid_agent.trajectory.capture import NativeCaptureAdapter
 from grid_agent.trajectory.context_bridge import NativeContextBridge
+from grid_agent.trajectory.events import EventDraft
 from grid_agent.trajectory.reader import RunEventReader
-from grid_agent.trajectory.recorder import RunEventRecorder
+from grid_agent.trajectory.recorder import RecorderIntegrityError, RunEventRecorder
 
 
 RESULT_REF = "result:sha256:" + "1" * 64
@@ -346,6 +347,8 @@ def test_runner_records_context_injection_after_artifact_write(
     )
     assert harness.pi.captures == [harness.capture]
     assert harness.capture._turn_id is None
+    with pytest.raises(RecorderIntegrityError, match="closed"):
+        harness.recorder.append(EventDraft(event_type="analysis.started"))
 
 
 def test_runner_prevents_completion_after_native_replay_failure(
@@ -365,6 +368,34 @@ def test_runner_prevents_completion_after_native_replay_failure(
     assert not any(
         event.event_type == "analysis.completed" for event in prefix.events
     )
+    assert b'"event_type":"analysis.failed"' not in (
+        harness.recorder.events_path.read_bytes()
+    )
+
+
+def test_runner_rejects_completed_manifest_when_terminal_replay_is_corrupt(
+    tmp_path: Path,
+) -> None:
+    harness = _native_runner_harness(tmp_path)
+
+    def corrupt_after_terminal(event: Any) -> None:
+        if event.event_type == "analysis.completed":
+            with harness.recorder.events_path.open("ab") as stream:
+                stream.write(b'{"sequence":')
+
+    harness.bridge.on_native_commit = corrupt_after_terminal
+
+    outcome = harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
+    )
+
+    prefix = RunEventReader(harness.recorder.events_path).read_prefix()
+    manifest = json.loads(harness.workspace.manifest_path.read_text(encoding="utf-8"))
+    assert outcome.status == "failed"
+    assert prefix.failure is not None
+    assert prefix.events[-1].event_type == "analysis.completed"
+    assert harness.recorder.events_path.read_bytes().endswith(b'{"sequence":')
+    assert manifest["status"] == "failed"
 
 
 def test_runner_reuses_one_pi_process_and_injects_finalized_prior_context(runner_harness: RunnerHarness) -> None:
