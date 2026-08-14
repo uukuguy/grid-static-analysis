@@ -4,22 +4,25 @@ import json
 import os
 import secrets
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
-from grid_agent.analysis.integrity import ReferenceDiagnostic
+from grid_agent.analysis.integrity import ContentReferenceVerifier, ReferenceDiagnostic, SimulatorIntegrityError
 from grid_agent.analysis.models import ContextEventDraft
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.analysis.workspace import AnalysisWorkspace
+from grid_agent.trajectory.answers import AnswerSubmission, ReferenceVerifier, validate_submission
+from grid_agent.trajectory.events import EventDraft, EventRefs, EventSource, RunScope
+from grid_agent.trajectory.recorder import RunEventRecorder
 
 
 AuditCallback = Callable[[tuple[str, ...], tuple[str, ...]], tuple[ReferenceDiagnostic, ...]]
 
 
-class AnswerDraftError(RuntimeError):
+class AnswerDraftError(SimulatorIntegrityError):
     """Raised when a submitted answer draft cannot be accepted for the active turn."""
 
 
@@ -64,10 +67,16 @@ class TurnController:
         store: AnalysisContextStore,
         *,
         audit_callback: AuditCallback,
+        verifier: ReferenceVerifier | None = None,
+        allowed_refs: Set[str] | None = None,
+        recorder: RunEventRecorder | None = None,
     ) -> None:
         self._workspace = workspace
         self._store = store
         self._audit_callback = audit_callback
+        self._verifier = verifier or ContentReferenceVerifier(workspace.root_path)
+        self._allowed_refs = allowed_refs
+        self._recorder = recorder
 
     def start(self, ordinal: int, instruction: str) -> ActiveTurnHandle:
         if self._store.snapshot.current_turn is not None:
@@ -137,6 +146,22 @@ class TurnController:
             raise
         except AnswerDraftError as exc:
             return self.fail(handle, error=str(exc), duration_seconds=duration_seconds)
+        try:
+            submission = validate_submission(
+                {
+                    "submission_id": draft.get("submission_id", handle.turn_id),
+                    "answer_output": answer,
+                    "result_refs": result_refs,
+                    "claim_evidence_refs": claim_evidence_refs,
+                    "claims": draft.get("claims", ()),
+                },
+                self._verifier,
+                self._submission_allowed_refs(),
+            )
+        except (RuntimeError, ValueError) as exc:
+            error = AnswerDraftError(str(exc))
+            self._record_answer_rejection(handle)
+            raise error from exc
         diagnostics = self._audit_answer(claim_evidence_refs, result_refs)
 
         turn_path = self._workspace.turn_path(handle.ordinal)
@@ -149,6 +174,8 @@ class TurnController:
         answer_bytes = _write_json_atomic(answer_path, envelope)
         _append_jsonl_fsync(self._workspace.answers_path, envelope)
 
+        self._record_claims(handle, submission)
+
         # Keep the accepted answer auditable in the context ledger before the
         # turn becomes terminal.
         self._store.append(
@@ -156,6 +183,7 @@ class TurnController:
                 event_type="answer.submitted",
                 turn_id=handle.turn_id,
                 payload={
+                    "submission_id": submission.submission_id,
                     "turn_id": handle.turn_id,
                     "turn_nonce_sha256": _sha256_text(handle.turn_nonce),
                     "answer_path": str(answer_path.relative_to(self._workspace.root_path)),
@@ -189,6 +217,55 @@ class TurnController:
             answer_path=answer_path,
             audit_diagnostics=diagnostics,
             error=None,
+        )
+
+    def _submission_allowed_refs(self) -> Set[str]:
+        if self._allowed_refs is not None:
+            return self._allowed_refs
+        path = self._workspace.root_path / "context" / "trajectory-allowed-refs.json"
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return frozenset()
+        refs = document.get("refs") if isinstance(document, Mapping) else None
+        if not isinstance(refs, Sequence) or isinstance(refs, (str, bytes)):
+            return frozenset()
+        return frozenset(reference for reference in refs if isinstance(reference, str))
+
+    def _record_claims(
+        self, handle: ActiveTurnHandle, submission: AnswerSubmission
+    ) -> None:
+        if self._recorder is None:
+            return
+        for claim in submission.claims:
+            self._recorder.append(
+                EventDraft(
+                    event_type="business.claim.declared",
+                    scope=RunScope(turn_id=handle.turn_id),
+                    source=EventSource(kind="agent-declared"),
+                    refs=EventRefs(
+                        consumed=claim.result_refs,
+                        evidence=claim.evidence_refs,
+                    ),
+                    payload={
+                        "submission_id": submission.submission_id,
+                        **claim.model_dump(mode="json"),
+                    },
+                )
+            )
+
+    def _record_answer_rejection(self, handle: ActiveTurnHandle) -> None:
+        if self._recorder is None:
+            return
+        self._recorder.append(
+            EventDraft(
+                event_type="answer.rejected",
+                scope=RunScope(turn_id=handle.turn_id),
+                payload={
+                    "error_type": "invalid_submission",
+                    "message": "answer submission failed structural validation",
+                },
+            )
         )
 
     def fail(self, handle: ActiveTurnHandle, *, error: str, duration_seconds: float) -> FinalizedTurn:

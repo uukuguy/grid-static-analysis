@@ -10,8 +10,12 @@ import pytest
 from grid_agent.analysis.integrity import ReferenceDiagnostic
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.analysis import turns as turns_module
-from grid_agent.analysis.turns import StaleAnswerDraftError, TurnController
+from grid_agent.analysis.turns import AnswerDraftError, StaleAnswerDraftError, TurnController
 from grid_agent.analysis.workspace import AnalysisWorkspace
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.context_bridge import NativeContextBridge
+from grid_agent.trajectory.reader import RunEventReader
+from grid_agent.trajectory.recorder import RunEventRecorder
 
 
 INPUT = {
@@ -272,6 +276,155 @@ def test_turn_context_hashes_nonce_without_recording_raw_nonce(harness: Harness)
     assert turn.turn_nonce not in events_text
     assert harness.store.snapshot.current_turn is not None
     assert harness.store.snapshot.current_turn.nonce_sha256 == sha256(turn.turn_nonce.encode("utf-8")).hexdigest()
+
+
+def test_turn_finalization_emits_claims_only_for_accepted_submission(tmp_path: Path) -> None:
+    controller, recorder, _store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
+    write_bound_draft(
+        workspace.active_answer_draft_path,
+        handle,
+        claims=[
+            {
+                "statement": "Line 11 reaches 132.51 percent loading",
+                "category": "numerical_result",
+                "result_refs": [result_ref],
+                "evidence_refs": [evidence_ref],
+            }
+        ],
+        result_refs=[result_ref],
+        claim_evidence_refs=[evidence_ref],
+    )
+
+    controller.finalize(handle, duration_seconds=1.0)
+
+    events = RunEventReader(recorder.events_path).read_prefix().events
+    claim = next(event for event in events if event.event_type == "business.claim.declared")
+    answer = next(event for event in events if event.event_type == "answer.submitted")
+    assert claim.payload["submission_id"] == answer.payload["submission_id"]
+    assert events.index(claim) < events.index(answer)
+
+
+def test_rejected_submission_emits_rejection_without_claim_content(tmp_path: Path) -> None:
+    controller, recorder, _store, workspace, handle, _result_ref, _evidence_ref = answer_fixture(tmp_path)
+    write_bound_draft(
+        workspace.active_answer_draft_path,
+        handle,
+        claims=[
+            {
+                "statement": "unsupported",
+                "category": "numerical_result",
+                "result_refs": [],
+                "evidence_refs": [],
+            }
+        ],
+    )
+
+    with pytest.raises(AnswerDraftError, match="simulator-backed claim"):
+        controller.finalize(handle, duration_seconds=1.0)
+
+    events = RunEventReader(recorder.events_path).read_prefix().events
+    assert not any(event.event_type == "business.claim.declared" for event in events)
+    rejection = next(event for event in events if event.event_type == "answer.rejected")
+    assert set(rejection.payload) == {"error_type", "message"}
+    assert "unsupported" not in json.dumps(rejection.payload)
+    assert not any(event.event_type == "answer.submitted" for event in events)
+
+
+def test_answer_commit_failure_leaves_claims_explicitly_dangling(
+    tmp_path: Path,
+) -> None:
+    controller, recorder, store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
+    write_bound_draft(
+        workspace.active_answer_draft_path,
+        handle,
+        claims=[
+            {
+                "statement": "Line 11 reaches 132.51 percent loading",
+                "category": "numerical_result",
+                "result_refs": [result_ref],
+                "evidence_refs": [evidence_ref],
+            }
+        ],
+        result_refs=[result_ref],
+        claim_evidence_refs=[evidence_ref],
+    )
+    original_append = store.append
+
+    def fail_answer_commit(draft, **kwargs):
+        if draft.event_type == "answer.submitted":
+            raise RuntimeError("answer commit failed")
+        return original_append(draft, **kwargs)
+
+    store.append = fail_answer_commit
+
+    with pytest.raises(RuntimeError, match="answer commit failed"):
+        controller.finalize(handle, duration_seconds=1.0)
+
+    events = RunEventReader(recorder.events_path).read_prefix().events
+    claim = next(event for event in events if event.event_type == "business.claim.declared")
+    assert claim.payload["submission_id"] == "submission-1"
+    assert not any(event.event_type == "answer.submitted" for event in events)
+
+
+class AcceptingVerifier:
+    def verify_result(self, reference: str) -> object:
+        return reference
+
+    def verify_evidence(self, reference: str) -> object:
+        return reference
+
+
+def answer_fixture(
+    tmp_path: Path,
+):
+    result_ref = "result:sha256:" + "a" * 64
+    evidence_ref = "evidence:sha256:" + "b" * 64
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-answer")
+    artifacts = ImmutableArtifactRegistry(workspace.root_path)
+    recorder = RunEventRecorder(
+        workspace.events_path,
+        workspace.analysis_id,
+        artifact_registry=artifacts,
+    )
+    bridge = NativeContextBridge(recorder, artifacts, workspace)
+    store = AnalysisContextStore.initialize(
+        workspace,
+        input_record=INPUT,
+        runtime_record=RUNTIME,
+        transition_commit=bridge.commit,
+    )
+    controller = TurnController(
+        workspace,
+        store,
+        audit_callback=lambda _claimed, _results: (),
+        verifier=AcceptingVerifier(),
+        allowed_refs={result_ref, evidence_ref},
+        recorder=recorder,
+    )
+    handle = controller.start(1, "Assess line 11")
+    return controller, recorder, store, workspace, handle, result_ref, evidence_ref
+
+
+def write_bound_draft(
+    path: Path,
+    turn,
+    *,
+    claims: list[dict[str, object]],
+    result_refs: list[str] | None = None,
+    claim_evidence_refs: list[str] | None = None,
+) -> None:
+    write_payload(
+        path,
+        {
+            "turn_id": turn.turn_id,
+            "turn_nonce": turn.turn_nonce,
+            "submission_id": "submission-1",
+            "answer_output": "Bound answer",
+            "claim_evidence_refs": claim_evidence_refs or [],
+            "result_refs": result_refs or [],
+            "claims": claims,
+        },
+    )
 
 
 def write_payload(path: Path, payload: dict[str, object]) -> None:
