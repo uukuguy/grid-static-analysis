@@ -55,6 +55,9 @@ def test_report_uses_per_question_narrative_and_real_trace_steps(report_fixture:
     assert "### 实际分析过程" in report
     assert "按支路运行指标筛选和排序（`result.branches.rank`，完成，1.50 秒）" in report
     assert "### 证据来源" in report
+    assert "IEEE-39（pandapower.networks.case39）" in report
+    assert "母线电压约束：0.94–1.06 p.u.（模型数据）" in report
+    assert "交流潮流：已收敛" in report
     assert "result:sha256:" not in report
     assert "evidence:sha256:" not in report
     assert "结果依赖关系" not in report
@@ -343,6 +346,39 @@ def _build_context(
             },
         ),
         ContextEventDraft(
+            event_type="domain.state.projected",
+            turn_id=f"{workspace.analysis_id}-t000",
+            capability="model.constraints.describe",
+            payload={
+                "projector": "model-constraints-v1",
+                "model": {
+                    "context_ref": BASELINE_REF,
+                    "revision_ref": REVISION_REF,
+                    "model_id": "ieee39",
+                    "source": "pandapower.networks.case39",
+                    "counts": {"bus": 39, "line": 35},
+                },
+                "constraints": [
+                    {
+                        "constraint_ref": "constraint:sha256:" + "6" * 64,
+                        "context_ref": BASELINE_REF,
+                        "revision_ref": REVISION_REF,
+                        "quantity": "bus.vm_pu",
+                        "subject_kind": "bus",
+                        "lower": 0.94,
+                        "upper": 1.06,
+                        "unit": "p.u.",
+                        "applies_to_count": 39,
+                        "source_kind": "model",
+                        "source_ref": "model:test",
+                        "source": {"table": "bus"},
+                        "producer_capability": "model.constraints.describe",
+                        "producer_turn_id": f"{workspace.analysis_id}-t000",
+                    }
+                ],
+            },
+        ),
+        ContextEventDraft(
             event_type="turn.completed",
             turn_id=f"{workspace.analysis_id}-t000",
             payload={
@@ -385,6 +421,26 @@ def _build_context(
                 "kind": "simulator",
                 "refs": [RESULT_REF],
                 "summary": {"title": "潮流证据"},
+            },
+        ),
+        ContextEventDraft(
+            event_type="domain.state.projected",
+            turn_id=f"{workspace.analysis_id}-t001",
+            capability="analysis.powerflow.ac.run",
+            payload={
+                "projector": "powerflow-ac-v1",
+                "calculations": [
+                    {
+                        "result_ref": RESULT_REF,
+                        "kind": "powerflow.ac",
+                        "context_ref": BASELINE_REF,
+                        "revision_ref": REVISION_REF,
+                        "status": "converged",
+                        "artifact_path": "evidence/results/powerflow.json",
+                        "producer_capability": "analysis.powerflow.ac.run",
+                        "producer_turn_id": f"{workspace.analysis_id}-t001",
+                    }
+                ],
             },
         ),
         ContextEventDraft(

@@ -312,6 +312,10 @@ class AnalysisRunner:
         return (
             "你是 grid-agent 的连续静态分析执行器。"
             "必须只使用已注册的 grid tools 获取或复用仿真结论，并在完成本条指令时调用 grid_submit_answer。"
+            "后续指令省略模型、场景或结果时，先使用 analysis_context_view 中的活动对象。"
+            "网络与数值结论只能来自已发布 grid tools 或其中登记的可复用结果。"
+            "判断正常、越限或风险时必须指出约束来源；没有约束时只报告原始值，不得猜测阈值。"
+            "not_published、not_applicable、prerequisite_missing 和计算失败必须分别说明，不得统称执行限制。"
             "\n\n"
             "<analysis_context_view>\n"
             f"{context_view.rstrip()}\n"

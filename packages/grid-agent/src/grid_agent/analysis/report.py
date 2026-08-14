@@ -123,28 +123,86 @@ def _render_turn_context(
     workspace: AnalysisWorkspace,
     diagnostics: list[str],
 ) -> list[str]:
-    opened = next((step.result for step in steps if step.capability == "context.open" and step.ok), None)
-    if opened is None and context.baselines:
-        baseline = next(iter(context.baselines.values()))
-        source = _first_string(baseline.source, ("source", "dataset", "module")) or "未记录"
-        model = _first_string(baseline.source, ("model", "name", "network")) or "未记录"
-        network = baseline.network
-        counts = "，".join(f"{key} {value}" for key, value in network.items() if isinstance(value, int)) or "模型规模未记录"
-        model_line = f"- 网络模型：`{model}`；来源：`{source}`；模型规模：{counts}。"
-    elif isinstance(opened, Mapping):
-        counts = opened.get("counts")
-        count_text = "，".join(f"{key} {value}" for key, value in counts.items() if isinstance(value, int)) if isinstance(counts, Mapping) else "模型规模未返回"
-        model_line = f"- 网络模型：`{opened.get('model', '未返回')}`；来源：`{opened.get('source', '未返回')}`；模型规模：{count_text}。"
-    else:
-        model_line = "- 本题未打开网络模型上下文；回答不应被解读为新的仿真计算结论。"
-    reused = len(turn.consumed_refs)
-    produced = len(turn.produced_refs)
-    return [
-        model_line,
-        f"- 会话状态：本题复用前序已验证工件 {reused} 项；本题新增工件 {produced} 项。",
+    lines = [_active_model_line(context)]
+    calculations = [
+        item for item in context.domain_state.calculations.values() if item.producer_turn_id == turn.turn_id
+    ]
+    scenarios = [item for item in context.domain_state.scenarios.values() if item.producer_turn_id == turn.turn_id]
+    constraints = [item for item in context.domain_state.constraints.values() if item.producer_turn_id == turn.turn_id]
+    if calculations and not constraints:
+        constraints = list(context.domain_state.constraints.values())
+    lines.extend(_constraint_lines(constraints))
+    lines.extend(_calculation_lines(calculations))
+    lines.extend(_scenario_lines(scenarios))
+    reused_calculations = [
+        context.domain_state.calculations[reference]
+        for reference in turn.consumed_refs
+        if reference in context.domain_state.calculations
+    ]
+    if reused_calculations:
+        labels = "、".join(_calculation_label(item.kind) for item in reused_calculations)
+        lines.append(f"- 复用前序计算：{labels}。")
+    if len(lines) == 1:
+        lines.append("- 本题未新增或复用领域计算状态。")
+    lines.extend([
+        f"- 状态变化：复用前序工件 {len(turn.consumed_refs)} 项；新增工件 {len(turn.produced_refs)} 项。",
         "- 执行边界：模型上下文为只读冻结快照；下列过程记录的是本题实际调用的已发布工具。",
         f"- {_workspace_link(workspace, workspace.context_snapshot_path.relative_to(workspace.root_path), label='查看连续分析上下文', unavailable_label='上下文文件不可用', diagnostics=diagnostics, description='连续分析上下文')}。",
+    ])
+    return lines
+
+
+def _active_model_line(context: AnalysisContext) -> str:
+    model = context.domain_state.model
+    if model is not None:
+        label = "IEEE-39" if model.model_id == "ieee39" else model.model_id
+        counts = "，".join(f"{key} {value}" for key, value in model.counts.items()) or "规模未记录"
+        return f"- 活动模型：{label}（{model.source}）；{counts}。"
+    return "- 活动模型：尚未登记。"
+
+
+def _constraint_lines(constraints: Sequence[Any]) -> list[str]:
+    lines: list[str] = []
+    for item in constraints[:4]:
+        source = "模型数据" if item.source_kind == "model" else item.source_kind
+        if item.quantity == "bus.vm_pu" and item.lower is not None and item.upper is not None:
+            lines.append(f"- 母线电压约束：{item.lower:g}–{item.upper:g} {item.unit}（{source}）。")
+        elif item.upper is not None:
+            lines.append(f"- {_constraint_label(item.quantity)}：≤{item.upper:g} {item.unit}（{source}）。")
+        elif item.lower is not None:
+            lines.append(f"- {_constraint_label(item.quantity)}：≥{item.lower:g} {item.unit}（{source}）。")
+    return lines
+
+
+def _constraint_label(quantity: str) -> str:
+    return {"branch.loading_percent": "支路负载约束"}.get(quantity, quantity)
+
+
+def _calculation_lines(calculations: Sequence[Any]) -> list[str]:
+    status_labels = {"converged": "已收敛", "succeeded": "已完成", "partial": "部分完成", "failed": "失败"}
+    return [
+        f"- {_calculation_label(item.kind)}：{status_labels.get(item.status, item.status)}。"
+        for item in calculations[:4]
     ]
+
+
+def _calculation_label(kind: str) -> str:
+    return {
+        "powerflow.ac": "交流潮流",
+        "contingency.n_minus_one": "N-1 静态校核",
+    }.get(kind, kind)
+
+
+def _scenario_lines(scenarios: Sequence[Any]) -> list[str]:
+    status_labels = {"succeeded": "完成", "non_converged": "未收敛", "failed": "失败"}
+    return [
+        f"- 场景 {_scenario_label(item.kind)}：{status_labels.get(item.status, item.status)}。"
+        for item in scenarios[:4]
+    ]
+
+
+def _scenario_label(kind: str) -> str:
+    return {"single_branch_outage": "单支路停运"}.get(kind, kind)
 
 
 def _render_trace_steps(steps: Sequence[_TraceStep]) -> list[str]:

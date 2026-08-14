@@ -108,6 +108,53 @@ class FakeProjector:
                     },
                 )
             )
+            self.store.append(
+                ContextEventDraft(
+                    event_type="domain.state.projected",
+                    turn_id=turn_id,
+                    capability="analysis.powerflow.ac.run",
+                    payload={
+                        "projector": "powerflow-ac-v1",
+                        "model": {
+                            "context_ref": BASELINE_REF,
+                            "revision_ref": REVISION_REF,
+                            "model_id": "ieee39",
+                            "source": "pandapower.networks.case39",
+                            "counts": {"bus": 39},
+                        },
+                        "constraints": [
+                            {
+                                "constraint_ref": "constraint:sha256:" + "8" * 64,
+                                "context_ref": BASELINE_REF,
+                                "revision_ref": REVISION_REF,
+                                "quantity": "bus.vm_pu",
+                                "subject_kind": "bus",
+                                "lower": 0.94,
+                                "upper": 1.06,
+                                "unit": "p.u.",
+                                "applies_to_count": 39,
+                                "source_kind": "model",
+                                "source_ref": "model:test",
+                                "source": {"table": "bus"},
+                                "producer_capability": "analysis.powerflow.ac.run",
+                                "producer_turn_id": turn_id,
+                            }
+                        ],
+                        "calculations": [
+                            {
+                                "result_ref": event["result_ref"],
+                                "kind": "powerflow.ac",
+                                "context_ref": BASELINE_REF,
+                                "revision_ref": REVISION_REF,
+                                "status": "converged",
+                                "artifact_path": "evidence/results/powerflow.json",
+                                "producer_capability": "analysis.powerflow.ac.run",
+                                "producer_turn_id": turn_id,
+                            }
+                        ],
+                    },
+                )
+            )
         if event.get("type") == "fake_consume":
             self.store.append(
                 ContextEventDraft(
@@ -213,6 +260,10 @@ def test_runner_reuses_one_pi_process_and_injects_finalized_prior_context(runner
     assert len(runner_harness.pi.prompts) == 2
     assert "运行交流潮流" in runner_harness.pi.prompts[0]
     assert RESULT_REF in runner_harness.pi.prompts[1]
+    assert '"active_model"' in runner_harness.pi.prompts[1]
+    assert '"model_id":"ieee39"' in runner_harness.pi.prompts[1]
+    assert '"quantity":"bus.vm_pu"' in runner_harness.pi.prompts[1]
+    assert "后续指令省略模型、场景或结果时" in runner_harness.pi.prompts[1]
     assert outcome.status == "completed"
     assert runner_harness.store.snapshot.turns[1].consumed_refs == [RESULT_REF]
 
