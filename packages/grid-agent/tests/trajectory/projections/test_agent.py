@@ -145,3 +145,35 @@ def test_agent_projection_nests_retries_under_the_request() -> None:
     assert [(retry.attempt, retry.status) for retry in request.retries] == [
         (1, "running")
     ]
+
+
+def test_agent_projection_interrupts_every_open_descendant_when_analysis_closes() -> None:
+    events = (
+        Event(1, "turn.started", RunScope(turn_id="turn-1"), {"ordinal": 1}),
+        Event(2, "step.started", RunScope(turn_id="turn-1", step_id="step-1")),
+        Event(
+            3,
+            "model.request.started",
+            RunScope(turn_id="turn-1", step_id="step-1", request_id="request-1"),
+        ),
+        Event(
+            4,
+            "tool.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-1",
+                request_id="request-1",
+                tool_call_id="call-1",
+            ),
+            {"capability": "context.open"},
+        ),
+        Event(5, "analysis.completed", payload={}),
+    )
+
+    turn = project_agent(events).turns[0]
+
+    assert turn.status == "interrupted"
+    assert turn.steps[0].status == "interrupted"
+    assert turn.steps[0].request is not None
+    assert turn.steps[0].request.status == "interrupted"
+    assert turn.steps[0].request.tools[0].status == "interrupted"

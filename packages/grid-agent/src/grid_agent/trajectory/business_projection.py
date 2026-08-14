@@ -72,9 +72,9 @@ def _verified_result_node(
 ) -> BusinessNode:
     references = (*event.refs.produced, *event.refs.evidence)
     documents = tuple(artifacts.verify(reference) for reference in references)
-    if not documents or not any(
-        getattr(document, "authority", None) == "gridctl"
-        and getattr(document, "integrity", None) == "verified"
+    if not documents or any(
+        getattr(document, "authority", None) != "gridctl"
+        or getattr(document, "integrity", None) != "verified"
         for document in documents
     ):
         raise ProjectionIntegrityError(
@@ -92,12 +92,26 @@ def _verified_result_node(
     )
 
 
+def _is_verified_result_capability(capability: str) -> bool:
+    """Return whether a completed tool can establish a simulator result fact."""
+    return capability.startswith(("analysis.", "result."))
+
+
+def _accepted_submissions(events: Sequence[ReplayEventLike]) -> dict[str, int]:
+    return {
+        str(_payload(event)["submission_id"]): event.sequence
+        for event in events
+        if event.event_type == "answer.submitted"
+    }
+
+
 def project_business(
     events: Sequence[ReplayEventLike], artifacts: ArtifactResolver
 ) -> BusinessTrajectory:
     """Project only explicit lifecycle/declaration records; answer prose is ignored."""
     problems: OrderedDict[str, list[BusinessNode]] = OrderedDict()
     analysis_id = events[0].analysis_id if events else "empty-analysis"
+    accepted_submissions = _accepted_submissions(events)
     for event in events:
         nodes = _problem_for(problems, event)
         if nodes is None:
@@ -115,12 +129,14 @@ def project_business(
                     detail=str(payload["next_action"]),
                 )
             )
-        elif event.event_type == "business.claim.declared":
+        elif event.event_type == "business.claim.declared" and (
+            submission_sequence := accepted_submissions.get(str(payload["submission_id"]))
+        ) is not None:
             nodes.append(
                 BusinessNode(
                     id=f"business:{event.analysis_id}:{event.sequence}:claim",
                     source="agent-declared",
-                    source_sequences=(event.sequence,),
+                    source_sequences=(event.sequence, submission_sequence),
                     status="completed",
                     kind="claim",
                     title=str(payload["statement"]),
@@ -164,7 +180,11 @@ def project_business(
                     refs=tuple((*event.refs.produced, *event.refs.evidence)),
                 )
             )
-            if status == "completed" and (event.refs.produced or event.refs.evidence):
+            if (
+                status == "completed"
+                and _is_verified_result_capability(capability)
+                and (event.refs.produced or event.refs.evidence)
+            ):
                 nodes.append(_verified_result_node(event, artifacts))
         elif event.event_type in {
             "turn.failed",

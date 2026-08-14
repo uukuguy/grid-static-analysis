@@ -217,6 +217,8 @@ def _request_for(
 
 
 def _interrupt_open_turn(turn: _TurnState) -> None:
+    if turn.terminal is None:
+        turn.status = "interrupted"
     for step in turn.steps.values():
         if step.terminal is None:
             step.status = "interrupted"

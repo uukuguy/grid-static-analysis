@@ -94,7 +94,17 @@ def q7_events() -> tuple[Event, ...]:
 
 
 def test_business_projection_separates_declared_derived_and_observed() -> None:
-    trajectory = project_business(q7_events(), Artifacts())
+    events = (
+        *q7_events(),
+        Event(
+            6,
+            "answer.submitted",
+            RunScope(turn_id="turn-7"),
+            {"submission_id": "claim-1", "artifact_ref": "artifact:answer"},
+        ),
+    )
+
+    trajectory = project_business(events, Artifacts())
 
     assert [node.source for node in trajectory.problems[0].nodes] == [
         "agent-declared",
@@ -108,6 +118,7 @@ def test_business_projection_separates_declared_derived_and_observed() -> None:
     )
     assert derived.rule_id == "context-state-delta/v1"
     assert derived.source_sequences == (4,)
+    assert trajectory.problems[0].nodes[-1].source_sequences == (5, 6)
     assert trajectory.problems[0].nodes[1].title == "运行交流潮流计算"
 
 
@@ -129,4 +140,48 @@ def test_business_projection_does_not_infer_nodes_from_answer_text() -> None:
 
     trajectory = project_business(events, Artifacts())
 
-    assert len(trajectory.problems[0].nodes) == 5
+    assert len(trajectory.problems[0].nodes) == 4
+
+
+def test_business_projection_accepts_claim_only_after_matching_submission() -> None:
+    events = (
+        *q7_events(),
+        Event(
+            6,
+            "answer.submitted",
+            RunScope(turn_id="turn-7"),
+            {"submission_id": "other-submission", "artifact_ref": "artifact:answer"},
+        ),
+    )
+
+    trajectory = project_business(events, Artifacts())
+
+    assert all(node.kind != "claim" for node in trajectory.problems[0].nodes)
+
+
+def test_business_projection_requires_every_verified_result_ref_to_be_verified() -> None:
+    class MixedArtifacts(Artifacts):
+        def verify(self, reference: str) -> Document:
+            if reference == "artifact:evidence":
+                return Document(authority="gridctl", integrity="tampered")
+            return super().verify(reference)
+
+    with pytest.raises(ProjectionIntegrityError, match="verified simulator artifact"):
+        project_business(q7_events(), MixedArtifacts())
+
+
+def test_business_projection_filters_non_simulator_tool_from_verified_results() -> None:
+    events = (
+        Event(1, "turn.started", RunScope(turn_id="turn-7"), {"ordinal": 7}),
+        Event(
+            2,
+            "tool.completed",
+            RunScope(turn_id="turn-7"),
+            {"capability": "grid_guide_open", "ok": True},
+            EventRefs(produced=("artifact:guide",)),
+        ),
+    )
+
+    nodes = project_business(events, Artifacts()).problems[0].nodes
+
+    assert [node.kind for node in nodes] == ["tool-action"]
