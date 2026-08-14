@@ -24,3 +24,12 @@ def test_model_constraints_do_not_publish_project_policy(grid, context_ref: str)
 
     assert "policy" not in result
     assert all(item["source"]["kind"] == "model" for item in result["constraints"])
+
+
+def test_model_constraint_evidence_can_be_read_back(grid, context_ref: str) -> None:
+    result = grid.call("model.constraints.describe", {"context_ref": context_ref})
+
+    loaded = grid.call("evidence.get", {"evidence_ref": result["evidence_refs"][0]})
+
+    assert loaded["document"]["capability_id"] == "model.constraints.describe"
+    assert loaded["document"]["facts"]["constraints"] == result["constraints"]

@@ -355,3 +355,52 @@ def test_rpc_surfaces_provider_error_from_agent_end(tmp_path: Path) -> None:
             client.prompt_and_wait("question")
     finally:
         client.stop()
+
+
+def test_rpc_waits_for_pi_auto_retry_after_transient_provider_error(tmp_path: Path) -> None:
+    client, _workspace = scripted_rpc_client(
+        tmp_path,
+        events=[
+            {"type": "response", "command": "prompt", "success": True},
+            {"type": "text_delta", "text": "不完整输出"},
+            {
+                "type": "agent_end",
+                "willRetry": True,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [],
+                        "stopReason": "error",
+                        "errorMessage": "terminated",
+                    }
+                ],
+            },
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "delayMs": 0,
+                "errorMessage": "terminated",
+            },
+            {"type": "text_delta", "text": "重试后回答"},
+            {
+                "type": "agent_end",
+                "willRetry": False,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "重试后回答"}],
+                        "stopReason": "stop",
+                    }
+                ],
+            },
+            {"type": "auto_retry_end", "success": True, "attempt": 2},
+            {"type": "agent_settled"},
+        ],
+    )
+
+    client.start()
+    try:
+        assert client.prompt_and_wait("question") == "重试后回答"
+    finally:
+        client.stop()

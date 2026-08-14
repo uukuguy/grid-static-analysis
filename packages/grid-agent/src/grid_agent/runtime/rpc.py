@@ -14,7 +14,18 @@ from grid_agent.runtime.environment import PiLaunch
 
 
 SemanticEventCallback = Callable[[dict[str, Any], int], None]
-TRACEABLE_RPC_TYPES = frozenset({"prompt_ack", "response", "tool_execution_start", "tool_execution_end", "agent_end"})
+TRACEABLE_RPC_TYPES = frozenset(
+    {
+        "prompt_ack",
+        "response",
+        "tool_execution_start",
+        "tool_execution_end",
+        "agent_end",
+        "agent_settled",
+        "auto_retry_start",
+        "auto_retry_end",
+    }
+)
 
 
 class RpcWorkspace(Protocol):
@@ -100,11 +111,16 @@ class PiRpcClient:
             if event.get("type") == "agent_end":
                 if not acknowledged:
                     raise PiProtocolError("Pi agent ended before prompt acknowledgement")
+                provider_error = _provider_error(event)
+                if provider_error:
+                    if event.get("willRetry") is True:
+                        # agent_end closes one low-level attempt.  Pi may
+                        # still retry this prompt before agent_settled.
+                        text.clear()
+                        continue
+                    raise PiProtocolError(f"Pi provider failure: {provider_error}")
                 answer = "".join(text)
                 if not answer.strip():
-                    provider_error = _provider_error(event)
-                    if provider_error:
-                        raise PiProtocolError(f"Pi provider failure: {provider_error}")
                     if not require_answer_text:
                         return ""
                     raise PiProtocolError("Pi agent ended without answer text")
@@ -158,6 +174,22 @@ def _semantic_trace_payloads(event: dict[str, Any], assembled_public_text: str, 
     event_type = event.get("type")
     if event_type in {"prompt_ack", "response"}:
         return (_acknowledgement_event(event),)
+    if event_type in {"agent_settled", "auto_retry_start", "auto_retry_end"}:
+        return (
+            {
+                key: event[key]
+                for key in (
+                    "type",
+                    "attempt",
+                    "maxAttempts",
+                    "delayMs",
+                    "success",
+                    "finalError",
+                    "errorMessage",
+                )
+                if key in event
+            },
+        )
     if event_type == "tool_execution_start":
         start = _canonical_tool_start_event(event)
         pending = {
