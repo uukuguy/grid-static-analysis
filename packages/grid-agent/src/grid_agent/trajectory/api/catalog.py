@@ -94,7 +94,7 @@ class TrajectoryRunCatalog:
             native = AnalysisManifest.model_validate_json(raw)
         except ValidationError:
             native = None
-        if native is not None:
+        if native is not None and "events_path" in native.model_fields_set:
             if native.analysis_id != directory_id or not ANALYSIS_ID.fullmatch(native.analysis_id):
                 raise ValueError("manifest identity does not match run directory")
             if native.schema_version != NATIVE_MANIFEST_SCHEMA:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -31,14 +33,20 @@ class AnalysisManifest(_StrictModel):
 
 
 class LegacyV02Manifest(BaseModel):
-    """The compatible identity subset of an immutable v0.2 manifest."""
+    """The fixed compatible shape of an immutable v0.2 manifest."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
+    schema_version: Literal["grid-agent-analysis-manifest/1.0"] | None = None
     analysis_id: str = Field(min_length=1)
     status: str | None = None
     started_at: str | None = None
+    completed_turns: int | None = Field(default=None, ge=0)
     total_turns: int | None = Field(default=None, ge=0)
+    report_path: str | None = None
+    context_path: str | None = None
+    context_events_path: str | None = None
+    context_available: bool | None = None
 
 
 class RunSummary(_StrictModel):

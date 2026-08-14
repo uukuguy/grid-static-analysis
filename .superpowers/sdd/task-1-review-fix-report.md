@@ -29,3 +29,13 @@
 
 - Existing unstaged `.superpowers/sdd/task-5-report.md` and
   `docs/status/JOURNAL.md` changes were preserved.
+
+## Historical Manifest Compatibility
+
+- The legacy manifest model now admits only the known v0.2 metadata fields
+  present in `analysis-20260814T081822Z`; it still forbids arbitrary fields.
+- Native classification requires an explicitly declared native event path, so
+  historical manifests carrying the shared schema label fall through to the
+  fixed legacy layout check when that stream is absent.
+- The immutable historical runs-root probe lists
+  `analysis-20260814T081822Z` as `legacy-v0.2` without modifying source data.

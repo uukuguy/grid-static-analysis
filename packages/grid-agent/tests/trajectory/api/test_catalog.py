@@ -59,6 +59,37 @@ def write_v02_run(root: Path) -> Path:
     return root
 
 
+def write_historical_v02_run(root: Path) -> Path:
+    write_json(
+        root / "manifest.json",
+        {
+            "analysis_id": root.name,
+            "completed_turns": 9,
+            "context_available": True,
+            "context_events_path": "context/context-events.jsonl",
+            "context_path": "context/analysis-context.json",
+            "report_path": "report.md",
+            "schema_version": "grid-agent-analysis-manifest/1.0",
+            "status": "completed",
+            "total_turns": 9,
+        },
+    )
+    write_json(
+        root / "context/context-events.jsonl",
+        {
+            "analysis_id": root.name,
+            "sequence": 1,
+            "event_type": "analysis.completed",
+            "payload": {},
+        },
+    )
+    write_json(
+        root / "trace/events.jsonl",
+        {"sequence": 1, "event": "tool_result", "payload": {}},
+    )
+    return root
+
+
 class FakeProjectionService:
     def __init__(self) -> None:
         self.opened: list[Path] = []
@@ -104,9 +135,36 @@ def test_catalog_accepts_current_native_manifest_fields(tmp_path: Path) -> None:
     assert manifest.trajectory_schema_version == "grid-run-event/1.0"
 
 
+def test_catalog_accepts_historical_v02_manifest_shape(tmp_path: Path) -> None:
+    root = write_historical_v02_run(tmp_path / "runs/analysis-20260814T081822Z")
+
+    manifest, source_kind = TrajectoryRunCatalog._load_manifest(root, root.name)
+
+    assert source_kind == "legacy-v0.2"
+    assert manifest.completed_turns == 9
+    assert manifest.context_available is True
+
+
 def test_catalog_ignores_manifest_only_legacy_lookalike(tmp_path: Path) -> None:
     root = tmp_path / "runs/analysis-legacy"
     write_json(root / "manifest.json", {"analysis_id": root.name, "total_turns": 2})
+
+    catalog = TrajectoryRunCatalog(tmp_path / "runs", tmp_path / "cache", fake_projection_service())
+
+    assert catalog.list_runs() == ()
+    with pytest.raises(RunNotFoundError):
+        catalog.open(root.name)
+
+
+def test_catalog_rejects_legacy_manifest_with_unknown_metadata(tmp_path: Path) -> None:
+    root = write_historical_v02_run(tmp_path / "runs/analysis-legacy")
+    write_json(
+        root / "manifest.json",
+        {
+            **json.loads((root / "manifest.json").read_text(encoding="utf-8")),
+            "untrusted_metadata": "must not be accepted",
+        },
+    )
 
     catalog = TrajectoryRunCatalog(tmp_path / "runs", tmp_path / "cache", fake_projection_service())
 
