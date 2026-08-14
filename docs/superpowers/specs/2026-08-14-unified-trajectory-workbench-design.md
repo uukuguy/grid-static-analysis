@@ -473,7 +473,7 @@ The Evidence tab starts with an accessible relationship tree/table rather than r
 
 ### 11.6 Interaction and visual quality
 
-The implementation must meet or exceed the DeepSeek Harness trajectory UI in information hierarchy, density, polish, and state handling. Required behavior includes:
+The implementation must meet or exceed the DeepSeek Harness trajectory UI in information hierarchy, density, polish, and state handling. The approved, versioned visual baseline is `docs/superpowers/mockups/2026-08-14-trajectory-workbench.html`. Required behavior includes:
 
 - virtualized rendering with semantic row keys;
 - sequence-cursor history pagination;
@@ -585,7 +585,7 @@ Exact latency budgets belong in the implementation plan after measuring the sele
 - visual regression for dark/light, wide/narrow, loading, partial, corrupt, and unsupported states;
 - stable row selection and scroll after prepend;
 - 100,000-event virtualization fixture;
-- approved workbench mockup used as the visual hierarchy baseline.
+- `docs/superpowers/mockups/2026-08-14-trajectory-workbench.html` used as the visual hierarchy baseline.
 
 ### 15.6 Existing project gates
 

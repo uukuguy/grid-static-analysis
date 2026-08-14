@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grid Agent · Trajectory Workbench</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --panel: #0d1118;
+      --panel-2: #111722;
+      --line: rgba(255,255,255,.075);
+      --line-strong: rgba(255,255,255,.13);
+      --text: #edf2f7;
+      --muted: #8b97a8;
+      --dim: #5f6a79;
+      --accent: #79e0bc;
+      --accent-soft: rgba(121,224,188,.11);
+      --blue: #78aef7;
+      --blue-soft: rgba(120,174,247,.11);
+      --gold: #f1c96c;
+      --gold-soft: rgba(241,201,108,.11);
+      --violet: #bfa1ff;
+      --violet-soft: rgba(191,161,255,.11);
+      --danger: #ff8d91;
+      --radius: 12px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; }
+    button { font: inherit; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: 52px 1fr; }
+    .topbar {
+      display: flex; align-items: center; gap: 18px; padding: 0 18px;
+      border-bottom: 1px solid var(--line); background: rgba(10,14,20,.94);
+      backdrop-filter: blur(16px); position: sticky; top: 0; z-index: 20;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 660; letter-spacing: -.01em; white-space: nowrap; }
+    .brandmark { width: 22px; height: 22px; border-radius: 7px; border: 1px solid rgba(121,224,188,.5); display: grid; place-items: center; background: var(--accent-soft); }
+    .brandmark::before { content: ""; width: 8px; height: 8px; border: 1.5px solid var(--accent); transform: rotate(45deg); }
+    .crumb { color: var(--muted); display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .crumb b { color: #cfd7e3; font-weight: 540; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .spacer { flex: 1; }
+    .live-pill, .version { border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 9px; color: var(--muted); font: 11px var(--mono); }
+    .live-pill { color: var(--accent); background: var(--accent-soft); border-color: rgba(121,224,188,.25); }
+    .shell { min-height: 0; display: grid; grid-template-columns: 232px minmax(600px, 1fr) 360px; }
+    .sidebar { border-right: 1px solid var(--line); background: #0a0e14; padding: 14px 10px; min-height: 0; }
+    .eyebrow { color: var(--dim); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
+    .sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 12px; }
+    .icon-btn { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 7px; }
+    .run { padding: 11px 10px; border: 1px solid transparent; border-radius: 9px; margin-bottom: 5px; cursor: pointer; }
+    .run:hover { background: rgba(255,255,255,.025); }
+    .run.active { background: var(--panel-2); border-color: var(--line-strong); box-shadow: inset 2px 0 var(--accent); }
+    .run-title { display: flex; justify-content: space-between; gap: 8px; font-weight: 560; }
+    .run-title span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .run-meta { color: var(--dim); font-size: 11px; margin-top: 6px; display: flex; gap: 8px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); display: inline-block; }
+    .main { min-width: 0; background: var(--bg); overflow: auto; }
+    .run-header { padding: 22px 24px 0; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(19,26,37,.55), rgba(8,11,16,0)); }
+    .title-row { display: flex; gap: 16px; align-items: flex-start; }
+    h1 { font-size: 19px; margin: 0; letter-spacing: -.02em; font-weight: 650; }
+    .subline { color: var(--muted); margin-top: 7px; display: flex; flex-wrap: wrap; gap: 7px 14px; font-size: 12px; }
+    .subline code { font-family: var(--mono); color: #aeb8c6; }
+    .metric-strip { margin-left: auto; display: flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: rgba(13,17,24,.65); }
+    .metric { padding: 8px 12px; min-width: 76px; border-left: 1px solid var(--line); }
+    .metric:first-child { border-left: 0; }
+    .metric strong { display: block; font: 600 14px var(--mono); }
+    .metric span { color: var(--dim); font-size: 10px; }
+    .overview { height: 72px; margin-top: 19px; display: flex; align-items: flex-end; gap: 4px; position: relative; }
+    .overview::before { content: ""; position: absolute; left: 0; right: 0; top: 12px; height: 1px; background: var(--line); }
+    .segment { height: 34px; flex: var(--w); min-width: 22px; border-radius: 5px; background: #1b2431; border: 1px solid var(--line); position: relative; cursor: pointer; transition: transform .14s, border .14s; }
+    .segment:hover { transform: translateY(-2px); border-color: rgba(121,224,188,.35); }
+    .segment.active { background: var(--accent-soft); border-color: rgba(121,224,188,.5); }
+    .segment::after { content: attr(data-q); position: absolute; left: 7px; top: 8px; font: 10px var(--mono); color: var(--muted); }
+    .segment .ticks { position: absolute; left: 5px; right: 5px; bottom: 4px; display: flex; gap: 2px; }
+    .segment i { height: 2px; flex: 1; border-radius: 2px; background: var(--blue); opacity: .8; }
+    .segment i.tool { background: var(--gold); }
+    .tabs { display: flex; gap: 22px; height: 42px; margin-top: 4px; }
+    .tab { border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); padding: 0; cursor: pointer; }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .content { padding: 22px 24px 60px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+    .section-heading h2 { margin: 0; font-size: 13px; font-weight: 640; }
+    .section-heading span { color: var(--dim); font-size: 11px; }
+    .question-card { border: 1px solid var(--line-strong); background: var(--panel); border-radius: var(--radius); overflow: hidden; }
+    .question-head { padding: 15px 17px; display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid var(--line); }
+    .q-index { color: var(--accent); font: 600 12px var(--mono); }
+    .question-text { font-size: 14px; font-weight: 570; line-height: 1.5; }
+    .question-status { margin-left: auto; color: var(--accent); font-size: 11px; white-space: nowrap; }
+    .journey { padding: 6px 16px 16px 30px; }
+    .step { position: relative; display: grid; grid-template-columns: 116px 1fr auto; gap: 12px; padding: 14px 0 14px 18px; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .step:last-child { border-bottom: 0; }
+    .step::before { content: ""; position: absolute; left: -8px; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+    .step::after { content: ""; position: absolute; left: -12px; top: 19px; width: 7px; height: 7px; border-radius: 50%; background: var(--panel); border: 1.5px solid var(--step-color, var(--muted)); box-shadow: 0 0 0 4px var(--panel); }
+    .step:hover, .step.selected { margin-left: -8px; padding-left: 26px; padding-right: 8px; background: rgba(255,255,255,.018); }
+    .step.selected { border-radius: 7px; background: var(--blue-soft); }
+    .step.selected::before { left: 0; }
+    .step.selected::after { left: -4px; }
+    .source { font: 10px var(--mono); color: var(--step-color, var(--muted)); text-transform: uppercase; padding-top: 2px; }
+    .step-title { font-weight: 570; line-height: 1.4; }
+    .step-detail { color: var(--muted); line-height: 1.45; font-size: 12px; margin-top: 5px; }
+    .step-time { color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
+    .badge-row { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+    .badge { border: 1px solid var(--line); border-radius: 999px; padding: 3px 7px; color: #a9b3c1; font: 10px var(--mono); background: rgba(255,255,255,.018); }
+    .badge.evidence { color: var(--accent); border-color: rgba(121,224,188,.2); background: var(--accent-soft); }
+    .observed { --step-color: var(--blue); }
+    .declared { --step-color: var(--violet); }
+    .derived { --step-color: var(--gold); }
+    .answer { --step-color: var(--accent); }
+    .right { border-left: 1px solid var(--line); background: #0b0f15; min-width: 0; overflow: auto; }
+    .inspector-head { height: 52px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--line); position: sticky; top: 52px; background: rgba(11,15,21,.96); backdrop-filter: blur(14px); z-index: 10; }
+    .inspector-head strong { font-size: 12px; }
+    .seq { margin-left: auto; color: var(--dim); font: 10px var(--mono); }
+    .inspector { padding: 16px; }
+    .context-diff { display: grid; grid-template-columns: 1fr 22px 1fr; align-items: center; border: 1px solid var(--line); border-radius: 9px; padding: 12px; background: var(--panel); }
+    .rev strong { display: block; font: 600 15px var(--mono); }
+    .rev span { color: var(--dim); font-size: 10px; }
+    .arrow { color: var(--accent); text-align: center; }
+    .inspect-section { padding: 16px 0; border-bottom: 1px solid var(--line); }
+    .inspect-section:last-child { border-bottom: 0; }
+    .inspect-section h3 { margin: 0 0 10px; color: #c6d0dc; font-size: 11px; font-weight: 620; }
+    .kv { display: grid; grid-template-columns: 94px minmax(0,1fr); gap: 8px; margin: 7px 0; }
+    .kv dt { color: var(--dim); }
+    .kv dd { margin: 0; color: #b9c3cf; min-width: 0; overflow-wrap: anywhere; }
+    .kv code { font: 10px/1.45 var(--mono); color: #a7b6c9; }
+    .delta { display: flex; gap: 9px; padding: 9px 10px; border-radius: 8px; background: var(--gold-soft); border: 1px solid rgba(241,201,108,.15); margin: 7px 0; }
+    .delta .op { color: var(--gold); font: 700 12px var(--mono); }
+    .delta b { display: block; font-size: 11px; font-weight: 590; }
+    .delta span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .artifact { display: flex; align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; margin-top: 7px; background: rgba(255,255,255,.014); }
+    .artifact-icon { width: 26px; height: 26px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font: 10px var(--mono); }
+    .artifact b { font-size: 10px; font-weight: 560; display: block; }
+    .artifact span { color: var(--dim); font: 9px var(--mono); }
+    .approval { position: fixed; left: 250px; bottom: 18px; z-index: 30; display: flex; gap: 8px; }
+    .choice { border: 1px solid rgba(121,224,188,.28); background: #13201e; color: var(--accent); padding: 9px 13px; border-radius: 8px; cursor: pointer; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+    .choice.secondary { border-color: var(--line-strong); background: #121720; color: #a8b2bf; }
+    .choice.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .placeholder-panel { padding: 28px; border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--muted); line-height: 1.7; }
+    @media (max-width: 1120px) { .shell { grid-template-columns: 190px minmax(520px,1fr); } .right { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brandmark"></span>Grid Agent</div>
+      <div class="crumb"><span>/</span><span>Trajectory</span><span>/</span><b>analysis-20260814T081822Z</b></div>
+      <div class="spacer"></div>
+      <span class="live-pill">● REPLAY</span>
+      <span class="version">v0.2 · schema 1.0</span>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-head"><span class="eyebrow">Runs</span><button class="icon-btn">⌕</button></div>
+        <div class="run active">
+          <div class="run-title"><span>analysis-20260814T081822Z</span><span class="status-dot"></span></div>
+          <div class="run-meta"><span>9 / 9</span><span>DeepSeek</span><span>今天</span></div>
+        </div>
+        <div class="run">
+          <div class="run-title"><span>critical-line-outage</span><span class="status-dot"></span></div>
+          <div class="run-meta"><span>1 / 1</span><span>scripted</span></div>
+        </div>
+        <div class="run">
+          <div class="run-title"><span>top-five-line-loading</span><span class="status-dot"></span></div>
+          <div class="run-meta"><span>1 / 1</span><span>offline</span></div>
+        </div>
+        <div style="margin:22px 8px 8px" class="eyebrow">Saved views</div>
+        <div class="run"><div class="run-title"><span>含越限结论</span><span style="color:var(--dim)">3</span></div></div>
+        <div class="run"><div class="run-title"><span>含诊断事件</span><span style="color:var(--dim)">2</span></div></div>
+      </aside>
+
+      <main class="main">
+        <section class="run-header">
+          <div class="title-row">
+            <div>
+              <h1>IEEE-39 连续静态分析</h1>
+              <div class="subline">
+                <span><code>deepseek-v4-flash</code></span><span>pandapower 3.4.0</span><span>grid-capability 1.0</span><span>完整性已验证</span>
+              </div>
+            </div>
+            <div class="metric-strip">
+              <div class="metric"><strong>9/9</strong><span>完成</span></div>
+              <div class="metric"><strong>36</strong><span>工具调用</span></div>
+              <div class="metric"><strong>118</strong><span>业务事件</span></div>
+            </div>
+          </div>
+          <div class="overview" aria-label="运行概览时间线">
+            <div class="segment" style="--w:1.2" data-q="Q1"><div class="ticks"><i></i><i class="tool"></i><i class="tool"></i></div></div>
+            <div class="segment" style="--w:.65" data-q="Q2"><div class="ticks"><i></i><i class="tool"></i></div></div>
+            <div class="segment" style="--w:.8" data-q="Q3"><div class="ticks"><i></i><i class="tool"></i></div></div>
+            <div class="segment" style="--w:.65" data-q="Q4"><div class="ticks"><i></i></div></div>
+            <div class="segment" style="--w:.7" data-q="Q5"><div class="ticks"><i></i><i class="tool"></i></div></div>
+            <div class="segment" style="--w:1.3" data-q="Q6"><div class="ticks"><i></i><i class="tool"></i><i class="tool"></i></div></div>
+            <div class="segment active" style="--w:1.25" data-q="Q7"><div class="ticks"><i></i><i class="tool"></i><i class="tool"></i><i></i></div></div>
+            <div class="segment" style="--w:2.4" data-q="Q8"><div class="ticks"><i></i><i class="tool"></i><i class="tool"></i><i class="tool"></i></div></div>
+            <div class="segment" style="--w:1.4" data-q="Q9"><div class="ticks"><i></i><i class="tool"></i><i></i></div></div>
+          </div>
+          <nav class="tabs">
+            <button class="tab active" data-tab="business">业务轨迹</button>
+            <button class="tab" data-tab="agent">Agent 轨迹</button>
+            <button class="tab" data-tab="context">上下文</button>
+            <button class="tab" data-tab="evidence">证据</button>
+          </nav>
+        </section>
+
+        <section class="content">
+          <div class="panel active" id="business">
+            <div class="section-heading"><h2>问题 7 · 解题过程</h2><span>20.87 s · context r59 → r78</span></div>
+            <article class="question-card">
+              <div class="question-head">
+                <span class="q-index">Q7</span>
+                <div class="question-text">对线路 17 开展 N-1 校核</div>
+                <span class="question-status">✓ 已完成</span>
+              </div>
+              <div class="journey">
+                <div class="step declared">
+                  <div class="source">agent-declared</div>
+                  <div><div class="step-title">确定校核对象与评价目标</div><div class="step-detail">沿用活动 IEEE-39 模型，对线路 17 执行单支路停运校核，并按模型约束解释风险。</div></div>
+                  <div class="step-time">+0.0s</div>
+                </div>
+                <div class="step observed">
+                  <div class="source">observed</div>
+                  <div><div class="step-title">解析线路 17</div><div class="step-detail">确认线路连接母线 13–14，获得稳定 asset ref。</div><div class="badge-row"><span class="badge">model.element.get</span><span class="badge">1.39 s</span></div></div>
+                  <div class="step-time">+4.1s</div>
+                </div>
+                <div class="step observed selected">
+                  <div class="source">observed</div>
+                  <div><div class="step-title">运行 N-1 单支路开断分析</div><div class="step-detail">潮流收敛；发现 2 条线路过载和 1 个母线电压越上限。</div><div class="badge-row"><span class="badge">analysis.contingency.n_minus_one.run</span><span class="badge evidence">3 evidence</span><span class="badge">1.42 s</span></div></div>
+                  <div class="step-time">+7.3s</div>
+                </div>
+                <div class="step derived">
+                  <div class="source">derived</div>
+                  <div><div class="step-title">上下文投影新增场景与计算</div><div class="step-detail">场景状态、约束判断、result/evidence 关系进入 r78；不改写原始仿真结果。</div></div>
+                  <div class="step-time">+8.9s</div>
+                </div>
+                <div class="step answer">
+                  <div class="source">agent-declared</div>
+                  <div><div class="step-title">结论：N-1 校核不通过</div><div class="step-detail">线路 11 达 132.51%，线路 15 达 102.58%，母线 36 达 1.0636 p.u.；每项结论均绑定证据。</div><div class="badge-row"><span class="badge evidence">3 claims linked</span><span class="badge">answer.submitted</span></div></div>
+                  <div class="step-time">+20.8s</div>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div class="panel" id="agent"><div class="placeholder-panel"><b>Agent 轨迹</b><br/>Turn 7 → Step 1 → model request → 2 tool calls → response → answer submission。实际界面沿用同一 Overview 和 Inspector，但主表切换为 Harness 风格的虚拟化事件账本，支持 TTFT、usage、retry、Input/Output 与 Timing。</div></div>
+          <div class="panel" id="context"><div class="placeholder-panel"><b>上下文时光回放</b><br/>按 sequence 拖动查看 revision 59–78，左侧显示 authoritative state，中央显示 delta，右侧显示该请求实际收到的 immutable model-input artifact。</div></div>
+          <div class="panel" id="evidence"><div class="placeholder-panel"><b>证据关系图</b><br/>从 claim 下钻到 evidence、result、scenario、tool call 与模型 revision；所有数值事实仅来自 gridctl 工件。</div></div>
+        </section>
+      </main>
+
+      <aside class="right">
+        <div class="inspector-head"><strong>上下文与证据</strong><span class="seq">seq 62–78</span></div>
+        <div class="inspector">
+          <div class="context-diff">
+            <div class="rev"><span>BEFORE</span><strong>r59</strong></div><div class="arrow">→</div><div class="rev"><span>AFTER</span><strong>r78</strong></div>
+          </div>
+          <section class="inspect-section">
+            <h3>事件身份</h3>
+            <dl class="kv"><dt>来源</dt><dd><span class="badge">observed</span></dd></dl>
+            <dl class="kv"><dt>Turn / Step</dt><dd><code>t007 / s01</code></dd></dl>
+            <dl class="kv"><dt>Tool call</dt><dd><code>call_00_PzVX…</code></dd></dl>
+            <dl class="kv"><dt>完整性</dt><dd style="color:var(--accent)">verified</dd></dl>
+          </section>
+          <section class="inspect-section">
+            <h3>上下文变化</h3>
+            <div class="delta"><span class="op">+</span><div><b>Scenario · line outage</b><span>线路 17 · completed · IEEE-39 revision 66e156…</span></div></div>
+            <div class="delta"><span class="op">+</span><div><b>Calculation · contingency</b><span>converged · 3 violations · artifact registered</span></div></div>
+            <div class="delta"><span class="op">+</span><div><b>Evidence links · 3</b><span>overload ×2 · voltage high ×1</span></div></div>
+          </section>
+          <section class="inspect-section">
+            <h3>模型实际输入</h3>
+            <div class="artifact"><div class="artifact-icon">CTX</div><div><b>request-context-r59.json</b><span>sha256 · immutable · 18.4 KB</span></div></div>
+          </section>
+          <section class="inspect-section">
+            <h3>结果与证据</h3>
+            <div class="artifact"><div class="artifact-icon">RES</div><div><b>contingency-7abbb2….json</b><span>result · 2.7 KB</span></div></div>
+            <div class="artifact"><div class="artifact-icon">EVD</div><div><b>analysis-evidence-7b900….json</b><span>evidence · verified</span></div></div>
+          </section>
+        </div>
+      </aside>
+    </div>
+
+    <div class="approval">
+      <button class="choice" data-choice="approve-workbench" onclick="toggleSelect(this)">采用此工作台方向</button>
+      <button class="choice secondary" data-choice="revise-workbench" onclick="toggleSelect(this)">需要调整布局/密度</button>
+    </div>
+  </div>
+  <script>
+    document.querySelectorAll('.tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach((item) => item.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab).classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

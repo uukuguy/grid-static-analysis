@@ -6,8 +6,8 @@
 - Current branch: main
 - Theme-level focus: unified agent/business trajectory and full-lifecycle context workbench
 - Project route: direct
-- Canonical worklist: `docs/superpowers/specs/2026-08-14-unified-trajectory-workbench-design.md`
-- Active work package: approved design baseline; implementation plan pending written-spec review
+- Canonical worklist: `docs/superpowers/plans/2026-08-14-unified-trajectory-implementation-roadmap.md`
+- Active work package: approved design and five-plan implementation roadmap; execution mode selection pending
 
 ## Current Architecture
 
@@ -20,7 +20,7 @@
 
 ## Open Problems (theme-level)
 
-- The approved trajectory platform has no implementation plan or selected delivery wave yet.
+- The trajectory platform has not entered implementation; execute the five plans in dependency order, beginning with the event spine.
 - Durable live streaming remains deferred until historical replay semantics are verified.
 
 ## Key Files
@@ -39,6 +39,8 @@
 - `docs/MANUAL-VALIDATION.md` — human acceptance procedure aligned to Makefile
 - `docs/architecture/analysis-context.md` — continuous Analysis context and report architecture
 - `docs/superpowers/specs/2026-08-14-unified-trajectory-workbench-design.md` — approved unified trajectory protocol, projections, importer, API, and workbench contract
+- `docs/superpowers/plans/2026-08-14-unified-trajectory-implementation-roadmap.md` — canonical five-plan delivery order, cross-plan interfaces, and verification gates
+- `docs/superpowers/mockups/2026-08-14-trajectory-workbench.html` — approved durable visual hierarchy baseline
 - `validation/questions/task.md.txt` — canonical provider-backed Analysis instruction set
 - `skills/grid-static-analysis/SKILL.md` — agent operating manual
 
@@ -47,4 +49,4 @@
 1. Read this file, then `RESUME-NEXT-SESSION.md` and the tail of `JOURNAL.md`.
 2. Run `git status --short` and `make doctor`.
 3. Use `make test`, `make test-e2e`, and `make validate` before changing a verified boundary.
-4. Start new work from tag `v0.2`; review the approved trajectory specification before planning implementation and do not revive the retired GSE implementation.
+4. Start new work from tag `v0.2`; read the approved specification and roadmap, then execute `2026-08-14-trajectory-event-spine.md` first. Do not revive the retired GSE implementation.
