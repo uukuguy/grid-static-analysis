@@ -11,6 +11,10 @@ from pathlib import Path
 from threading import Lock
 from typing import BinaryIO
 
+from grid_agent.trajectory.artifacts import (
+    ArtifactIntegrityError,
+    ImmutableArtifactRegistry,
+)
 from grid_agent.trajectory.canonical import canonical_json_bytes
 from grid_agent.trajectory.events import (
     ZERO_PREDECESSOR_HASH,
@@ -52,6 +56,7 @@ class RunEventRecorder:
         events_path: Path,
         analysis_id: str,
         *,
+        artifact_registry: ImmutableArtifactRegistry | None = None,
         secret_values: Iterable[str] = (),
         subscribers: Iterable[Callable[[RunEvent], None]] = (),
     ) -> None:
@@ -59,6 +64,7 @@ class RunEventRecorder:
             raise ValueError("analysis_id must not be empty")
         self.events_path = events_path
         self.analysis_id = analysis_id
+        self._artifact_registry = artifact_registry
         self._secret_values = frozenset(value for value in secret_values if value)
         self._subscribers = tuple(subscribers)
         self._subscriber_failures: list[str] = []
@@ -75,6 +81,7 @@ class RunEventRecorder:
             if self._closed:
                 raise RecorderIntegrityError("trajectory recorder is closed")
             self._reject_prohibited_content(draft.model_dump(mode="json"))
+            self._verify_artifact_references(draft)
             event = build_event(
                 draft,
                 analysis_id=self.analysis_id,
@@ -162,6 +169,50 @@ class RunEventRecorder:
     def _reject_prohibited_content(self, value: object) -> None:
         if self._contains_prohibited_content(value):
             raise RecorderIntegrityError("prohibited content in trajectory event")
+
+    def _verify_artifact_references(self, draft: EventDraft) -> None:
+        references = {
+            reference
+            for reference in (
+                *draft.refs.consumed,
+                *draft.refs.produced,
+                *draft.refs.evidence,
+            )
+            if reference.startswith("artifact:")
+        }
+        references.update(self._payload_artifact_references(draft.payload))
+        if not references:
+            return
+        if self._artifact_registry is None:
+            raise RecorderIntegrityError(
+                "artifact reference is not registered and verified"
+            )
+        for reference in sorted(references):
+            try:
+                self._artifact_registry.verify_reference(reference)
+            except ArtifactIntegrityError as exc:
+                raise RecorderIntegrityError(
+                    f"artifact reference is not registered and verified: {reference}"
+                ) from exc
+
+    @classmethod
+    def _payload_artifact_references(cls, value: object) -> set[str]:
+        references: set[str] = set()
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if (
+                    isinstance(key, str)
+                    and (key == "artifact_ref" or key.endswith("_artifact_ref"))
+                    and isinstance(item, str)
+                ):
+                    references.add(item)
+                references.update(cls._payload_artifact_references(item))
+        elif isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            for item in value:
+                references.update(cls._payload_artifact_references(item))
+        return references
 
     def _contains_prohibited_content(self, value: object) -> bool:
         if isinstance(value, str):

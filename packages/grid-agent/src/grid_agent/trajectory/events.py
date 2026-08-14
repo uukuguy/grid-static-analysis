@@ -222,14 +222,21 @@ class EventDraft(StrictFrozenModel):
 
     @model_validator(mode="after")
     def validate_closed_payload(self) -> "EventDraft":
-        payload_model = PAYLOAD_MODELS[self.event_type]
-        payload = payload_model.model_validate(self.payload).model_dump(mode="json")
-        object.__setattr__(self, "payload", payload)
+        object.__setattr__(
+            self, "payload", _validate_payload(self.event_type, self.payload)
+        )
         return self
 
 
-class RunEvent(EventDraft):
-    schema_version: Literal["grid-run-event/1.0"] = "grid-run-event/1.0"
+class RunEvent(StrictFrozenModel):
+    event_type: EventType
+    scope: RunScope
+    causation: Causation
+    source: EventSource
+    context: ContextBoundary
+    refs: EventRefs
+    payload: dict[str, Any]
+    schema_version: Literal["grid-run-event/1.0"]
     analysis_id: str = Field(min_length=1)
     sequence: int = Field(ge=1)
     timestamp: str = Field(
@@ -237,6 +244,13 @@ class RunEvent(EventDraft):
     )
     previous_event_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     event_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_closed_payload(self) -> "RunEvent":
+        object.__setattr__(
+            self, "payload", _validate_payload(self.event_type, self.payload)
+        )
+        return self
 
     @field_validator("timestamp")
     @classmethod
@@ -256,6 +270,11 @@ class RunEvent(EventDraft):
         if self.sequence > 1 and self.previous_event_hash == ZERO_PREDECESSOR_HASH:
             raise ValueError("zero predecessor seed is only valid for sequence 1")
         return self
+
+
+def _validate_payload(event_type: EventType, payload: dict[str, Any]) -> dict[str, Any]:
+    payload_model = PAYLOAD_MODELS[event_type]
+    return payload_model.model_validate(payload).model_dump(mode="json")
 
 
 def build_event(

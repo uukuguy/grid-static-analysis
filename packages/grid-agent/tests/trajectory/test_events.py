@@ -162,7 +162,13 @@ def test_run_event_rejects_semantically_invalid_canonical_timestamp(
     with pytest.raises(ValidationError, match="valid UTC timestamp"):
         RunEvent(
             event_type="analysis.started",
+            scope=RunScope(),
+            causation=Causation(),
+            source=EventSource(),
+            context=ContextBoundary(),
+            refs=EventRefs(),
             payload={},
+            schema_version="grid-run-event/1.0",
             analysis_id="analysis-test",
             sequence=1,
             timestamp=timestamp,
@@ -194,7 +200,13 @@ def test_run_event_enforces_zero_predecessor_seed_boundaries(
     with pytest.raises(ValidationError, match=message):
         RunEvent(
             event_type="analysis.started",
+            scope=RunScope(),
+            causation=Causation(),
+            source=EventSource(),
+            context=ContextBoundary(),
+            refs=EventRefs(),
             payload={},
+            schema_version="grid-run-event/1.0",
             analysis_id="analysis-test",
             sequence=sequence,
             timestamp="2026-08-14T00:00:00.000000Z",

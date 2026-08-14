@@ -51,6 +51,119 @@ def test_registry_registers_exact_preexisting_bytes(tmp_path: Path) -> None:
     assert registry.verify(pointer).read_bytes() == value
 
 
+@pytest.mark.parametrize(
+    ("kind", "identity", "relative_path"),
+    [
+        (
+            "result",
+            "result:sha256:" + "a" * 64,
+            "evidence/results/powerflow-" + "a" * 64 + ".json",
+        ),
+        (
+            "evidence",
+            "evidence:sha256:" + "b" * 64,
+            "evidence/network-facts/network-fact-" + "b" * 64 + ".json",
+        ),
+        (
+            "tool-result",
+            "analysis-test-t001:call_1",
+            "tool-results/analysis-test-t001/call_1.json",
+        ),
+    ],
+)
+def test_registry_registers_current_run_artifact_kinds_without_rewriting(
+    tmp_path: Path, kind: str, identity: str, relative_path: str
+) -> None:
+    run_root = tmp_path / "run"
+    registry = ImmutableArtifactRegistry(run_root)
+    path = run_root / relative_path
+    path.parent.mkdir(parents=True)
+    value = b'{"preserve":"exact bytes"}\n'
+    path.write_bytes(value)
+
+    pointer = registry.register_existing(kind, identity, path)
+
+    assert pointer.relative_path == relative_path
+    assert registry.verify(pointer).read_bytes() == value
+    assert registry.verify_reference(pointer.ref) == pointer
+
+
+@pytest.mark.parametrize(
+    ("kind", "identity", "relative_path"),
+    [
+        (
+            "result",
+            "result:sha256:" + "a" * 64,
+            "evidence/analysis/powerflow-" + "a" * 64 + ".json",
+        ),
+        (
+            "evidence",
+            "evidence:sha256:" + "b" * 64,
+            "evidence/results/network-fact-" + "b" * 64 + ".json",
+        ),
+        (
+            "tool-result",
+            "analysis-test-t001:call_1",
+            "tool-results/analysis-test-t002/call_1.json",
+        ),
+    ],
+)
+def test_registry_rejects_new_artifact_kinds_outside_registered_layout(
+    tmp_path: Path, kind: str, identity: str, relative_path: str
+) -> None:
+    run_root = tmp_path / "run"
+    registry = ImmutableArtifactRegistry(run_root)
+    path = run_root / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"{}\n")
+
+    with pytest.raises(ArtifactIntegrityError, match="registered path"):
+        registry.register_existing(kind, identity, path)
+
+
+@pytest.mark.parametrize(
+    ("kind", "identity", "relative_path", "symlink_component"),
+    [
+        (
+            "result",
+            "result:sha256:" + "a" * 64,
+            "evidence/results/powerflow-" + "a" * 64 + ".json",
+            "evidence",
+        ),
+        (
+            "evidence",
+            "evidence:sha256:" + "b" * 64,
+            "evidence/network-facts/network-fact-" + "b" * 64 + ".json",
+            "evidence",
+        ),
+        (
+            "tool-result",
+            "analysis-test-t001:call_1",
+            "tool-results/analysis-test-t001/call_1.json",
+            "tool-results",
+        ),
+    ],
+)
+def test_registry_rejects_symlinked_new_artifact_kind_directories(
+    tmp_path: Path,
+    kind: str,
+    identity: str,
+    relative_path: str,
+    symlink_component: str,
+) -> None:
+    run_root = tmp_path / "run"
+    outside = tmp_path / "outside"
+    run_root.mkdir()
+    outside_path = outside / Path(relative_path).relative_to(symlink_component)
+    outside_path.parent.mkdir(parents=True)
+    outside_path.write_bytes(b"{}\n")
+    (run_root / symlink_component).symlink_to(outside, target_is_directory=True)
+    registry = ImmutableArtifactRegistry(run_root)
+
+    with pytest.raises(ArtifactIntegrityError, match="symlink"):
+        registry.register_existing(kind, identity, run_root / relative_path)
+
+
 @pytest.mark.parametrize("identity", ["../escape", "/absolute", "a/b", "a\\b"])
 def test_registry_rejects_unsafe_identity(tmp_path: Path, identity: str) -> None:
     with pytest.raises(ArtifactIntegrityError, match="identity"):

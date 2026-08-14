@@ -249,7 +249,6 @@
     },
     "schema_version": {
       "const": "grid-run-event/1.0",
-      "default": "grid-run-event/1.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -272,6 +271,13 @@
   },
   "required": [
     "event_type",
+    "scope",
+    "causation",
+    "source",
+    "context",
+    "refs",
+    "payload",
+    "schema_version",
     "analysis_id",
     "sequence",
     "timestamp",

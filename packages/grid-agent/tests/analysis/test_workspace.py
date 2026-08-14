@@ -57,3 +57,9 @@ def test_checked_in_trajectory_schema_matches_model() -> None:
     actual = json.loads((root / "schemas/grid-run-event-v1.schema.json").read_text(encoding="utf-8"))
 
     assert actual == RunEvent.model_json_schema()
+
+
+def test_trajectory_schema_requires_every_persisted_envelope_member() -> None:
+    schema = RunEvent.model_json_schema()
+
+    assert set(schema["required"]) == set(schema["properties"])

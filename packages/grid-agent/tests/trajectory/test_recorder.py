@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from grid_agent.trajectory.events import EventDraft, RunScope
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.events import EventDraft, EventRefs, RunScope
 from grid_agent.trajectory.reader import RunEventReader
 from grid_agent.trajectory.recorder import RecorderIntegrityError, RunEventRecorder
 
@@ -86,13 +87,21 @@ def test_recorder_rejects_secret_and_reasoning_fields(tmp_path: Path) -> None:
 
 
 def test_recorder_accepts_model_response_usage_fields(tmp_path: Path) -> None:
-    recorder = RunEventRecorder(tmp_path / "events.jsonl", "analysis-test")
+    registry = ImmutableArtifactRegistry(tmp_path)
+    pointer = registry.write_json(
+        "model-response", "analysis-test-t001-r001", {"content": "answer"}
+    )
+    recorder = RunEventRecorder(
+        tmp_path / "events.jsonl",
+        "analysis-test",
+        artifact_registry=registry,
+    )
 
     event = recorder.append(
         EventDraft(
             event_type="model.response.completed",
             payload={
-                "artifact_ref": "artifact:model-response",
+                "artifact_ref": pointer.ref,
                 "input_tokens": 120,
                 "output_tokens": 45,
             },
@@ -101,6 +110,63 @@ def test_recorder_accepts_model_response_usage_fields(tmp_path: Path) -> None:
 
     assert event.payload["input_tokens"] == 120
     assert event.payload["output_tokens"] == 45
+    assert RunEventReader(recorder.events_path).read_prefix().events == (event,)
+    recorder.close()
+
+
+@pytest.mark.parametrize("reference_location", ["payload", "refs"])
+def test_recorder_rejects_unregistered_artifact_references(
+    tmp_path: Path, reference_location: str
+) -> None:
+    run_root = tmp_path / "run"
+    recorder = RunEventRecorder(
+        run_root / "events/run-events.jsonl",
+        "analysis-test",
+        artifact_registry=ImmutableArtifactRegistry(run_root),
+    )
+    fake_ref = "artifact:sha256:" + "a" * 64
+    draft = (
+        EventDraft(
+            event_type="model.response.completed",
+            payload={"artifact_ref": fake_ref},
+        )
+        if reference_location == "payload"
+        else EventDraft(
+            event_type="analysis.started",
+            refs=EventRefs(produced=(fake_ref,)),
+            payload={},
+        )
+    )
+
+    with pytest.raises(RecorderIntegrityError, match="registered and verified"):
+        recorder.append(draft)
+
+    assert not recorder.events_path.exists()
+    recorder.close()
+
+
+def test_recorder_accepts_registered_digest_verified_artifact_pointer(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    registry = ImmutableArtifactRegistry(run_root)
+    pointer = registry.write_json(
+        "model-response", "analysis-test-t001-r001", {"content": "answer"}
+    )
+    recorder = RunEventRecorder(
+        run_root / "events/run-events.jsonl",
+        "analysis-test",
+        artifact_registry=registry,
+    )
+
+    event = recorder.append(
+        EventDraft(
+            event_type="model.response.completed",
+            payload={"artifact_ref": pointer.ref},
+        )
+    )
+
+    assert event.payload["artifact_ref"] == pointer.ref
     assert RunEventReader(recorder.events_path).read_prefix().events == (event,)
     recorder.close()
 
