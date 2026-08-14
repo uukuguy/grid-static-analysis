@@ -26,6 +26,7 @@
         "result.registered",
         "evidence.registered",
         "fact.verified",
+        "domain.state.projected",
         "tool.failed",
         "answer.submitted",
         "audit.diagnostic.recorded",

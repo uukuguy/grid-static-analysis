@@ -40,6 +40,7 @@ records `analysis_id`, monotonic `sequence`, `previous_revision`,
 - `result.registered`
 - `evidence.registered`
 - `fact.verified`
+- `domain.state.projected`
 - `tool.failed`
 - `answer.submitted`
 - `audit.diagnostic.recorded`
@@ -76,6 +77,10 @@ merged into the active turn. `result.registered` admits a verified result
 artifact whose `revision_ref` matches the active baseline. `evidence.registered`
 admits simulator evidence and links it to known refs. `fact.verified` promotes
 small, model-usable fact statements from verified simulator artifacts only.
+`domain.state.projected` applies a strict capability-produced delta to the
+active model, operating state, constraints, scenarios, calculations,
+capability availability, and artifact index while preserving model revision
+and producer-turn provenance.
 `tool.failed`, `audit.diagnostic.recorded`, and diagnostic
 `limitation.recorded` events preserve failure evidence without inventing an
 answer. `limitation.resolved` removes an unresolved limitation by reference.

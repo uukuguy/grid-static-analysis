@@ -152,7 +152,6 @@ def test_verify_evidence_accepts_generated_ac_and_n1_evidence(tmp_path: Path) ->
         {
             "context_ref": context_ref,
             "branch_refs": [branch_ref],
-            "policy": "static-analysis-v1",
         },
     )
     contingency_evidence_refs = contingency.get("evidence_refs")

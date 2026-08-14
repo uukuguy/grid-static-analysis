@@ -1,5 +1,41 @@
 {
   "$defs": {
+    "ActiveModelState": {
+      "additionalProperties": false,
+      "properties": {
+        "context_ref": {
+          "title": "Context Ref",
+          "type": "string"
+        },
+        "counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Counts",
+          "type": "object"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "revision_ref": {
+          "title": "Revision Ref",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context_ref",
+        "revision_ref",
+        "model_id",
+        "source"
+      ],
+      "title": "ActiveModelState",
+      "type": "object"
+    },
     "ActiveTurn": {
       "additionalProperties": false,
       "properties": {
@@ -48,6 +84,64 @@
       "title": "ActiveTurn",
       "type": "object"
     },
+    "ArtifactState": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_ref": {
+          "title": "Artifact Ref",
+          "type": "string"
+        },
+        "context_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Ref"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "producer_capability": {
+          "title": "Producer Capability",
+          "type": "string"
+        },
+        "producer_turn_id": {
+          "title": "Producer Turn Id",
+          "type": "string"
+        },
+        "revision_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision Ref"
+        }
+      },
+      "required": [
+        "artifact_ref",
+        "kind",
+        "path",
+        "producer_capability",
+        "producer_turn_id"
+      ],
+      "title": "ArtifactState",
+      "type": "object"
+    },
     "BaselineRecord": {
       "additionalProperties": false,
       "properties": {
@@ -82,6 +176,209 @@
         "network"
       ],
       "title": "BaselineRecord",
+      "type": "object"
+    },
+    "CalculationState": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_path": {
+          "title": "Artifact Path",
+          "type": "string"
+        },
+        "context_ref": {
+          "title": "Context Ref",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "producer_capability": {
+          "title": "Producer Capability",
+          "type": "string"
+        },
+        "producer_turn_id": {
+          "title": "Producer Turn Id",
+          "type": "string"
+        },
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        },
+        "revision_ref": {
+          "title": "Revision Ref",
+          "type": "string"
+        },
+        "scenario_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scenario Refs",
+          "type": "array"
+        },
+        "solver": {
+          "additionalProperties": true,
+          "title": "Solver",
+          "type": "object"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "additionalProperties": true,
+          "title": "Summary",
+          "type": "object"
+        }
+      },
+      "required": [
+        "result_ref",
+        "kind",
+        "context_ref",
+        "revision_ref",
+        "status",
+        "artifact_path",
+        "producer_capability",
+        "producer_turn_id"
+      ],
+      "title": "CalculationState",
+      "type": "object"
+    },
+    "CapabilityState": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "enum": [
+            "published",
+            "not_published",
+            "not_applicable",
+            "unavailable",
+            "failed"
+          ],
+          "title": "Availability",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "availability",
+        "reason"
+      ],
+      "title": "CapabilityState",
+      "type": "object"
+    },
+    "ConstraintState": {
+      "additionalProperties": false,
+      "properties": {
+        "applies_to_count": {
+          "title": "Applies To Count",
+          "type": "integer"
+        },
+        "constraint_ref": {
+          "title": "Constraint Ref",
+          "type": "string"
+        },
+        "context_ref": {
+          "title": "Context Ref",
+          "type": "string"
+        },
+        "lower": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lower"
+        },
+        "producer_capability": {
+          "title": "Producer Capability",
+          "type": "string"
+        },
+        "producer_turn_id": {
+          "title": "Producer Turn Id",
+          "type": "string"
+        },
+        "quantity": {
+          "title": "Quantity",
+          "type": "string"
+        },
+        "revision_ref": {
+          "title": "Revision Ref",
+          "type": "string"
+        },
+        "source": {
+          "additionalProperties": true,
+          "title": "Source",
+          "type": "object"
+        },
+        "source_kind": {
+          "enum": [
+            "model",
+            "user",
+            "standard",
+            "task"
+          ],
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "source_ref": {
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "subject_kind": {
+          "title": "Subject Kind",
+          "type": "string"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "upper": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Upper"
+        }
+      },
+      "required": [
+        "constraint_ref",
+        "context_ref",
+        "revision_ref",
+        "quantity",
+        "subject_kind",
+        "unit",
+        "applies_to_count",
+        "source_kind",
+        "source_ref",
+        "producer_capability",
+        "producer_turn_id"
+      ],
+      "title": "ConstraintState",
       "type": "object"
     },
     "DiagnosticRecord": {
@@ -130,6 +427,70 @@
         "message"
       ],
       "title": "DiagnosticRecord",
+      "type": "object"
+    },
+    "DomainState": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ArtifactState"
+          },
+          "title": "Artifacts",
+          "type": "object"
+        },
+        "calculations": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CalculationState"
+          },
+          "title": "Calculations",
+          "type": "object"
+        },
+        "capabilities": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CapabilityState"
+          },
+          "title": "Capabilities",
+          "type": "object"
+        },
+        "constraints": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ConstraintState"
+          },
+          "title": "Constraints",
+          "type": "object"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActiveModelState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "operating_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperatingState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scenarios": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ScenarioState"
+          },
+          "title": "Scenarios",
+          "type": "object"
+        }
+      },
+      "title": "DomainState",
       "type": "object"
     },
     "EvidenceRecord": {
@@ -312,6 +673,57 @@
       "title": "ObservationRecord",
       "type": "object"
     },
+    "OperatingState": {
+      "additionalProperties": false,
+      "properties": {
+        "context_ref": {
+          "title": "Context Ref",
+          "type": "string"
+        },
+        "producer_capability": {
+          "title": "Producer Capability",
+          "type": "string"
+        },
+        "producer_turn_id": {
+          "title": "Producer Turn Id",
+          "type": "string"
+        },
+        "revision_ref": {
+          "title": "Revision Ref",
+          "type": "string"
+        },
+        "scenario_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scenario Ref"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "additionalProperties": true,
+          "title": "Summary",
+          "type": "object"
+        }
+      },
+      "required": [
+        "context_ref",
+        "revision_ref",
+        "status",
+        "producer_capability",
+        "producer_turn_id"
+      ],
+      "title": "OperatingState",
+      "type": "object"
+    },
     "ResultRecord": {
       "additionalProperties": false,
       "properties": {
@@ -368,6 +780,13 @@
     "RuntimeRecord": {
       "additionalProperties": false,
       "properties": {
+        "capability_families": {
+          "items": {
+            "$ref": "#/$defs/CapabilityState"
+          },
+          "title": "Capability Families",
+          "type": "array"
+        },
         "grid_capability_protocol": {
           "title": "Grid Capability Protocol",
           "type": "string"
@@ -392,6 +811,74 @@
         "pandapower_version"
       ],
       "title": "RuntimeRecord",
+      "type": "object"
+    },
+    "ScenarioState": {
+      "additionalProperties": false,
+      "properties": {
+        "changes": {
+          "additionalProperties": true,
+          "title": "Changes",
+          "type": "object"
+        },
+        "context_ref": {
+          "title": "Context Ref",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_scenario_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Scenario Ref"
+        },
+        "producer_capability": {
+          "title": "Producer Capability",
+          "type": "string"
+        },
+        "producer_turn_id": {
+          "title": "Producer Turn Id",
+          "type": "string"
+        },
+        "result_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Result Refs",
+          "type": "array"
+        },
+        "revision_ref": {
+          "title": "Revision Ref",
+          "type": "string"
+        },
+        "scenario_ref": {
+          "title": "Scenario Ref",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scenario_ref",
+        "context_ref",
+        "revision_ref",
+        "kind",
+        "status",
+        "producer_capability",
+        "producer_turn_id"
+      ],
+      "title": "ScenarioState",
       "type": "object"
     },
     "TurnRecord": {
@@ -562,6 +1049,9 @@
       },
       "title": "Diagnostics",
       "type": "array"
+    },
+    "domain_state": {
+      "$ref": "#/$defs/DomainState"
     },
     "evidence": {
       "additionalProperties": {

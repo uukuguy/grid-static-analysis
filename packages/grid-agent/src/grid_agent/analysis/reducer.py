@@ -11,6 +11,8 @@ from grid_agent.analysis.models import (
     AnalysisContext,
     BaselineRecord,
     ContextEventDraft,
+    DomainState,
+    DomainStateDelta,
     DiagnosticRecord,
     EvidenceRecord,
     InputRecord,
@@ -43,13 +45,15 @@ def initial_context(
     input_payload: dict[str, Any],
     runtime_payload: dict[str, Any],
 ) -> AnalysisContext:
+    runtime = RuntimeRecord.model_validate(runtime_payload)
     state = AnalysisContext(
         analysis_id=analysis_id,
         revision=0,
         state_hash="",
         status="initializing",
         input=InputRecord.model_validate(input_payload),
-        runtime=RuntimeRecord.model_validate(runtime_payload),
+        runtime=runtime,
+        domain_state=DomainState(capabilities={item.id: item for item in runtime.capability_families}),
     )
     return state.model_copy(update={"state_hash": canonical_state_hash(state)})
 
@@ -84,6 +88,8 @@ def _apply_transition(state: AnalysisContext, draft: ContextEventDraft) -> Analy
         return _register_evidence(state, draft)
     if draft.event_type == "fact.verified":
         return _record_verified_fact(state, draft)
+    if draft.event_type == "domain.state.projected":
+        return _project_domain_state(state, draft)
     if draft.event_type == "tool.failed":
         return _record_diagnostic(state, draft)
     if draft.event_type == "answer.submitted":
@@ -225,6 +231,104 @@ def _record_verified_fact(state: AnalysisContext, draft: ContextEventDraft) -> A
     return state.model_copy(update={"verified_facts": facts})
 
 
+def _project_domain_state(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:
+    turn = _require_active_turn(state, draft)
+    capability = _require_capability(draft)
+    delta = DomainStateDelta.model_validate(draft.payload)
+    domain = state.domain_state
+
+    model = domain.model
+    if delta.model is not None:
+        _require_baseline_revision(state, delta.model.context_ref, delta.model.revision_ref, label="model")
+        model = delta.model
+
+    operating_state = domain.operating_state
+    if delta.operating_state is not None:
+        _require_domain_producer(delta.operating_state, capability, turn.turn_id)
+        _require_baseline_revision(
+            state,
+            delta.operating_state.context_ref,
+            delta.operating_state.revision_ref,
+            label="operating state",
+        )
+        operating_state = delta.operating_state
+
+    constraints = domain.constraints
+    for constraint in delta.constraints:
+        _require_domain_producer(constraint, capability, turn.turn_id)
+        _require_baseline_revision(state, constraint.context_ref, constraint.revision_ref, label="constraint")
+        constraints = _upsert_record(
+            constraints,
+            key=constraint.constraint_ref,
+            value=constraint,
+            duplicate_message=f"constraint {constraint.constraint_ref} already exists with different content",
+        )
+
+    scenarios = domain.scenarios
+    for scenario in delta.scenarios:
+        _require_domain_producer(scenario, capability, turn.turn_id)
+        _require_baseline_revision(state, scenario.context_ref, scenario.revision_ref, label="scenario")
+        scenarios = _upsert_record(
+            scenarios,
+            key=scenario.scenario_ref,
+            value=scenario,
+            duplicate_message=f"scenario {scenario.scenario_ref} already exists with different content",
+        )
+
+    calculations = domain.calculations
+    for calculation in delta.calculations:
+        _require_domain_producer(calculation, capability, turn.turn_id)
+        _require_baseline_revision(state, calculation.context_ref, calculation.revision_ref, label="calculation")
+        registered = state.results.get(calculation.result_ref)
+        if registered is None:
+            raise ContextTransitionError(f"calculation references unregistered result: {calculation.result_ref}")
+        if registered.revision_ref != calculation.revision_ref:
+            raise ContextTransitionError("calculation revision does not match registered result")
+        calculations = _upsert_record(
+            calculations,
+            key=calculation.result_ref,
+            value=calculation,
+            duplicate_message=f"calculation {calculation.result_ref} already exists with different content",
+        )
+
+    capabilities = domain.capabilities
+    for item in delta.capabilities:
+        capabilities = _upsert_record(
+            capabilities,
+            key=item.id,
+            value=item,
+            duplicate_message=f"capability {item.id} already exists with different content",
+        )
+
+    artifacts = domain.artifacts
+    for artifact in delta.artifacts:
+        _require_domain_producer(artifact, capability, turn.turn_id)
+        if artifact.context_ref is not None and artifact.revision_ref is not None:
+            _require_baseline_revision(state, artifact.context_ref, artifact.revision_ref, label="artifact")
+        artifacts = _upsert_record(
+            artifacts,
+            key=artifact.artifact_ref,
+            value=artifact,
+            duplicate_message=f"artifact {artifact.artifact_ref} already exists with different content",
+        )
+
+    return state.model_copy(
+        update={
+            "domain_state": domain.model_copy(
+                update={
+                    "model": model,
+                    "operating_state": operating_state,
+                    "constraints": constraints,
+                    "scenarios": scenarios,
+                    "calculations": calculations,
+                    "capabilities": capabilities,
+                    "artifacts": artifacts,
+                }
+            )
+        }
+    )
+
+
 def _record_diagnostic(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:
     payload = dict(draft.payload)
     message = payload.pop("message", draft.event_type)
@@ -347,6 +451,27 @@ def _validate_ranking_observation(state: AnalysisContext, observation: Observati
         raise ContextTransitionError("result.branches.rank observations must not produce refs")
     if not any(ref in state.results for ref in observation.consumed_refs):
         raise ContextTransitionError("result.branches.rank must consume a preexisting result ref")
+
+
+def _require_baseline_revision(
+    state: AnalysisContext,
+    context_ref: str,
+    revision_ref: str,
+    *,
+    label: str,
+) -> None:
+    baseline = state.baselines.get(context_ref)
+    if baseline is None:
+        raise ContextTransitionError(f"{label} references unknown model context")
+    if baseline.revision_ref != revision_ref:
+        raise ContextTransitionError(f"{label} revision does not match registered baseline")
+
+
+def _require_domain_producer(record: Any, capability: str, turn_id: str) -> None:
+    if record.producer_capability != capability:
+        raise ContextTransitionError("domain state producer capability does not match event")
+    if record.producer_turn_id != turn_id:
+        raise ContextTransitionError("domain state producer turn does not match event")
 
 
 def _merge_turn_refs(

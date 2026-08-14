@@ -13,6 +13,8 @@ CONTEXT_REF = "context:sha256:" + "1" * 64
 REVISION_REF = "revision:sha256:" + "2" * 64
 RESULT_REF = "result:sha256:" + "3" * 64
 EVIDENCE_REF = "evidence:sha256:" + "4" * 64
+SECOND_CONTEXT_REF = "context:sha256:" + "5" * 64
+SECOND_REVISION_REF = "revision:sha256:" + "6" * 64
 
 BASELINE = {
     "context_ref": CONTEXT_REF,
@@ -165,6 +167,176 @@ def context_with_simulator_evidence():
             payload=EVIDENCE,
         ),
     )
+
+
+def test_domain_projection_tracks_active_model_and_result_applicability() -> None:
+    state = context_with_baseline()
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="result.registered",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload=RESULT,
+        ),
+    )
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="domain.state.projected",
+            turn_id="analysis-test-t001",
+            capability="context.open",
+            payload={
+                "projector": "model-context-v1",
+                "model": {
+                    "context_ref": CONTEXT_REF,
+                    "revision_ref": REVISION_REF,
+                    "model_id": "ieee39",
+                    "source": "pandapower.networks.case39",
+                    "counts": {"buses": 39, "lines": 35, "transformers": 11},
+                },
+            },
+        ),
+    )
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="domain.state.projected",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload={
+                "projector": "powerflow-ac-v1",
+                "calculations": [
+                    {
+                        "result_ref": RESULT_REF,
+                        "kind": "powerflow.ac",
+                        "context_ref": CONTEXT_REF,
+                        "revision_ref": REVISION_REF,
+                        "status": "converged",
+                        "solver": {"algorithm": "nr"},
+                        "summary": {"total_active_loss_mw": 0.125},
+                        "artifact_path": RESULT["path"],
+                        "evidence_refs": [EVIDENCE_REF],
+                        "producer_capability": "analysis.powerflow.ac.run",
+                        "producer_turn_id": "analysis-test-t001",
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert state.domain_state.model is not None
+    assert state.domain_state.model.model_id == "ieee39"
+    assert state.domain_state.calculations[RESULT_REF].revision_ref == REVISION_REF
+
+
+def test_domain_projection_rejects_calculation_for_different_revision() -> None:
+    state = context_with_baseline()
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="result.registered",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload=RESULT,
+        ),
+    )
+
+    with pytest.raises(ContextTransitionError, match="calculation revision"):
+        reduce_context(
+            state,
+            ContextEventDraft(
+                event_type="domain.state.projected",
+                turn_id="analysis-test-t001",
+                capability="analysis.powerflow.ac.run",
+                payload={
+                    "projector": "powerflow-ac-v1",
+                    "calculations": [
+                        {
+                            "result_ref": RESULT_REF,
+                            "kind": "powerflow.ac",
+                            "context_ref": CONTEXT_REF,
+                            "revision_ref": SECOND_REVISION_REF,
+                            "status": "converged",
+                            "artifact_path": RESULT["path"],
+                            "producer_capability": "analysis.powerflow.ac.run",
+                            "producer_turn_id": "analysis-test-t001",
+                        }
+                    ],
+                },
+            ),
+        )
+
+
+def test_new_active_model_preserves_historical_calculations() -> None:
+    state = context_with_baseline()
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="result.registered",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload=RESULT,
+        ),
+    )
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="domain.state.projected",
+            turn_id="analysis-test-t001",
+            capability="analysis.powerflow.ac.run",
+            payload={
+                "projector": "powerflow-ac-v1",
+                "calculations": [
+                    {
+                        "result_ref": RESULT_REF,
+                        "kind": "powerflow.ac",
+                        "context_ref": CONTEXT_REF,
+                        "revision_ref": REVISION_REF,
+                        "status": "converged",
+                        "artifact_path": RESULT["path"],
+                        "producer_capability": "analysis.powerflow.ac.run",
+                        "producer_turn_id": "analysis-test-t001",
+                    }
+                ],
+            },
+        ),
+    )
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="simulator.context.opened",
+            turn_id="analysis-test-t001",
+            capability="context.open",
+            payload={
+                **BASELINE,
+                "context_ref": SECOND_CONTEXT_REF,
+                "revision_ref": SECOND_REVISION_REF,
+                "path": "evidence/contexts/second.json",
+            },
+        ),
+    )
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="domain.state.projected",
+            turn_id="analysis-test-t001",
+            capability="context.open",
+            payload={
+                "projector": "model-context-v1",
+                "model": {
+                    "context_ref": SECOND_CONTEXT_REF,
+                    "revision_ref": SECOND_REVISION_REF,
+                    "model_id": "second-model",
+                    "source": "registered.second",
+                },
+            },
+        ),
+    )
+
+    assert state.domain_state.model is not None
+    assert state.domain_state.model.context_ref == SECOND_CONTEXT_REF
+    assert RESULT_REF in state.domain_state.calculations
 
 
 def test_context_reducer_registers_baseline_result_and_cross_turn_consumption() -> None:

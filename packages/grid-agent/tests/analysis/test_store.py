@@ -77,6 +77,23 @@ def test_initialize_writes_replayable_analysis_started_event(tmp_path: Path) -> 
     assert store.snapshot.status == "running"
 
 
+def test_initialize_seeds_capability_family_state(tmp_path: Path) -> None:
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
+    runtime = {
+        **RUNTIME,
+        "capability_families": [
+            {"id": "power-flow", "availability": "published", "reason": "AC power flow"},
+            {"id": "opf", "availability": "not_published", "reason": "No semantic OPF capability"},
+        ],
+    }
+
+    store = AnalysisContextStore.initialize(workspace, input_record=INPUT, runtime_record=runtime)
+
+    assert store.snapshot.domain_state.capabilities["power-flow"].availability == "published"
+    assert store.snapshot.domain_state.capabilities["opf"].availability == "not_published"
+    assert AnalysisContextStore.replay(workspace.context_events_path) == store.snapshot
+
+
 def test_replay_rejects_truncated_final_ledger_line(tmp_path: Path) -> None:
     workspace, _store = _workspace_with_completed_turn(tmp_path)
     content = workspace.context_events_path.read_text(encoding="utf-8")

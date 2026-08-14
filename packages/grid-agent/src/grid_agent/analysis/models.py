@@ -13,6 +13,7 @@ EventType = Literal[
     "result.registered",
     "evidence.registered",
     "fact.verified",
+    "domain.state.projected",
     "tool.failed",
     "answer.submitted",
     "audit.diagnostic.recorded",
@@ -55,11 +56,18 @@ class InputRecord(StrictFrozenModel):
     instruction_count: int
 
 
+class CapabilityState(StrictFrozenModel):
+    id: str
+    availability: Literal["published", "not_published", "not_applicable", "unavailable", "failed"]
+    reason: str
+
+
 class RuntimeRecord(StrictFrozenModel):
     provider: str
     model: str
     grid_capability_protocol: str
     pandapower_version: str
+    capability_families: list[CapabilityState] = Field(default_factory=list)
 
 
 class ActiveTurn(StrictFrozenModel):
@@ -148,6 +156,100 @@ class LimitationRecord(StrictFrozenModel):
     refs: list[str] = Field(default_factory=list)
 
 
+class ActiveModelState(StrictFrozenModel):
+    context_ref: str
+    revision_ref: str
+    model_id: str
+    source: str
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class OperatingState(StrictFrozenModel):
+    context_ref: str
+    revision_ref: str
+    scenario_ref: str | None = None
+    status: str
+    summary: dict[str, Any] = Field(default_factory=dict)
+    producer_capability: str
+    producer_turn_id: str
+
+
+class ConstraintState(StrictFrozenModel):
+    constraint_ref: str
+    context_ref: str
+    revision_ref: str
+    quantity: str
+    subject_kind: str
+    lower: float | None = None
+    upper: float | None = None
+    unit: str
+    applies_to_count: int
+    source_kind: Literal["model", "user", "standard", "task"]
+    source_ref: str
+    source: dict[str, Any] = Field(default_factory=dict)
+    producer_capability: str
+    producer_turn_id: str
+
+
+class ScenarioState(StrictFrozenModel):
+    scenario_ref: str
+    context_ref: str
+    revision_ref: str
+    parent_scenario_ref: str | None = None
+    kind: str
+    status: str
+    changes: dict[str, Any] = Field(default_factory=dict)
+    result_refs: list[str] = Field(default_factory=list)
+    producer_capability: str
+    producer_turn_id: str
+
+
+class CalculationState(StrictFrozenModel):
+    result_ref: str
+    kind: str
+    context_ref: str
+    revision_ref: str
+    scenario_refs: list[str] = Field(default_factory=list)
+    status: str
+    solver: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    artifact_path: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    producer_capability: str
+    producer_turn_id: str
+
+
+class ArtifactState(StrictFrozenModel):
+    artifact_ref: str
+    kind: str
+    path: str
+    context_ref: str | None = None
+    revision_ref: str | None = None
+    producer_capability: str
+    producer_turn_id: str
+
+
+class DomainState(StrictFrozenModel):
+    model: ActiveModelState | None = None
+    operating_state: OperatingState | None = None
+    constraints: dict[str, ConstraintState] = Field(default_factory=dict)
+    scenarios: dict[str, ScenarioState] = Field(default_factory=dict)
+    calculations: dict[str, CalculationState] = Field(default_factory=dict)
+    capabilities: dict[str, CapabilityState] = Field(default_factory=dict)
+    artifacts: dict[str, ArtifactState] = Field(default_factory=dict)
+
+
+class DomainStateDelta(StrictFrozenModel):
+    projector: str
+    model: ActiveModelState | None = None
+    operating_state: OperatingState | None = None
+    constraints: list[ConstraintState] = Field(default_factory=list)
+    scenarios: list[ScenarioState] = Field(default_factory=list)
+    calculations: list[CalculationState] = Field(default_factory=list)
+    capabilities: list[CapabilityState] = Field(default_factory=list)
+    artifacts: list[ArtifactState] = Field(default_factory=list)
+
+
 class AnalysisContext(StrictFrozenModel):
     schema_version: Literal["analysis-context/1.0"] = "analysis-context/1.0"
     analysis_id: str
@@ -166,3 +268,4 @@ class AnalysisContext(StrictFrozenModel):
     verified_facts: dict[str, VerifiedFact] = Field(default_factory=dict)
     diagnostics: list[DiagnosticRecord] = Field(default_factory=list)
     unresolved_limitations: list[LimitationRecord] = Field(default_factory=list)
+    domain_state: DomainState = Field(default_factory=DomainState)
