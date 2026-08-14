@@ -87,20 +87,53 @@ describe('App shell', () => {
     expect(listRuns).toHaveBeenCalledTimes(2);
   });
 
-  it.each([
-    ['analysis-partial', 'state-partial'],
-    ['analysis-corrupt', 'state-corrupt'],
-  ])('shows the recorded %s run condition', async (analysisId, stateId) => {
+  it('shows a partial-run status without hiding its durable projection', async () => {
     render(<App client={fixtureClient()} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: new RegExp(analysisId) }));
-    expect(await screen.findByTestId(stateId)).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: /analysis-partial/i }));
+
+    expect(await screen.findByTestId('state-partial')).toBeVisible();
+    expect(await screen.findByText('Q7 · 线路 17 N-1')).toBeVisible();
+  });
+
+  it('blocks the projection for a corrupt run', async () => {
+    render(<App client={fixtureClient()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /analysis-corrupt/i }));
+
+    expect(await screen.findByTestId('state-corrupt')).toBeVisible();
+    expect(screen.queryByText('Q7 · 线路 17 N-1')).not.toBeInTheDocument();
   });
 
   it('shows an unsupported state when the runs API returns 501', async () => {
     render(<App client={{ listRuns: async () => { throw new ApiError(501, 'unsupported', 'Upgrade the workbench.'); }, getBusinessPage: vi.fn() }} />);
 
     expect(await screen.findByTestId('state-unsupported')).toHaveTextContent('Upgrade the workbench.');
+  });
+
+  it('retries a failed business projection request', async () => {
+    const getBusinessPage = vi.fn()
+      .mockRejectedValueOnce(new Error('projection unavailable'))
+      .mockResolvedValueOnce({
+        items: problems, older_cursor: null, newer_cursor: null, first_sequence: 59,
+        last_sequence: 78, has_older: false, encoded_bytes: 100,
+      });
+    render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
+
+    expect(await screen.findByTestId('state-network-error')).toHaveTextContent('projection unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Q7 · 线路 17 N-1')).toBeVisible();
+    expect(getBusinessPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows unsupported when a business projection returns HTTP 501', async () => {
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => { throw new ApiError(501, 'unsupported', 'Business projection requires a newer workbench.'); },
+    }} />);
+
+    expect(await screen.findByTestId('state-unsupported')).toHaveTextContent('Business projection requires a newer workbench.');
   });
 
   it('selecting Q7 synchronizes timeline, content, and inspector', async () => {

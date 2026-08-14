@@ -6,7 +6,7 @@ import { OverviewTimeline } from '../components/layout/OverviewTimeline';
 import { RunExplorer } from '../components/layout/RunExplorer';
 import { RunHeader } from '../components/layout/RunHeader';
 import { WorkbenchShell } from '../components/layout/WorkbenchShell';
-import { initialWorkbenchState, workbenchReducer } from '../state/workbench';
+import { initialWorkbenchState, workbenchReducer, type WorkbenchView } from '../state/workbench';
 import { BusinessView } from '../views/BusinessView';
 import { AgentView } from '../views/AgentView';
 import { ContextView } from '../views/ContextView';
@@ -25,6 +25,8 @@ export function App({ client = api }: { client?: AppClient }) {
   const [runListState, setRunListState] = useState<AsyncStateName>('loading');
   const [runListDiagnostic, setRunListDiagnostic] = useState<string | null>(null);
   const [runListAttempt, setRunListAttempt] = useState(0);
+  const [pageAttempts, setPageAttempts] = useState<Record<WorkbenchView, number>>({ business: 0, agent: 0, context: 0, evidence: 0 });
+  const [pageErrors, setPageErrors] = useState<Partial<Record<WorkbenchView, unknown>>>({});
   const [problems, setProblems] = useState<BusinessProblem[]>([]);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [contextFrame, setContextFrame] = useState<ContextFrame | null>(null);
@@ -74,31 +76,39 @@ export function App({ client = api }: { client?: AppClient }) {
   useEffect(() => {
     if (!state.selectedRunId) return;
     const controller = new AbortController();
+    setPageErrors((errors) => ({ ...errors, business: null }));
     dispatch({ type: 'page/requested', view: 'business' });
     void client.getBusinessPage(state.selectedRunId, undefined, controller.signal).then((page) => {
       setProblems(page.items);
       businessPageRef.current = page;
       setBusinessPage(page);
       dispatch({ type: 'page/loaded', view: 'business', page: pageMetadata(page) });
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
       setProblems([]);
       businessPageRef.current = { older_cursor: null, has_older: false };
       setBusinessPage({ older_cursor: null, has_older: false });
-      dispatch({ type: 'page/failed', view: 'business', message: 'Unable to load business trajectory.' });
+      setPageErrors((errors) => ({ ...errors, business: error }));
+      dispatch({ type: 'page/failed', view: 'business', message: pageErrorMessage(error, 'Unable to load business trajectory.') });
     });
     return () => controller.abort();
-  }, [client, state.selectedRunId]);
+  }, [client, pageAttempts.business, state.selectedRunId]);
 
   useEffect(() => {
     if (state.activeView !== 'agent' || !state.selectedRunId || !client.getAgentPage) return;
     const controller = new AbortController();
+    setPageErrors((errors) => ({ ...errors, agent: null }));
     dispatch({ type: 'page/requested', view: 'agent' });
     void client.getAgentPage(state.selectedRunId, undefined, controller.signal).then((page) => {
       setAgentTurns(page.items);
       dispatch({ type: 'page/loaded', view: 'agent', page: pageMetadata(page) });
-    }).catch(() => dispatch({ type: 'page/failed', view: 'agent', message: 'Unable to load agent trajectory.' }));
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setPageErrors((errors) => ({ ...errors, agent: error }));
+      dispatch({ type: 'page/failed', view: 'agent', message: pageErrorMessage(error, 'Unable to load agent trajectory.') });
+    });
     return () => controller.abort();
-  }, [client, state.activeView, state.selectedRunId]);
+  }, [client, pageAttempts.agent, state.activeView, state.selectedRunId]);
 
   const selectedProblem = problems.find((problem) => problem.id === state.selectedNodeId || problem.turn_id === state.selectedNodeId || problem.nodes.some((node) => node.id === state.selectedNodeId)) ?? null;
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;
@@ -117,24 +127,36 @@ export function App({ client = api }: { client?: AppClient }) {
     const sequence = contextSequence;
     if (!sequence || sequence < 1) return;
     const controller = new AbortController();
+    setPageErrors((errors) => ({ ...errors, context: null }));
     dispatch({ type: 'page/requested', view: 'context' });
     void client.getContextFrame(state.selectedRunId, sequence, controller.signal).then((frame) => {
       setContextFrame(frame);
       dispatch({ type: 'page/loaded', view: 'context', page: { firstSequence: frame.source_sequence, lastSequence: frame.source_sequence, hasOlder: false } });
-    }).catch(() => { setContextFrame(null); dispatch({ type: 'page/failed', view: 'context', message: 'Unable to load context frame.' }); });
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setContextFrame(null);
+      setPageErrors((errors) => ({ ...errors, context: error }));
+      dispatch({ type: 'page/failed', view: 'context', message: pageErrorMessage(error, 'Unable to load context frame.') });
+    });
     return () => controller.abort();
-  }, [client, contextSequence, state.activeView, state.selectedRunId]);
+  }, [client, contextSequence, pageAttempts.context, state.activeView, state.selectedRunId]);
 
   useEffect(() => {
     if (state.activeView !== 'evidence' || !state.selectedRunId || !client.getEvidenceIndex) return;
     const controller = new AbortController();
+    setPageErrors((errors) => ({ ...errors, evidence: null }));
     dispatch({ type: 'page/requested', view: 'evidence' });
     void client.getEvidenceIndex(state.selectedRunId, controller.signal).then((index) => {
       setEvidenceIndex(index);
       dispatch({ type: 'page/loaded', view: 'evidence', page: { firstSequence: null, lastSequence: null, hasOlder: false } });
-    }).catch(() => { setEvidenceIndex(null); dispatch({ type: 'page/failed', view: 'evidence', message: 'Unable to load evidence projection.' }); });
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setEvidenceIndex(null);
+      setPageErrors((errors) => ({ ...errors, evidence: error }));
+      dispatch({ type: 'page/failed', view: 'evidence', message: pageErrorMessage(error, 'Unable to load evidence projection.') });
+    });
     return () => controller.abort();
-  }, [client, state.activeView, state.selectedRunId]);
+  }, [client, pageAttempts.evidence, state.activeView, state.selectedRunId]);
 
   const selectTurn = (turnId: string) => dispatch({ type: 'node/selected', nodeId: turnId });
   const requestOlder = () => {
@@ -154,13 +176,15 @@ export function App({ client = api }: { client?: AppClient }) {
   };
 
   const artifactUrl = (ref: string) => client.artifactUrl ? client.artifactUrl(state.selectedRunId ?? '', ref) : '#';
-  const viewState: AsyncStateName = selectedRun?.status === 'partial' ? 'partial'
-    : selectedRun?.status === 'corrupt' ? 'corrupt'
-      : state.pageStatus[state.activeView] === 'loading' ? 'loading'
-        : state.pageError[state.activeView]?.includes('unsupported') ? 'unsupported'
-          : state.pageStatus[state.activeView] === 'failed' ? 'network-error' : 'ready';
+  const pageError = pageErrors[state.activeView];
+  const pageState: AsyncStateName = state.pageStatus[state.activeView] === 'loading' ? 'loading'
+    : pageError instanceof ApiError && pageError.status === 501 ? 'unsupported'
+      : state.pageStatus[state.activeView] === 'failed' ? 'network-error' : 'ready';
+  const viewState: AsyncStateName = selectedRun?.status === 'corrupt' ? 'corrupt' : pageState;
+  const retryActivePage = () => setPageAttempts((attempts) => ({ ...attempts, [state.activeView]: attempts[state.activeView] + 1 }));
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
-    <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]}>
+    {selectedRun?.status === 'partial' ? <AsyncState state="partial" diagnostic={selectedRun.diagnostic} /> : null}
+    <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]} onRetry={retryActivePage}>
     {state.activeView === 'business' ? <BusinessView problems={problems} state={state} dispatch={dispatch} hasOlder={businessPage.has_older} onRequestOlder={requestOlder} />
       : state.activeView === 'agent' ? <AgentView trajectory={agentTurns} selectedNodeId={state.selectedNodeId} onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })} artifactUrl={artifactUrl} />
         : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
@@ -202,4 +226,8 @@ function contextSequenceFromNodeId(nodeId: string): number | null {
   if (!match) return null;
   const sequence = Number(match[1]);
   return Number.isSafeInteger(sequence) ? sequence : null;
+}
+
+function pageErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }
