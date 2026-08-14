@@ -7,6 +7,7 @@ import { RunExplorer } from '../components/layout/RunExplorer';
 import { RunHeader } from '../components/layout/RunHeader';
 import { WorkbenchShell } from '../components/layout/WorkbenchShell';
 import { initialWorkbenchState, workbenchReducer } from '../state/workbench';
+import { BusinessView } from '../views/BusinessView';
 
 const api = new TrajectoryApiClient();
 
@@ -15,6 +16,18 @@ export function App({ client = api }: { client?: Pick<TrajectoryApiClient, 'list
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [problems, setProblems] = useState<BusinessProblem[]>([]);
+
+  useEffect(() => {
+    const selectedNode = new URLSearchParams(window.location.search).get('node');
+    if (selectedNode) dispatch({ type: 'node/selected', nodeId: selectedNode });
+  }, []);
+
+  useEffect(() => {
+    if (!state.selectedNodeId) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('node', state.selectedNodeId);
+    window.history.replaceState(null, '', url);
+  }, [state.selectedNodeId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -37,7 +50,7 @@ export function App({ client = api }: { client?: Pick<TrajectoryApiClient, 'list
   const selectTurn = (turnId: string) => dispatch({ type: 'node/selected', nodeId: turnId });
 
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`}>
-    {state.activeView === 'business' ? <div className="business-overview"><h1>Business trajectory</h1>{problems.map((problem) => <button key={problem.id} type="button" className={problem.turn_id === state.selectedNodeId ? 'problem-summary selected' : 'problem-summary'} onClick={() => selectTurn(problem.turn_id)}><strong>{problem.title}</strong><span>{problem.status} · {problem.nodes.length} recorded nodes</span></button>)}</div> : <div className="view-placeholder"><h1>{state.activeView} trajectory</h1><p>This view is introduced in a subsequent workbench task.</p></div>}
+    {state.activeView === 'business' ? <BusinessView problems={problems} state={state} dispatch={dispatch} /> : <div className="view-placeholder"><h1>{state.activeView} trajectory</h1><p>This view is introduced in a subsequent workbench task.</p></div>}
   </section>;
 
   return <div className="workbench-bootstrap" aria-label="Trajectory workbench" data-view={state.activeView}>

@@ -84,6 +84,15 @@ describe('App shell', () => {
       .toHaveAttribute('data-focused-turn', 'analysis-test-t007');
   });
 
+  it('persists a selected trajectory item in the same-origin deep link', async () => {
+    window.history.replaceState({}, '', '/');
+    render(<App client={fixtureClient()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Q7.*overview segment/i }));
+
+    expect(new URLSearchParams(window.location.search).get('node')).toBe('analysis-test-t007');
+  });
+
   it('filters by source kind and groups visible runs by status', async () => {
     render(<App client={fixtureClient()} />);
     await screen.findByRole('navigation', { name: 'Runs' });

@@ -21,4 +21,18 @@ describe('workbenchReducer', () => {
     expect(next.selectedNodeId).toBe('business:42');
     expect(next.pages.business.map((page) => page.firstSequence)).toEqual([1, 501]);
   });
+
+  it('keeps the selected node when search results or a folded problem hide it', () => {
+    const selected: WorkbenchState = {
+      ...initialWorkbenchState,
+      selectedNodeId: 'business:q7:claim',
+    };
+
+    const searched = workbenchReducer(selected, { type: 'search/changed', search: 'contingency' });
+    const folded = workbenchReducer(searched, { type: 'node/foldToggled', nodeId: 'q7' });
+
+    expect(folded.selectedNodeId).toBe('business:q7:claim');
+    expect(folded.search).toBe('contingency');
+    expect(folded.foldedNodeIds).toContain('q7');
+  });
 });

@@ -1,6 +1,8 @@
 export type WorkbenchView = 'business' | 'agent' | 'context' | 'evidence';
 export type Theme = 'dark' | 'light' | 'system';
 export type AsyncStatus = 'idle' | 'loading' | 'ready' | 'failed';
+export type SourceFilter = 'all' | 'observed' | 'derived' | 'agent-declared';
+export type StatusFilter = 'all' | 'running' | 'completed' | 'failed' | 'interrupted' | 'unavailable';
 
 export interface LoadedPage {
   firstSequence: number | null;
@@ -17,6 +19,8 @@ export interface WorkbenchState {
   pageError: Record<WorkbenchView, string | null>;
   foldedNodeIds: string[];
   search: string;
+  sourceFilter: SourceFilter;
+  statusFilter: StatusFilter;
   timelineRange: { startSequence: number; endSequence: number } | null;
   inspectorOpen: boolean;
   theme: Theme;
@@ -36,6 +40,8 @@ export const initialWorkbenchState: WorkbenchState = {
   pageError: emptyErrors(),
   foldedNodeIds: [],
   search: '',
+  sourceFilter: 'all',
+  statusFilter: 'all',
   timelineRange: null,
   inspectorOpen: true,
   theme: 'system',
@@ -52,6 +58,8 @@ export type WorkbenchAction =
   | { type: 'node/selected'; nodeId: string | null }
   | { type: 'node/foldToggled'; nodeId: string }
   | { type: 'search/changed'; search: string }
+  | { type: 'sourceFilter/changed'; source: SourceFilter }
+  | { type: 'statusFilter/changed'; status: StatusFilter }
   | { type: 'timeline/focused'; range: WorkbenchState['timelineRange'] }
   | { type: 'inspector/opened' }
   | { type: 'inspector/closed' }
@@ -69,6 +77,8 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'node/selected': return { ...state, selectedNodeId: action.nodeId, inspectorOpen: action.nodeId !== null ? true : state.inspectorOpen };
     case 'node/foldToggled': return { ...state, foldedNodeIds: state.foldedNodeIds.includes(action.nodeId) ? state.foldedNodeIds.filter((id) => id !== action.nodeId) : [...state.foldedNodeIds, action.nodeId] };
     case 'search/changed': return { ...state, search: action.search };
+    case 'sourceFilter/changed': return { ...state, sourceFilter: action.source };
+    case 'statusFilter/changed': return { ...state, statusFilter: action.status };
     case 'timeline/focused': return { ...state, timelineRange: action.range };
     case 'inspector/opened': return { ...state, inspectorOpen: true };
     case 'inspector/closed': return { ...state, inspectorOpen: false };
