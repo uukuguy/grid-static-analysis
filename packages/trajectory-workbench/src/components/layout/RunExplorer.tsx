@@ -10,10 +10,14 @@ interface RunExplorerProps {
 export function RunExplorer({ runs, selectedRunId, onSelectRun }: RunExplorerProps) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
+  const [sourceKind, setSourceKind] = useState('all');
+  const sourceKinds = useMemo(() => [...new Set(runs.map((run) => run.source_kind))].sort(), [runs]);
   const visibleRuns = useMemo(() => runs.filter((run) =>
     (status === 'all' || run.status === status) &&
+    (sourceKind === 'all' || run.source_kind === sourceKind) &&
     `${run.analysis_id} ${run.source_kind}`.toLowerCase().includes(query.toLowerCase()),
-  ), [query, runs, status]);
+  ), [query, runs, sourceKind, status]);
+  const statusGroups = ['completed', 'partial', 'corrupt'] as const;
 
   return <nav aria-label="Runs">
     <div className="rail-heading"><span>Runs</span><span>{visibleRuns.length}</span></div>
@@ -26,12 +30,25 @@ export function RunExplorer({ runs, selectedRunId, onSelectRun }: RunExplorerPro
       <option value="partial">Partial</option>
       <option value="corrupt">Corrupt</option>
     </select>
+    <label className="visually-hidden" htmlFor="run-source-kind">Source kind</label>
+    <select id="run-source-kind" value={sourceKind} onChange={(event) => setSourceKind(event.target.value)}>
+      <option value="all">All sources</option>
+      {sourceKinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+    </select>
     <div className="run-list">
-      {visibleRuns.map((run) => <button key={run.analysis_id} type="button"
-        className={run.analysis_id === selectedRunId ? 'run-item selected' : 'run-item'}
-        aria-pressed={run.analysis_id === selectedRunId} onClick={() => onSelectRun(run.analysis_id)}>
-        <span>{run.analysis_id}</span><small>{run.status} · {run.source_kind} · {run.turn_count} turns</small>
-      </button>)}
+      {statusGroups.map((group) => {
+        const groupRuns = visibleRuns.filter((run) => run.status === group);
+        if (groupRuns.length === 0) return null;
+        const headingId = `run-group-${group}`;
+        return <section key={group} className="run-group" aria-labelledby={headingId}>
+          <h2 id={headingId}>{group[0].toUpperCase() + group.slice(1)} runs</h2>
+          {groupRuns.map((run) => <button key={run.analysis_id} type="button"
+            className={run.analysis_id === selectedRunId ? 'run-item selected' : 'run-item'}
+            aria-pressed={run.analysis_id === selectedRunId} onClick={() => onSelectRun(run.analysis_id)}>
+            <span>{run.analysis_id}</span><small>{run.status} · {run.source_kind} · {run.turn_count} turns</small>
+          </button>)}
+        </section>;
+      })}
     </div>
   </nav>;
 }

@@ -9,6 +9,14 @@ const run: RunListResponse = {
     analysis_id: 'analysis-test', status: 'completed', source_kind: 'native',
     started_at: '2026-08-14T08:18:22Z', turn_count: 9, last_sequence: 78,
     replay_trusted_through: 78, diagnostic: null,
+  }, {
+    analysis_id: 'analysis-partial', status: 'partial', source_kind: 'imported',
+    started_at: '2026-08-14T08:18:22Z', turn_count: 4, last_sequence: 43,
+    replay_trusted_through: 43, diagnostic: 'missing tail',
+  }, {
+    analysis_id: 'analysis-corrupt', status: 'corrupt', source_kind: 'native',
+    started_at: '2026-08-14T08:18:22Z', turn_count: 0, last_sequence: 0,
+    replay_trusted_through: 0, diagnostic: 'invalid event',
   }],
 };
 
@@ -44,7 +52,7 @@ describe('App shell', () => {
   it('selecting Q7 synchronizes timeline, content, and inspector', async () => {
     render(<App client={fixtureClient()} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Q7.*线路 17.*N-1/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Q7.*overview segment/i }));
 
     expect(screen.getByRole('region', { name: 'Run overview timeline' }))
       .toHaveAttribute('data-focused-turn', 'analysis-test-t007');
@@ -61,5 +69,41 @@ describe('App shell', () => {
     fireEvent.keyDown(business, { key: 'ArrowRight' });
 
     expect(screen.getByRole('tab', { name: 'Agent' })).toHaveFocus();
+  });
+
+  it('activates the Q7 overview segment with Enter and Space', async () => {
+    render(<App client={fixtureClient()} />);
+    const segment = await screen.findByRole('button', { name: /Q7.*overview segment/i });
+
+    segment.focus();
+    fireEvent.keyDown(segment, { key: 'Enter' });
+    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveTextContent('analysis-test-t007');
+
+    fireEvent.keyDown(segment, { key: ' ' });
+    expect(screen.getByRole('region', { name: 'Run overview timeline' }))
+      .toHaveAttribute('data-focused-turn', 'analysis-test-t007');
+  });
+
+  it('filters by source kind and groups visible runs by status', async () => {
+    render(<App client={fixtureClient()} />);
+    await screen.findByRole('navigation', { name: 'Runs' });
+
+    expect(screen.getByRole('heading', { name: 'Completed runs' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Partial runs' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Corrupt runs' })).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText('Source kind'), { target: { value: 'imported' } });
+
+    expect(screen.getByRole('button', { name: /analysis-partial/i })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /analysis-test/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Completed runs' })).not.toBeInTheDocument();
+  });
+
+  it('keeps inspector controls in the keyboard focus order', async () => {
+    render(<App client={fixtureClient()} />);
+    const inspectorTab = await screen.findByRole('tab', { name: 'Identity' });
+
+    inspectorTab.focus();
+    expect(inspectorTab).toHaveFocus();
   });
 });
