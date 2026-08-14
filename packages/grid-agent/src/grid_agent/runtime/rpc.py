@@ -5,15 +5,13 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Thread
-from typing import TYPE_CHECKING, Any, Protocol
+from threading import Event, Lock, Thread
+from typing import Any, Protocol
 
 from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.lock import PiCommand
 from grid_agent.runtime.environment import PiLaunch
-
-if TYPE_CHECKING:
-    from grid_agent.trajectory.capture import NativeCaptureAdapter
+from grid_agent.trajectory.capture import CaptureIntegrityError, NativeCaptureAdapter
 
 
 SemanticEventCallback = Callable[[dict[str, Any], int], None]
@@ -29,6 +27,9 @@ TRACEABLE_RPC_TYPES = frozenset(
         "auto_retry_end",
     }
 )
+CAPTURE_FATAL_EXIT_CODE = 86
+CAPTURE_FATAL_MARKER = "trajectory request capture failed"
+_STDERR_CAPTURE_LIMIT = 64 * 1024
 
 
 class RpcWorkspace(Protocol):
@@ -48,6 +49,7 @@ class PiRpcClient:
         self.environment = environment
         self.process: subprocess.Popen[bytes] | None = None
         self._stdout_lines: Queue[bytes | None] | None = None
+        self._stderr_capture: _BoundedStderrCapture | None = None
 
     def start(self) -> None:
         launch_environment = self.command.environment if isinstance(self.command, PiLaunch) else self.environment
@@ -55,6 +57,13 @@ class PiRpcClient:
         self._stdout_lines = Queue()
         if self.process.stdout is not None:
             Thread(target=_read_lines, args=(self.process.stdout, self._stdout_lines), daemon=True).start()
+        self._stderr_capture = _BoundedStderrCapture()
+        if self.process.stderr is not None:
+            Thread(
+                target=_drain_stderr,
+                args=(self.process.stderr, self._stderr_capture),
+                daemon=True,
+            ).start()
 
     def prompt_and_wait(
         self,
@@ -85,7 +94,7 @@ class PiRpcClient:
                     on_heartbeat()
                 continue
             if raw is None:
-                break
+                raise self._eof_error()
             line = raw.decode("utf-8").rstrip("\r\n")
             if not line:
                 continue
@@ -134,7 +143,41 @@ class PiRpcClient:
                         return ""
                     raise PiProtocolError("Pi agent ended without answer text")
                 return answer
-        raise PiProtocolError("Pi RPC ended before agent completion")
+
+    def _eof_error(self) -> RuntimeError:
+        process = self.process
+        if process is None:
+            return PiProtocolError("Pi RPC ended before agent completion")
+        returncode = process.poll()
+        if returncode is None:
+            try:
+                returncode = process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                returncode = process.poll()
+        stderr = self._stderr_capture
+        if stderr is not None:
+            stderr.wait(timeout=0.5 if returncode is not None else 0.0)
+            stderr_text = stderr.text()
+        else:
+            stderr_text = ""
+        marker_line = next(
+            (
+                line.strip()[:500]
+                for line in stderr_text.splitlines()
+                if CAPTURE_FATAL_MARKER in line.lower()
+            ),
+            None,
+        )
+        if returncode == CAPTURE_FATAL_EXIT_CODE or marker_line is not None:
+            detail = marker_line or CAPTURE_FATAL_MARKER
+            return CaptureIntegrityError(
+                f"Pi capture-fatal exit {returncode}: {detail}"
+            )
+        if returncode is not None:
+            return PiProtocolError(
+                f"Pi RPC ended before agent completion (exit {returncode})"
+            )
+        return PiProtocolError("Pi RPC ended before agent completion")
 
     def stop(self) -> None:
         if self.process is None:
@@ -148,6 +191,31 @@ class PiRpcClient:
                 self.process.wait(timeout=2)
         self.process = None
         self._stdout_lines = None
+        self._stderr_capture = None
+
+
+class _BoundedStderrCapture:
+    def __init__(self, limit: int = _STDERR_CAPTURE_LIMIT) -> None:
+        self._limit = limit
+        self._buffer = bytearray()
+        self._lock = Lock()
+        self._done = Event()
+
+    def append(self, chunk: bytes) -> None:
+        with self._lock:
+            self._buffer.extend(chunk)
+            if len(self._buffer) > self._limit:
+                del self._buffer[: len(self._buffer) - self._limit]
+
+    def finish(self) -> None:
+        self._done.set()
+
+    def wait(self, timeout: float) -> None:
+        self._done.wait(timeout)
+
+    def text(self) -> str:
+        with self._lock:
+            return bytes(self._buffer).decode("utf-8", errors="replace")
 
 
 def _read_lines(stream: Any, lines: Queue[bytes | None]) -> None:
@@ -156,6 +224,17 @@ def _read_lines(stream: Any, lines: Queue[bytes | None]) -> None:
             lines.put(raw)
     finally:
         lines.put(None)
+
+
+def _drain_stderr(stream: Any, capture: _BoundedStderrCapture) -> None:
+    try:
+        while True:
+            chunk = stream.read(8192)
+            if not chunk:
+                return
+            capture.append(chunk)
+    finally:
+        capture.finish()
 
 
 def _provider_error(event: dict[str, Any]) -> str | None:

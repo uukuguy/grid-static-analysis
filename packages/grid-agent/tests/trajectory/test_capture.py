@@ -340,6 +340,132 @@ def test_tool_results_pair_by_call_id_when_completions_are_reordered(
     assert completed[1].causation.parent_sequence == starts["call-1"].sequence
 
 
+def test_successful_decision_tool_declares_bounded_agent_intent(
+    tmp_path: Path,
+) -> None:
+    recorder, adapter, workspace = capture_with_active_request(tmp_path)
+    known_ref = "context:sha256:" + "c" * 64
+    allowed_refs_path = workspace.root_path / "context" / "trajectory-allowed-refs.json"
+    allowed_refs_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "grid-trajectory-allowed-refs/1.0",
+                "refs": [known_ref],
+            }
+        ),
+        encoding="utf-8",
+    )
+    adapter.on_semantic_event(
+        {
+            "type": "tool_execution_start",
+            "tool_call_id": "decision-1",
+            "tool_name": "grid_record_decision",
+            "args": {
+                "intent": "Assess line 17 N-1 security",
+                "decision": "Run the published contingency capability",
+                "next_action": "Resolve line 17 and execute N-1",
+                "refs": [known_ref],
+            },
+        },
+        20,
+    )
+    adapter.on_semantic_event(
+        {
+            "event": "tool_result",
+            "tool_call_id": "decision-1",
+            "tool_name": "grid_record_decision",
+            "capability": "grid_record_decision",
+            "ok": True,
+            "result": {
+                "intent": "Assess line 17 N-1 security",
+                "decision": "Run the published contingency capability",
+                "next_action": "Resolve line 17 and execute N-1",
+                "refs": [known_ref],
+            },
+            "evidence_refs": [],
+        },
+        21,
+    )
+
+    recorded = events(recorder)
+    completed = next(event for event in recorded if event.event_type == "tool.completed")
+    declared = next(
+        event for event in recorded if event.event_type == "business.decision.declared"
+    )
+    assert recorded.index(completed) < recorded.index(declared)
+    assert declared.scope == completed.scope
+    assert declared.causation.parent_sequence == completed.sequence
+    assert declared.causation.correlation_id == "decision-1"
+    assert declared.source.kind == "agent-declared"
+    assert declared.source.producer == "grid-agent.pi-rpc"
+    assert declared.refs.consumed == (known_ref,)
+    assert declared.payload == {
+        "intent": "Assess line 17 N-1 security",
+        "decision": "Run the published contingency capability",
+        "next_action": "Resolve line 17 and execute N-1",
+    }
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {
+            "intent": "x" * 501,
+            "decision": "Run it",
+            "next_action": "Continue",
+            "refs": [],
+        },
+        {
+            "intent": "Assess",
+            "decision": "Run it",
+            "next_action": "Continue",
+            "refs": ["context:sha256:" + "f" * 64],
+        },
+    ],
+)
+def test_decision_declaration_rejects_unbounded_or_unknown_agent_values(
+    tmp_path: Path,
+    result: dict[str, object],
+) -> None:
+    recorder, adapter, workspace = capture_with_active_request(tmp_path)
+    (workspace.root_path / "context" / "trajectory-allowed-refs.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "grid-trajectory-allowed-refs/1.0",
+                "refs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    adapter.on_semantic_event(
+        {
+            "type": "tool_execution_start",
+            "tool_call_id": "decision-invalid",
+            "tool_name": "grid_record_decision",
+            "args": result,
+        },
+        20,
+    )
+
+    with pytest.raises(CaptureIntegrityError, match="decision"):
+        adapter.on_semantic_event(
+            {
+                "event": "tool_result",
+                "tool_call_id": "decision-invalid",
+                "tool_name": "grid_record_decision",
+                "capability": "grid_record_decision",
+                "ok": True,
+                "result": result,
+                "evidence_refs": [],
+            },
+            21,
+        )
+
+    assert not any(
+        event.event_type == "business.decision.declared" for event in events(recorder)
+    )
+
+
 @pytest.mark.parametrize(
     "semantic_event",
     [

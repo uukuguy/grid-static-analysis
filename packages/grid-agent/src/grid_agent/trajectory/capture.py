@@ -68,6 +68,7 @@ class _ToolState:
     step_id: str
     start_sequence: int
     artifact: ArtifactPointer
+    arguments: dict[str, Any]
 
 
 class NativeCaptureAdapter:
@@ -394,6 +395,7 @@ class NativeCaptureAdapter:
             step_id=request.step_id,
             start_sequence=started.sequence,
             artifact=pointer,
+            arguments=arguments,
         )
 
     def _record_tool_completion(self, event: Mapping[str, Any]) -> None:
@@ -415,9 +417,10 @@ class NativeCaptureAdapter:
         result = event.get("result", {})
         if not isinstance(result, Mapping):
             raise CaptureIntegrityError("tool result must be an object")
+        decision = self._validated_decision(tool, capability, ok, result)
         result_refs, evidence_refs = self._admit_tool_references(event, result)
         self.artifacts.verify_reference(tool.artifact.ref)
-        self.recorder.append(
+        completed = self.recorder.append(
             EventDraft(
                 event_type=SEMANTIC_EVENT_MAP["tool_result"],
                 scope=RunScope(
@@ -440,7 +443,97 @@ class NativeCaptureAdapter:
                 },
             )
         )
+        if decision is not None:
+            payload, references = decision
+            self.recorder.append(
+                EventDraft(
+                    event_type="business.decision.declared",
+                    scope=completed.scope,
+                    causation=Causation(
+                        parent_sequence=completed.sequence,
+                        correlation_id=tool_call_id,
+                    ),
+                    source=EventSource(
+                        kind="agent-declared",
+                        producer="grid-agent.pi-rpc",
+                    ),
+                    refs=EventRefs(consumed=references),
+                    payload=payload,
+                )
+            )
         del self._tool_calls[tool_call_id]
+
+    def _validated_decision(
+        self,
+        tool: _ToolState,
+        capability: str,
+        ok: bool,
+        result: Mapping[str, Any],
+    ) -> tuple[dict[str, str], tuple[str, ...]] | None:
+        decision_name = "grid_record_decision"
+        is_decision_tool = tool.tool_name == decision_name
+        if is_decision_tool != (capability == decision_name):
+            raise CaptureIntegrityError(
+                "decision tool name and capability do not match"
+            )
+        if not is_decision_tool or not ok:
+            return None
+
+        expected_keys = {"intent", "decision", "next_action", "refs"}
+        if set(result) != expected_keys:
+            raise CaptureIntegrityError(
+                "decision result must contain only bounded declaration fields"
+            )
+        if result != tool.arguments:
+            raise CaptureIntegrityError(
+                "decision result does not match the declared tool arguments"
+            )
+        payload: dict[str, str] = {}
+        for name in ("intent", "decision", "next_action"):
+            value = result.get(name)
+            if not isinstance(value, str) or not 1 <= len(value) <= 500:
+                raise CaptureIntegrityError(
+                    f"decision {name} must contain 1 to 500 characters"
+                )
+            payload[name] = value
+        values = result.get("refs")
+        if (
+            not isinstance(values, list)
+            or len(values) > 20
+            or any(not isinstance(value, str) or not value for value in values)
+        ):
+            raise CaptureIntegrityError(
+                "decision refs must contain at most 20 non-empty strings"
+            )
+        references = tuple(dict.fromkeys(values))
+        allowed = self._decision_allowed_refs()
+        if any(reference not in allowed for reference in references):
+            raise CaptureIntegrityError(
+                "decision refs must be known in the current run"
+            )
+        return payload, references
+
+    def _decision_allowed_refs(self) -> frozenset[str]:
+        path = (
+            self.workspace.root_path
+            / "context"
+            / "trajectory-allowed-refs.json"
+        )
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CaptureIntegrityError(
+                "decision allowed refs document is unreadable"
+            ) from exc
+        refs = document.get("refs") if isinstance(document, Mapping) else None
+        if (
+            not isinstance(refs, list)
+            or any(not isinstance(reference, str) or not reference for reference in refs)
+        ):
+            raise CaptureIntegrityError(
+                "decision allowed refs document is invalid"
+            )
+        return frozenset(refs)
 
     def _admit_tool_references(
         self, event: Mapping[str, Any], result: Mapping[str, Any]

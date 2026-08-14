@@ -16,7 +16,7 @@ from grid_agent.analysis.turns import ActiveTurnHandle, FinalizedTurn, TurnContr
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.runtime.rpc import PiProtocolError
 from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
-from grid_agent.trajectory.capture import NativeCaptureAdapter
+from grid_agent.trajectory.capture import CaptureIntegrityError, NativeCaptureAdapter
 from grid_agent.trajectory.context_bridge import NativeContextBridge
 from grid_agent.trajectory.events import EventDraft
 from grid_agent.trajectory.reader import RunEventReader
@@ -491,6 +491,43 @@ def test_runner_stops_on_pi_protocol_error_and_still_stops_process(
     assert runner_harness.pi.stop_calls == 1
     assert len(runner_harness.pi.prompts) == 1
     assert runner_harness.store.snapshot.status == "failed"
+
+
+def test_runner_records_capture_fatal_as_terminal_integrity_failure(
+    tmp_path: Path,
+) -> None:
+    runner_harness = _native_runner_harness(tmp_path)
+    runner_harness.pi.behavior = [
+        CaptureIntegrityError(
+            "Pi capture-fatal exit 86: trajectory request capture failed"
+        ),
+        SHOULD_NOT_RUN,
+    ]
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二"))
+    )
+
+    manifest = json.loads(
+        runner_harness.workspace.manifest_path.read_text(encoding="utf-8")
+    )
+    native_events = RunEventReader(
+        runner_harness.recorder.events_path
+    ).read_prefix().events
+    terminal = native_events[-1]
+    assert outcome.status == "failed"
+    assert outcome.error == (
+        "CaptureIntegrityError: Pi capture-fatal exit 86: "
+        "trajectory request capture failed"
+    )
+    assert runner_harness.pi.stop_calls == 1
+    assert len(runner_harness.pi.prompts) == 1
+    assert runner_harness.store.snapshot.status == "failed"
+    assert manifest["status"] == "failed"
+    assert manifest["error"] == outcome.error
+    assert terminal.event_type == "analysis.failed"
+    assert terminal.payload["error_type"] == "capture_integrity_error"
+    assert "capture-fatal exit 86" in terminal.payload["message"]
 
 
 def test_runner_start_failure_terminalizes_artifacts_and_still_stops_process(

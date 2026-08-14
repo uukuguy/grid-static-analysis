@@ -286,7 +286,10 @@ class AnalysisRunner:
                 self._store.append(
                     ContextEventDraft(
                         event_type="analysis.failed",
-                        payload={"error": error},
+                        payload={
+                            "error": error,
+                            "error_type": _terminal_error_type(error),
+                        },
                     ),
                     integrity="diagnostic",
                 )
@@ -435,3 +438,9 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(path)
+
+
+def _terminal_error_type(error: str) -> str:
+    if error.startswith("CaptureIntegrityError:"):
+        return "capture_integrity_error"
+    return "analysis_error"

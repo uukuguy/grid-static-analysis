@@ -15,7 +15,7 @@ from grid_agent.analysis.models import ContextEventDraft
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.trajectory.answers import AnswerSubmission, ReferenceVerifier, validate_submission
-from grid_agent.trajectory.events import EventDraft, EventRefs, EventSource, RunScope
+from grid_agent.trajectory.events import Causation, EventDraft, EventRefs, EventSource, RunScope
 from grid_agent.trajectory.recorder import RunEventRecorder
 
 
@@ -174,11 +174,9 @@ class TurnController:
         answer_bytes = _write_json_atomic(answer_path, envelope)
         _append_jsonl_fsync(self._workspace.answers_path, envelope)
 
-        self._record_claims(handle, submission)
-
         # Keep the accepted answer auditable in the context ledger before the
         # turn becomes terminal.
-        self._store.append(
+        accepted_answer = self._store.append(
             ContextEventDraft(
                 event_type="answer.submitted",
                 turn_id=handle.turn_id,
@@ -193,6 +191,11 @@ class TurnController:
                     "claim_evidence_refs": list(claim_evidence_refs),
                 },
             )
+        )
+        self._record_claims(
+            handle,
+            submission,
+            answer_sequence=accepted_answer.trace_sequence,
         )
 
         for diagnostic in diagnostics:
@@ -233,15 +236,20 @@ class TurnController:
         return frozenset(reference for reference in refs if isinstance(reference, str))
 
     def _record_claims(
-        self, handle: ActiveTurnHandle, submission: AnswerSubmission
+        self,
+        handle: ActiveTurnHandle,
+        submission: AnswerSubmission,
+        *,
+        answer_sequence: int | None,
     ) -> None:
-        if self._recorder is None:
+        if self._recorder is None or answer_sequence is None:
             return
         for claim in submission.claims:
             self._recorder.append(
                 EventDraft(
                     event_type="business.claim.declared",
                     scope=RunScope(turn_id=handle.turn_id),
+                    causation=Causation(parent_sequence=answer_sequence),
                     source=EventSource(kind="agent-declared"),
                     refs=EventRefs(
                         consumed=claim.result_refs,

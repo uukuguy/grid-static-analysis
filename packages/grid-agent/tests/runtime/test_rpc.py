@@ -15,7 +15,7 @@ from grid_agent.runtime.rpc import PiProtocolError, PiRpcClient
 from grid_agent.runtime.environment import PiLaunch
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
-from grid_agent.trajectory.capture import NativeCaptureAdapter
+from grid_agent.trajectory.capture import CaptureIntegrityError, NativeCaptureAdapter
 from grid_agent.trajectory.reader import RunEventReader
 from grid_agent.trajectory.recorder import RunEventRecorder
 
@@ -338,6 +338,41 @@ def test_rpc_rejects_successful_agent_end_without_answer_text(tmp_path: Path) ->
     client.start()
     try:
         with pytest.raises(PiProtocolError, match="without answer text"):
+            client.prompt_and_wait("question")
+    finally:
+        client.stop()
+
+
+def test_rpc_surfaces_pi_capture_fatal_exit_instead_of_generic_eof(
+    tmp_path: Path,
+) -> None:
+    fake = tmp_path / "fake_pi_capture_fatal.py"
+    fake.write_text(
+        "import json,sys\n"
+        "json.loads(input())\n"
+        "print('extension diagnostic before fatal', file=sys.stderr, flush=True)\n"
+        "print('trajectory request capture failed: fsync denied', file=sys.stderr, flush=True)\n"
+        "raise SystemExit(86)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(
+            path=fake,
+            source="explicit_override",
+            package_version="0.80.6",
+            lock_sha256="lock",
+        ),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(command, workspace, JsonlTraceWriter(workspace.events_path))
+
+    client.start()
+    try:
+        with pytest.raises(
+            CaptureIntegrityError,
+            match=r"capture-fatal.*86.*trajectory request capture failed",
+        ):
             client.prompt_and_wait("question")
     finally:
         client.stop()

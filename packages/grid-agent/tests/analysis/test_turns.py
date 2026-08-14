@@ -301,7 +301,8 @@ def test_turn_finalization_emits_claims_only_for_accepted_submission(tmp_path: P
     claim = next(event for event in events if event.event_type == "business.claim.declared")
     answer = next(event for event in events if event.event_type == "answer.submitted")
     assert claim.payload["submission_id"] == answer.payload["submission_id"]
-    assert events.index(claim) < events.index(answer)
+    assert events.index(answer) < events.index(claim)
+    assert claim.causation.parent_sequence == answer.sequence
 
 
 def test_rejected_submission_emits_rejection_without_claim_content(tmp_path: Path) -> None:
@@ -330,7 +331,7 @@ def test_rejected_submission_emits_rejection_without_claim_content(tmp_path: Pat
     assert not any(event.event_type == "answer.submitted" for event in events)
 
 
-def test_answer_commit_failure_leaves_claims_explicitly_dangling(
+def test_answer_commit_failure_emits_no_accepted_claims(
     tmp_path: Path,
 ) -> None:
     controller, recorder, store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
@@ -361,8 +362,7 @@ def test_answer_commit_failure_leaves_claims_explicitly_dangling(
         controller.finalize(handle, duration_seconds=1.0)
 
     events = RunEventReader(recorder.events_path).read_prefix().events
-    claim = next(event for event in events if event.event_type == "business.claim.declared")
-    assert claim.payload["submission_id"] == "submission-1"
+    assert not any(event.event_type == "business.claim.declared" for event in events)
     assert not any(event.event_type == "answer.submitted" for event in events)
 
 
