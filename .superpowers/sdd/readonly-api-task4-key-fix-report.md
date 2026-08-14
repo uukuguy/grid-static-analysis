@@ -49,3 +49,38 @@ uv run --project . pyright src/grid_agent/trajectory/api/cursor.py tests/traject
 git diff --check
 passed
 ```
+
+## Review follow-up: descriptor owner validation
+
+Existing cursor keys now also require that the opened descriptor's `st_uid`
+matches `os.geteuid()`. The check is made alongside the existing descriptor
+regular-file, inode/device, private-mode, and size checks, so it retains the
+no-follow and replacement protections.
+
+TDD evidence:
+
+```text
+RED: uv run --project packages/grid-agent pytest \
+     packages/grid-agent/tests/trajectory/api/test_cursor.py -q
+     1 failed, 9 passed
+
+GREEN: uv run --project packages/grid-agent pytest \
+       packages/grid-agent/tests/trajectory/api/test_cursor.py -q
+       10 passed
+
+uv run --project packages/grid-agent ruff check \
+  packages/grid-agent/src/grid_agent/trajectory/api/cursor.py \
+  packages/grid-agent/tests/trajectory/api/test_cursor.py
+All checks passed!
+
+uv run --project packages/grid-agent pyright \
+  packages/grid-agent/src/grid_agent/trajectory/api/cursor.py \
+  packages/grid-agent/tests/trajectory/api/test_cursor.py
+0 errors, 0 warnings, 0 informations
+
+git diff --check
+passed
+```
+
+The regression test mocks `fstat` with a foreign `st_uid`, allowing portable
+coverage even where the test process cannot `chown` a key file.

@@ -139,6 +139,8 @@ def _read_private_key(key_path: Path) -> bytes:
             raise ValueError("cursor key must be a regular file")
         if key_status.st_mode & 0o077:
             raise ValueError("cursor key must be private")
+        if key_status.st_uid != os.geteuid():
+            raise ValueError("cursor key must be owned by the current user")
         if key_status.st_size != 32:
             raise ValueError("cursor key must contain 32 bytes")
         return handle.read()

@@ -91,6 +91,27 @@ def test_cursor_loads_safe_existing_private_key(tmp_path: Path) -> None:
     assert codec.encode(cursor_state())
 
 
+def test_cursor_rejects_existing_key_owned_by_another_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "cursor.key"
+    path.write_bytes(b"x" * 32)
+    path.chmod(0o600)
+    key_status = os.stat(path)
+
+    def fstat_with_foreign_owner(_: int) -> os.stat_result:
+        status_fields = list(key_status)
+        status_fields[4] = os.geteuid() + 1
+        return os.stat_result(status_fields)
+
+    monkeypatch.setattr(
+        "grid_agent.trajectory.api.cursor.os.fstat", fstat_with_foreign_owner
+    )
+
+    with pytest.raises(ValueError, match="owned"):
+        CursorCodec.load_or_create(path)
+
+
 def test_cursor_rejects_foreign_run_wrong_view_and_stale_projection(tmp_path: Path) -> None:
     codec = CursorCodec.load_or_create(tmp_path / "cursor.key")
     encoded = codec.encode(cursor_state())
