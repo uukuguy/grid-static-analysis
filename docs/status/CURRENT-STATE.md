@@ -4,10 +4,10 @@
 
 - Project: grid-static-analysis
 - Current branch: main
-- Theme-level focus: semantic pandapower capability foundation for evidence-backed static analysis
+- Theme-level focus: provider-validated continuous Analysis baseline for post-v0.2 capability planning
 - Project route: direct
-- Canonical worklist: `docs/superpowers/plans/2026-08-12-wp-a-semantic-foundation-validation.md`
-- Active work package: none — WP-A integrated
+- Canonical worklist: none — v0.2 baseline complete
+- Active work package: none
 
 ## Current Architecture
 
@@ -16,11 +16,11 @@
 - Simulator: `gridctl` owns registered read-only IEEE-39 access, typed semantic capabilities, pandapower 3.4.0 execution, result persistence, and evidence.
 - Integrity: online drafts declare primary `result_refs` and `claim_evidence_refs`; current-run documents, digests, immutable simulation contexts, and evidence-associated result links are verified without parsing answer prose.
 - Context engineering: each simulator-backed question opens a typed, immutable simulation-environment context (registered model source, pandapower version, semantic version, network counts and context reference); batch reports render that actual context rather than a guessed label.
-- Validation: deterministic offline and scripted Pi suites validate structured tool results, capability boundaries, evidence, and the output envelope; provider validation is opt-in.
+- Validation: deterministic offline/scripted suites and provider-backed continuous Analysis validate structured results, capability boundaries, evidence, reports, and the output envelope.
 
 ## Open Problems (theme-level)
 
-- WP-B scope is not approved; multi-network lifecycle, DC flow, and richer policy/risk work remain deferred.
+- Post-v0.2 scope is not selected; multi-network lifecycle, DC flow, and richer policy/risk work remain deferred.
 
 ## Key Files
 
@@ -36,6 +36,8 @@
 - `Makefile` — supported setup, execution, validation, and test commands
 - `docs/RUNBOOK.md` — runtime/provider/evidence operations
 - `docs/MANUAL-VALIDATION.md` — human acceptance procedure aligned to Makefile
+- `docs/architecture/analysis-context.md` — continuous Analysis context and report architecture
+- `validation/questions/task.md.txt` — canonical provider-backed Analysis instruction set
 - `skills/grid-static-analysis/SKILL.md` — agent operating manual
 
 ## Resume Instructions
@@ -43,4 +45,4 @@
 1. Read this file, then `RESUME-NEXT-SESSION.md` and the tail of `JOURNAL.md`.
 2. Run `git status --short` and `make doctor`.
 3. Use `make test`, `make test-e2e`, and `make validate` before changing a verified boundary.
-4. Treat WP-B as new, explicitly approved work; do not revive the retired GSE implementation.
+4. Start new work from tag `v0.2`; explicitly select scope before implementation and do not revive the retired GSE implementation.

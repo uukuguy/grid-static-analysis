@@ -1,35 +1,41 @@
 # Live Session Checkpoint
 
-> Updated: 2026-08-13. **Session remains active — WP-A has been integrated.**
+> Updated: 2026-08-14 16:49. **Session remains active — not a final handoff.**
 
 ## TL;DR
 
-- WP-A semantic capability foundation is integrated on `main` from the verified `v0.1`-based branch.
-- The product uses direct pandapower domain capabilities, a complete Skill, structured evidence/result integrity, and deterministic validation; the old GSE implementation is retained only on `archive/pre-wp-a-gse-main`.
-- `docs/MANUAL-VALIDATION.md` provides human verification steps aligned with Makefile.
+- 真实 provider 连续 Analysis 已通过：`runs/analysis-20260814T081822Z` 完成 9/9 指令，报告无此前关注的契约错误、中断或机器引用噪声。
+- 验证输入与 `validation/questions/task.md.txt` 完全一致；当前连续 Analysis 实现可作为可复现基线。
+- `v0.2` 是后续工作的干净新起点，下一阶段范围尚未选择。
 
-## Current repository state
+## Where things stand
 
-- `main` points to the WP-A integration line; the prior main history is preserved by `archive/pre-wp-a-gse-main`.
-- The pre-existing Makefile question examples were preserved during cutover.
-- Runtime state is ignored under `runs/` and `.grid-agent/`; no run artifacts are source files.
+- 基线版本：`v0.2`，项目与一方包版本 `0.2.0`。
+- 运行环境：DeepSeek `deepseek-v4-flash`、grid-capability `1.0`、pandapower `3.4.0`。
+- 运行结果：manifest `completed`，9 个 turn 全部成功。
+- 非计费门槛：agent 264、simulator 87、Node 14、E2E 15 全通过；offline/scripted validation 通过。
+- 运行证据：`runs/analysis-20260814T081822Z/`（ignored operator-visible evidence）。
+- 项目路线：direct；当前无 active work package。
 
-## Immediate next action
+## Next steps
 
-1. For operational verification, follow `docs/MANUAL-VALIDATION.md` and run `make doctor`, `make test`, `make test-e2e`, and `make validate`.
-2. Treat any new capability beyond registered read-only IEEE-39 as separately planned WP-B work.
-3. Do not reintroduce lexical GSE capability matching or generic model filesystem/shell tools.
+1. 从 `v0.2` 选择并规划下一阶段范围，再创建新分支实施。
+2. 若推进原 WP-B 候选能力，先明确多网络、DC 潮流和 policy/risk 的优先级与验收边界。
+3. 保持 `v0.2` 的 stdout、仿真边界、证据和连续 Analysis 合同不回退。
 
-## Ruled-out paths
+## Don't go down these paths again
 
-- Do not continue patching the retired lexical GSE capability projection.
-- Do not restrict product scope to the examples in `docs/TASK.md`; maintain a growing validation corpus.
-- Do not expose external pandapower Skills or PowerMCP execution boundaries unchanged.
-- Do not retain legacy prompts, protocols, tools, generated documents, or duplicate transports after cutover.
+- 不要恢复遗留 GSE 或 policies 数值捷径。
+- 不要让 Pi 获得 shell、任意文件、Python 或原始 pandapower 对象能力。
+- 不要把单次 `agent_end` 当成 Pi 自动重试后的最终结束。
+- 不要把机器引用 ID 放回面向读者的报告正文。
 
-## Design anchors
+## Ready-to-paste commands
 
-- `v0.1` is the behavioral and branch baseline, not an implementation to restore unchanged.
-- The Skill is a complete operational manual; tool contracts remain independently precise.
-- Registered read-only networks are the first priority, while the architecture supports immutable-revision lifecycle operations.
-- `runs/` holds operator-visible evidence; `.grid-agent/` holds ignored internal state.
+```sh
+git switch -c feature/<next-scope> v0.2
+make doctor
+make test
+make test-e2e
+make validate
+```
