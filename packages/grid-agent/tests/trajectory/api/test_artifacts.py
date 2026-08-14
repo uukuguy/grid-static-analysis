@@ -51,6 +51,21 @@ def test_gateway_returns_the_verified_bytes_after_the_file_changes(tmp_path: Pat
     assert response.size_bytes == len(response.content)
 
 
+def test_gateway_reads_verified_bytes_from_a_nofollow_file_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_root, index, evidence_ref = artifact_fixture(tmp_path)
+
+    def read_by_path_is_forbidden(_: Path) -> bytes:
+        pytest.fail("artifact gateway must read from its verified file descriptor")
+
+    monkeypatch.setattr(Path, "read_bytes", read_by_path_is_forbidden)
+
+    response = ArtifactGateway(run_root, index).open(evidence_ref)
+
+    assert response.content == b'{"fact":"verified"}\n'
+
+
 @pytest.mark.parametrize(
     "reference",
     [

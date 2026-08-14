@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import os
 import stat
 from dataclasses import dataclass
 from hashlib import sha256
@@ -55,34 +57,33 @@ class ArtifactGateway:
             raise ArtifactAccessError("artifact is not a safe run path")
 
         relative_path = _safe_relative_path(record.relative_path)
-        lexical = root.joinpath(*relative_path.parts)
-        if lexical.is_symlink():
-            raise ArtifactAccessError("artifact is not a safe run path")
         try:
-            resolved = lexical.resolve(strict=True)
+            descriptor = _open_nofollow(root, relative_path)
         except OSError as exc:
-            raise ArtifactAccessError("artifact is not a safe run path") from exc
-        if not resolved.is_relative_to(root):
-            raise ArtifactAccessError("artifact is not a safe run path")
-
+            if exc.errno == errno.ELOOP:
+                raise ArtifactAccessError("artifact is not a safe run path") from exc
+            raise ArtifactAccessError("artifact is not a regular file") from exc
         try:
-            file_stat = resolved.stat()
+            file_stat = os.fstat(descriptor)
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ArtifactAccessError("artifact is not a regular file")
+            with os.fdopen(descriptor, "rb", closefd=True) as artifact_file:
+                descriptor = -1
+                value = artifact_file.read()
         except OSError as exc:
             raise ArtifactAccessError("artifact is not a regular file") from exc
-        if not stat.S_ISREG(file_stat.st_mode):
-            raise ArtifactAccessError("artifact is not a regular file")
-
-        try:
-            value = resolved.read_bytes()
-        except OSError as exc:
-            raise ArtifactAccessError("artifact is not a regular file") from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        if file_stat.st_size != len(value):
+            raise ArtifactAccessError("artifact integrity mismatch")
         if sha256(value).hexdigest() != record.sha256:
             raise ArtifactAccessError("artifact integrity mismatch")
 
         return ArtifactResponse(
             content=value,
-            media_type=media_type_for(resolved),
-            filename=resolved.name,
+            media_type=media_type_for(Path(relative_path.name)),
+            filename=relative_path.name,
             sha256=record.sha256,
             size_bytes=len(value),
         )
@@ -110,6 +111,24 @@ def _safe_relative_path(value: str) -> PurePosixPath:
     if path.is_absolute() or not path.parts or ".." in path.parts:
         raise ArtifactAccessError("artifact is not a safe run path")
     return path
+
+
+def _open_nofollow(root: Path, relative_path: PurePosixPath) -> int:
+    """Open an indexed file through descriptor-relative no-follow traversal."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | nofollow)
+    try:
+        for part in relative_path.parts[:-1]:
+            next_directory = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | nofollow,
+                dir_fd=directory,
+            )
+            os.close(directory)
+            directory = next_directory
+        return os.open(relative_path.parts[-1], os.O_RDONLY | nofollow, dir_fd=directory)
+    finally:
+        os.close(directory)
 
 
 __all__ = ["ArtifactAccessError", "ArtifactGateway", "ArtifactResponse", "media_type_for"]

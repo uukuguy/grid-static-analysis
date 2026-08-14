@@ -217,6 +217,23 @@ def test_every_response_has_browser_security_headers_without_cors(tmp_path: Path
     assert "access-control-allow-origin" not in response.headers
 
 
+def test_request_validation_errors_are_typed_and_secured(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get("/api/runs/analysis-test/context?at_sequence=zero")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": "invalid_request",
+        "message": "request parameters are invalid",
+    }
+    assert response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_openapi_exposes_only_get_methods(tmp_path: Path) -> None:
     app, _, _ = create_test_app(tmp_path)
 

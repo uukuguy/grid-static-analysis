@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -96,6 +97,15 @@ def create_trajectory_app(catalog: TrajectoryRunCatalog, cursor_codec: CursorCod
             status_code=404,
             code="run_not_found",
             message="trajectory run not found",
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(_: Request, __: RequestValidationError) -> JSONResponse:
+        """Return a stable public envelope without exposing validation internals."""
+        return _api_error_response(
+            status_code=422,
+            code="invalid_request",
+            message="request parameters are invalid",
         )
 
     @app.exception_handler(CursorError)

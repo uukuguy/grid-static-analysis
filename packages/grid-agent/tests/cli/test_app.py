@@ -115,6 +115,38 @@ def test_report_command_delegates_to_analysis_without_child_run(
     assert AnswerEnvelope.model_validate_json(result.stdout).question_id.startswith("analysis-")
 
 
+def test_trajectory_serve_delegates_without_answer_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("grid_agent.cli.app.serve_trajectory", lambda **kwargs: observed.update(kwargs))
+
+    result = CliRunner().invoke(app, ["trajectory", "serve", "--port", "9000"])
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert observed["port"] == 9000
+    assert observed["host"] == "127.0.0.1"
+    assert observed["runs_root"] == Path("runs")
+
+
+def test_trajectory_serve_reports_startup_errors_on_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "grid_agent.cli.app.serve_trajectory",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("missing assets")),
+    )
+
+    result = CliRunner().invoke(app, ["trajectory", "serve"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "grid-agent trajectory error: missing assets" in result.stderr
+
+
 def _canonical_json(document: object) -> str:
     return json.dumps(document, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 

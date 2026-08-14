@@ -43,10 +43,13 @@ from grid_agent.trajectory.capture import NativeCaptureAdapter
 from grid_agent.trajectory.context_bridge import NativeContextBridge
 from grid_agent.trajectory.events import RunEvent
 from grid_agent.trajectory.recorder import RunEventRecorder
+from grid_agent.trajectory.api.server import serve_trajectory
 from grid_agent.reporting import AuditDiagnostic, humanize_answer, load_questions
 
 
 app = typer.Typer(add_completion=False)
+trajectory_app = typer.Typer(help="Inspect read-only agent and business trajectories.")
+app.add_typer(trajectory_app, name="trajectory")
 _NON_SIMULATOR_CAPABILITIES = {"grid_submit_answer", "grid_guide_open"}
 
 
@@ -54,6 +57,25 @@ _NON_SIMULATOR_CAPABILITIES = {"grid_submit_answer", "grid_guide_open"}
 class SubmittedAnswer:
     answer_output: str
     diagnostics: tuple[AuditDiagnostic, ...]
+
+
+@trajectory_app.command("serve")
+def trajectory_serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8765, "--port", min=1, max=65535),
+    runs_root: Path = typer.Option(Path("runs"), "--runs-root"),
+) -> None:
+    """Serve immutable trajectory projections only on loopback interfaces."""
+    try:
+        serve_trajectory(
+            project_paths=ProjectPaths.from_root(Path.cwd()),
+            host=host,
+            port=port,
+            runs_root=runs_root,
+        )
+    except Exception as exc:
+        typer.echo(f"grid-agent trajectory error: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 class _TrajectoryAllowedRefs:

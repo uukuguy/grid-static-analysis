@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm analysis report test test-agent test-simulator test-tools test-e2e validate validate-provider
+.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm analysis report trajectory test test-agent test-simulator test-tools test-e2e validate validate-provider
 
 help:
 	@echo "Grid Static Analysis commands"
@@ -10,6 +10,7 @@ help:
 	@echo "  make run-llm QUESTION='...'  Primary natural-language agent path via Pi/LLM"
 	@echo "  make analysis [INSTRUCTIONS=...]  Continuous analysis report; default TASK instruction set"
 	@echo "  make report [INSTRUCTIONS=...]  Compatibility alias for make analysis"
+	@echo "  make trajectory [PORT=8765]  Serve read-only trajectory API on loopback"
 	@echo "  make install-pi            Install the pinned Pi runtime"
 	@echo "  make auth-import-pi        Import local Pi Codex OAuth to this project"
 	@echo "  make auth-login            Log in to Pi Codex OAuth for this project"
@@ -66,6 +67,11 @@ analysis:
 	uv run --project packages/grid-agent grid-agent analysis --instructions "$(INSTRUCTIONS)" $(if $(PROVIDER),--provider "$(PROVIDER)") $(if $(MODEL),--model "$(MODEL)")
 
 report: analysis
+
+PORT ?= 8765
+
+trajectory:
+	uv run --project packages/grid-agent grid-agent trajectory serve --host 127.0.0.1 --port "$(PORT)" --runs-root runs
 
 test: test-agent test-simulator test-tools
 
