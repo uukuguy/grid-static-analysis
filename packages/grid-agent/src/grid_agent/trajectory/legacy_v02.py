@@ -75,6 +75,21 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _source_path(run_root: Path, path: Path) -> str:
+    return path.relative_to(run_root).as_posix()
+
+
+def _trace_fields(value: dict[str, Any]) -> tuple[str | None, dict[str, Any], str | None]:
+    """Read both semantic trace envelopes actually emitted by v0.2."""
+    payload = value.get("payload")
+    payload = payload if isinstance(payload, dict) else value
+    item_type = payload.get("type") or payload.get("event") or value.get("type") or value.get("event")
+    if not isinstance(item_type, str):
+        item_type = None
+    call_id = payload.get("tool_call_id") or payload.get("toolCallId")
+    return item_type, payload, call_id if isinstance(call_id, str) else None
+
+
 def _stable_topological_order(records: Sequence[LegacyRecord], edges: Sequence[tuple[str, str]]) -> tuple[LegacyRecord, ...]:
     by_id = {record.id: record for record in records}
     if len(by_id) != len(records):
@@ -122,6 +137,7 @@ class LegacyV02Importer:
         source_fingerprint = hashlib.sha256(canonical_json_bytes({path.relative_to(self.run_root).as_posix(): _digest(path) for path in files})).hexdigest()
         records: list[LegacyRecord] = []
         edges: list[tuple[str, str]] = []
+        diagnostics: list[LegacyDiagnostic] = []
         manifest_digest = _digest(manifest_path)
         records.append(LegacyRecord("manifest:1", "manifest", 1, "manifest.json", manifest_digest, "analysis.started"))
 
@@ -164,10 +180,17 @@ class LegacyV02Importer:
             known = [turn_id for start, turn_id in turn_windows if start <= instant]
             return known[-1] if known else None
         context_path = self.run_root / "context/context-events.jsonl"
+        trace_records: dict[int, str] = {}
         if context_path.is_file():
             digest = _digest(context_path)
             previous_context_id: str | None = None
             for line, value in _json_lines(context_path):
+                if value.get("analysis_id") != analysis_id:
+                    raise LegacyImportError(f"context/context-events.jsonl:{line} has missing or mismatched analysis_id")
+                if not isinstance(value.get("event_type"), str):
+                    raise LegacyImportError(f"context/context-events.jsonl:{line} is missing event_type")
+                if not isinstance(value.get("sequence"), int):
+                    raise LegacyImportError(f"context/context-events.jsonl:{line} is missing sequence")
                 kind = value.get("event_type")
                 turn_id = value.get("turn_id") if isinstance(value.get("turn_id"), str) else None
                 mapping = {"turn.started": "turn.started", "turn.completed": "turn.completed", "analysis.completed": "analysis.completed", "analysis.failed": "analysis.failed"}
@@ -181,23 +204,30 @@ class LegacyV02Importer:
                     turn_starts[turn_id] = record.id
                 elif event_type == "turn.completed" and turn_id:
                     turn_ends[turn_id] = record.id
+                trace_sequence = value.get("trace_sequence")
+                if trace_sequence is not None:
+                    if not isinstance(trace_sequence, int) or trace_sequence < 1:
+                        raise LegacyImportError(f"context/context-events.jsonl:{line} has invalid trace_sequence")
+                    trace_records[trace_sequence] = record.id
+        else:
+            diagnostics.append(LegacyDiagnostic("context-unavailable", "context ledger unavailable"))
 
         trace_path = self.run_root / "trace/events.jsonl"
         if trace_path.is_file():
             digest = _digest(trace_path)
             active_turn: str | None = None
             for line, value in _json_lines(trace_path):
-                payload = value.get("payload")
-                if not isinstance(payload, dict):
-                    continue
+                if not isinstance(value.get("sequence"), int):
+                    raise LegacyImportError(f"trace/events.jsonl:{line} is missing sequence")
+                item_type, payload, call_id = _trace_fields(value)
+                if item_type is None:
+                    raise LegacyImportError(f"trace/events.jsonl:{line} is missing event type")
                 # Context records give an unambiguous turn only when they expose it;
                 # otherwise a tool lifecycle remains observed with turn unavailable.
                 if isinstance(value.get("turn_id"), str):
                     active_turn = value["turn_id"]
                 else:
                     active_turn = turn_at(value.get("timestamp"))
-                item_type = payload.get("type")
-                call_id = payload.get("tool_call_id")
                 if isinstance(call_id, str) and call_id in tool_turns:
                     active_turn = tool_turns[call_id]
                 if item_type == "tool_execution_start" and isinstance(call_id, str):
@@ -209,7 +239,82 @@ class LegacyV02Importer:
                     result = payload.get("result")
                     if isinstance(result, dict) and isinstance(result.get("result_ref"), str):
                         refs.append(result["result_ref"])
-                    records.append(LegacyRecord(f"trace:{line}", "trace", line, "trace/events.jsonl", digest, "tool.completed", active_turn, call_id, {"capability": str(capability), "ok": bool(payload.get("ok")), "refs": refs}))
+                    context_ref = result.get("context_ref") if isinstance(result, dict) else None
+                    records.append(LegacyRecord(f"trace:{line}", "trace", line, "trace/events.jsonl", digest, "tool.completed", active_turn, call_id, {"capability": str(capability), "ok": bool(payload.get("ok")), "context_ref": context_ref, "refs": refs}))
+                else:
+                    records.append(LegacyRecord(f"trace:{line}", "trace", line, "trace/events.jsonl", digest, "legacy.trace.event", active_turn, call_id, {"type": item_type}))
+            for trace_sequence, context_id in trace_records.items():
+                trace_id = f"trace:{trace_sequence}"
+                if any(record.id == trace_id for record in records):
+                    edges.append((trace_id, context_id))
+                else:
+                    diagnostics.append(LegacyDiagnostic("trace-sequence-unavailable", f"context trace_sequence {trace_sequence} has no trace record"))
+        else:
+            diagnostics.append(LegacyDiagnostic("trace-unavailable", "semantic trace unavailable"))
+
+        def add_json_file(path: Path, source_kind: str, event_type: str, *, turn_id: str | None = None) -> None:
+            relative = _source_path(self.run_root, path)
+            try:
+                value = json.loads(path.read_bytes())
+            except json.JSONDecodeError as exc:
+                raise LegacyImportError(f"invalid JSON in {relative}: {exc.msg}") from exc
+            if not isinstance(value, dict):
+                raise LegacyImportError(f"JSON object required in {relative}")
+            records.append(LegacyRecord(f"{source_kind}:{relative}", source_kind, 1, relative, _digest(path), event_type, turn_id, payload={"available": True}))
+
+        instruction_path = self.run_root / "input/instructions.md.txt"
+        if instruction_path.is_file():
+            records.append(LegacyRecord("artifact:input/instructions.md.txt", "artifact", 1, "input/instructions.md.txt", _digest(instruction_path), "legacy.instructions", payload={"available": True}))
+        else:
+            diagnostics.append(LegacyDiagnostic("instruction-unavailable", "instruction input unavailable"))
+
+        pi_paths = tuple(sorted((self.run_root / "pi").glob("*.jsonl")))
+        if pi_paths:
+            for pi_path in pi_paths:
+                digest = _digest(pi_path)
+                for line, value in _json_lines(pi_path):
+                    if not isinstance(value.get("type"), str):
+                        raise LegacyImportError(f"{_source_path(self.run_root, pi_path)}:{line} is missing type")
+                    records.append(LegacyRecord(f"pi:{pi_path.name}:{line}", "pi", line, _source_path(self.run_root, pi_path), digest, "legacy.pi.event", timestamp=value.get("timestamp") if isinstance(value.get("timestamp"), str) else None, payload={"type": value["type"]}))
+        else:
+            diagnostics.append(LegacyDiagnostic("pi-unavailable", "Pi session unavailable"))
+
+        answers_path = self.run_root / "output/answers.jsonl"
+        if answers_path.is_file():
+            digest = _digest(answers_path)
+            for line, value in _json_lines(answers_path):
+                turn_id = value.get("question_id")
+                if not isinstance(turn_id, str) or not isinstance(value.get("answer_output"), str):
+                    raise LegacyImportError(f"output/answers.jsonl:{line} requires question_id and answer_output")
+                records.append(LegacyRecord(f"turn:output:{line}", "turn", line, "output/answers.jsonl", digest, "legacy.answer.output", turn_id, payload={"available": True}))
+        else:
+            diagnostics.append(LegacyDiagnostic("answers-unavailable", "accepted answers unavailable"))
+        turn_files = tuple(sorted((self.run_root / "turns").glob("*/answer*.json")))
+        if turn_files:
+            for path in turn_files:
+                turn_id = path.parent.name
+                event_type = "legacy.answer.audit" if path.name == "answer-audit.json" else "legacy.answer.draft" if path.name == "answer-draft.json" else "legacy.answer"
+                add_json_file(path, "turn", event_type, turn_id=turn_id)
+        else:
+            diagnostics.append(LegacyDiagnostic("turn-artifacts-unavailable", "turn drafts and audits unavailable"))
+        for path in sorted((self.run_root / "turns").glob("*/trace.md")):
+            records.append(LegacyRecord(f"turn:{_source_path(self.run_root, path)}", "turn", 999998, _source_path(self.run_root, path), _digest(path), "legacy.turn.trace-page", path.parent.name, payload={"available": True}))
+
+        for path in sorted((self.run_root / "tool-results").glob("*/*.json")):
+            try:
+                tool_result = json.loads(path.read_bytes())
+            except json.JSONDecodeError as exc:
+                raise LegacyImportError(f"invalid JSON in {_source_path(self.run_root, path)}: {exc.msg}") from exc
+            if not isinstance(tool_result, dict) or not isinstance(tool_result.get("capability"), str) or not isinstance(tool_result.get("ok"), bool):
+                raise LegacyImportError(f"{_source_path(self.run_root, path)} requires capability and ok")
+            add_json_file(path, "artifact", "legacy.tool-result", turn_id=path.parent.name)
+        for path in sorted((self.run_root / "evidence").glob("**/*.json")):
+            add_json_file(path, "artifact", "legacy.artifact")
+        report_path = self.run_root / "report.md"
+        if report_path.is_file():
+            records.append(LegacyRecord("artifact:report.md", "artifact", 999999, "report.md", _digest(report_path), "legacy.report", payload={"available": True}))
+        else:
+            diagnostics.append(LegacyDiagnostic("report-unavailable", "report unavailable"))
 
         # Tie each tool result to its start, and any known turn boundary.  No source
         # stream is globally assumed to be a historical total order.
@@ -223,17 +328,26 @@ class LegacyV02Importer:
                 edges.append((record.id, turn_ends[record.turn_id]))
         ordered = _stable_topological_order(records, edges)
         events: list[ImportedRunEvent] = []
+        sequences_by_record_id: dict[str, int] = {}
+        edge_parents: dict[str, list[str]] = {}
+        for parent, child in edges:
+            edge_parents.setdefault(child, []).append(parent)
         previous_hash = ZERO_PREDECESSOR_HASH
         for sequence, record in enumerate(ordered, 1):
-            parent_sequence = next((event.sequence for event in events if event.source_coordinate.path == record.path and event.source_coordinate.sequence == record.source_sequence - 1), None)
+            explicit_parents = edge_parents.get(record.id, [])
+            parent_sequence = next((sequences_by_record_id[parent] for parent in explicit_parents if parent in sequences_by_record_id), None)
+            if parent_sequence is None:
+                parent_sequence = next((event.sequence for event in events if event.source_coordinate.path == record.path and event.source_coordinate.sequence == record.source_sequence - 1), None)
             refs = record.payload.get("refs", [])
             event_payload = {key: value for key, value in record.payload.items() if key != "refs" and value is not None}
             content = {"analysis_id": analysis_id, "sequence": sequence, "event_type": record.event_type, "previous": previous_hash, "source": [record.path, record.source_sequence, record.digest], "payload": event_payload}
             import_hash = "sha256:" + hashlib.sha256(canonical_json_bytes(content)).hexdigest()
             event = ImportedRunEvent(analysis_id=analysis_id, sequence=sequence, timestamp=record.timestamp, event_type=record.event_type, import_previous_hash=previous_hash, import_hash=import_hash, source_coordinate=SourceCoordinate(path=record.path, sequence=record.source_sequence, sha256=record.digest), scope=RunScope(turn_id=record.turn_id, step_id=f"{record.turn_id}:s001" if record.turn_id else None, request_id=f"{record.turn_id}:r001" if record.turn_id else None, tool_call_id=record.tool_call_id), causation=Causation(parent_sequence=parent_sequence), source=EventSource(kind="observed", producer="legacy-v0.2-importer", integrity="importer-integrity"), context=ContextBoundary(after_revision=event_payload.get("revision")), refs=EventRefs(produced=tuple(ref for ref in refs if ref.startswith("result:")), evidence=tuple(ref for ref in refs if ref.startswith("evidence:"))), payload=event_payload)
             events.append(event)
+            sequences_by_record_id[record.id] = sequence
             previous_hash = import_hash
-        return ImportedReplay(analysis_id, tuple(events), source_fingerprint, (LegacyDiagnostic("missing-request-input", "model request input unavailable"),))
+        diagnostics.append(LegacyDiagnostic("missing-request-input", "model request input unavailable"))
+        return ImportedReplay(analysis_id, tuple(events), source_fingerprint, tuple(diagnostics))
 
 
 __all__ = ["ImportedReplay", "LegacyDiagnostic", "LegacyImportError", "LegacyRecord", "LegacyV02Importer", "SOURCE_RANK", "_stable_topological_order"]

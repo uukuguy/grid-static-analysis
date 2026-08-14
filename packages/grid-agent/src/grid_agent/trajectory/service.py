@@ -13,6 +13,7 @@ from grid_agent.trajectory.artifact_projection import project_artifacts
 from grid_agent.trajectory.business_projection import project_business
 from grid_agent.trajectory.context_projection import project_context
 from grid_agent.trajectory.legacy_v02 import LegacyV02Importer
+from grid_agent.trajectory.artifacts import ArtifactPointer
 from grid_agent.trajectory.materialize import ProjectionMaterializer
 from grid_agent.trajectory.projection_models import ProjectedRun, ProjectionDiagnostic
 from grid_agent.trajectory.reader import RunEventReader
@@ -41,6 +42,29 @@ class _HistoricalArtifacts:
         raise RuntimeError("v0.2 references are not native artifact pointers")
 
 
+class _NativeArtifacts:
+    """Verify native artifact pointers by their digest, never legacy filenames."""
+
+    def __init__(self, run_root: Path) -> None:
+        self.run_root = run_root
+
+    def verify_reference(self, reference: str) -> ArtifactPointer:
+        if not reference.startswith("artifact:sha256:"):
+            raise RuntimeError("native artifact reference is unavailable")
+        digest = reference.rsplit(":", 1)[-1]
+        for path in sorted(self.run_root.glob("requests/**/*.json")) + sorted(self.run_root.glob("turns/**/*.json")) + sorted(self.run_root.glob("context/views/**/*.json")):
+            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                continue
+            relative = path.relative_to(self.run_root).as_posix()
+            kind = "request-input" if relative.startswith("requests/") and path.name == "input.json" else "model-response" if relative.startswith("requests/") else "answer" if relative.startswith("turns/") else "context-view"
+            return ArtifactPointer(ref=reference, kind=kind, relative_path=relative, sha256=digest, size_bytes=path.stat().st_size)
+        raise RuntimeError("native artifact digest is unavailable")
+
+    def verify(self, reference: str) -> SimpleNamespace:
+        self.verify_reference(reference)
+        return SimpleNamespace(authority="gridctl", integrity="verified")
+
+
 class ProjectionService:
     def __init__(self, cache_root: Path) -> None:
         self.cache_root = Path(cache_root)
@@ -53,11 +77,12 @@ class ProjectionService:
             events = prefix.events
             source_fingerprint = hashlib.sha256(native_path.read_bytes()).hexdigest()
             extra = () if prefix.failure is None else (ProjectionDiagnostic(id="native-replay-failure", source_sequences=(max(1, len(events)),), rule_id="native-prefix-validation/v1", severity="error", code=prefix.failure.code, message=prefix.failure.message),)
+            artifacts = _NativeArtifacts(run_root)
         else:
             imported = LegacyV02Importer(run_root).import_run()
             events, source_fingerprint = imported.events, imported.source_fingerprint
             extra = tuple(ProjectionDiagnostic(id=f"legacy:{item.code}", source_sequences=(1,), rule_id="legacy-import/v1", severity="warning", code=item.code, message=item.message) for item in imported.diagnostics)
-        artifacts = _HistoricalArtifacts(run_root)
+            artifacts = _HistoricalArtifacts(run_root)
         replay_events = cast(Sequence[ReplayEventLike], events)
         projected = ProjectedRun(analysis_id=events[0].analysis_id if events else run_root.name, source_fingerprint=source_fingerprint, agent=project_agent(replay_events), business=project_business(replay_events, artifacts), context=project_context(replay_events, artifacts), artifacts=project_artifacts(replay_events, artifacts), diagnostics=extra)
         ProjectionMaterializer(self.cache_root).write(projected, source_fingerprint)
