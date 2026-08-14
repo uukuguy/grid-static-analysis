@@ -646,6 +646,6 @@ Expected: no uncommitted implementation changes; five task commits are visible. 
 ## Self-Review
 
 - Spec coverage: exact request input, public responses, TTFT/usage, retries, tools, native lifecycle, context revisions/injections, single-writer ordering, bounded decisions, structured claims, rejection semantics, terminal recorder failure, and compatibility outputs are covered.
-- The Pi 0.80.6 hook is verified locally at `var/runtime/pi/source/packages/coding-agent/src/core/extensions/types.ts` as `before_provider_request(payload: unknown)`; the plan does not assume an undocumented message approximation.
+- The Pi 0.80.6 hook is verified locally in the installed source tree as `before_provider_request(payload: unknown)`; the plan does not assume an undocumented message approximation.
 - Deferred intentionally: projection materialization, historical importer, API, UI, and live streaming remain in later plans.
 - Type consistency: the capture plan consumes exactly the event-spine interfaces and produces native logs consumed by `ProjectionService` in the next plan.

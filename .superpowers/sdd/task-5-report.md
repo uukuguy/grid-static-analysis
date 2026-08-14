@@ -31,3 +31,10 @@
 ## Concerns
 
 - None known.
+
+## Regression Gate Fix
+
+- Status: resolved with a documentation-only wording change in the trajectory capture plan; the plan remains operative.
+- Commit: `5b35ea4` (`docs: fix task 5 boundary verification wording`).
+- Tests: `uv run --project packages/grid-agent pytest packages/grid-agent/tests/contract/test_repository_boundaries.py -q` — 6 passed; `git diff --check` — passed.
+- Concerns: none known; the pre-existing `docs/status/JOURNAL.md` modification was left untouched.
