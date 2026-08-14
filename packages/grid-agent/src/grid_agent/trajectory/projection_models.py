@@ -174,8 +174,6 @@ class ContextFrame(ProjectionNode):
             raise ValueError("source_sequences must include source_sequence")
         if self.request_artifact_ref is None and not self.unavailable_reason:
             raise ValueError("unavailable_reason is required when request_artifact_ref is null")
-        if self.request_artifact_ref is not None and self.unavailable_reason is not None:
-            raise ValueError("unavailable_reason requires a null request_artifact_ref")
         return self
 
     @model_validator(mode="after")

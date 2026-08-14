@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from grid_agent.trajectory.context_projection import project_context
+from grid_agent.trajectory.context_projection import UNAVAILABLE_NATIVE_CONTEXT, project_context
 from grid_agent.trajectory.artifacts import ArtifactPointer
 from grid_agent.trajectory.events import Causation, ContextBoundary, EventRefs, EventSource, RunScope
+from grid_agent.trajectory.replay import ReplayEventLike
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,10 @@ class Event:
     source: EventSource = field(default_factory=EventSource)
     context: ContextBoundary = field(default_factory=ContextBoundary)
     refs: EventRefs = field(default_factory=EventRefs)
+
+
+def _replay_events(*events: Event) -> tuple[ReplayEventLike, ...]:
+    return cast(tuple[ReplayEventLike, ...], events)
 
 
 class VerifiedContextArtifacts:
@@ -48,7 +53,7 @@ def test_context_frame_returns_before_delta_after_and_next_request_input() -> No
         Event(5, "model.request.started", {"artifact_ref": "artifact:request"}),
     )
 
-    frame = project_context(events, artifacts=None, checkpoint_interval=2).at_sequence(4)
+    frame = project_context(_replay_events(*events), artifacts=None, checkpoint_interval=2).at_sequence(4)
 
     assert frame.before_revision == 1
     assert frame.after_revision == 2
@@ -59,9 +64,28 @@ def test_context_frame_returns_before_delta_after_and_next_request_input() -> No
 
 def test_context_frame_labels_missing_request_unavailable() -> None:
     event = Event(8, "context.projected", {"after_state": {}}, context=ContextBoundary(before_revision=0, after_revision=1))
-    frame = project_context((event,), artifacts=None).at_sequence(8)
+    frame = project_context(_replay_events(event), artifacts=None).at_sequence(8)
     assert frame.request_artifact_ref is None
     assert frame.unavailable_reason == "legacy source did not capture model request input"
+
+
+def test_native_context_unavailable_preserves_next_request_artifact_reference() -> None:
+    events = (
+        Event(
+            7,
+            "context.injected",
+            {"revision": 7, "state_hash": "sha256:state-7"},
+            context=ContextBoundary(before_revision=7, after_revision=7),
+        ),
+        Event(8, "model.request.started", {"artifact_ref": "artifact:request-8"}),
+    )
+
+    frame = project_context(_replay_events(*events), artifacts=None).at_sequence(7)
+
+    assert frame.status == "unavailable"
+    assert frame.unavailable_reason == UNAVAILABLE_NATIVE_CONTEXT
+    assert frame.request_artifact_ref == "artifact:request-8"
+    assert frame.model_dump(mode="json")["after_state"] == {}
 
 
 def test_native_context_injection_uses_verified_context_view_artifact(tmp_path: Path) -> None:
@@ -84,7 +108,7 @@ def test_native_context_injection_uses_verified_context_view_artifact(tmp_path: 
         refs=EventRefs(produced=(pointer.ref,)),
     )
 
-    frame = project_context((event,), artifacts).at_sequence(7)
+    frame = project_context(_replay_events(event), artifacts).at_sequence(7)
 
     assert artifacts.references == [pointer.ref]
     assert frame.model_dump(mode="json")["after_state"] == document
