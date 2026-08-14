@@ -7,7 +7,7 @@ const stylesheet = readFileSync(resolve(process.cwd(), 'src/design/base.css'), '
 describe('workbench responsive layout', () => {
   it('keeps the inspector as a resizable right panel from 800px through 1199px', () => {
     expect(stylesheet).toMatch(
-      /@media \(min-width: 800px\) and \(max-width: 1199px\) \{[\s\S]*?grid-template-columns: 190px minmax\(0, 1fr\) clamp\([\s\S]*?\.inspector \{ grid-column: 3; grid-row: 2 \/ -1;[\s\S]*?\.inspector-resize-handle \{ display: block;/,
+      /@media \(min-width: 800px\) and \(max-width: 1199px\) \{[\s\S]*?grid-template-columns: 190px minmax\(0, 1fr\) var\(--inspector-width, clamp\([\s\S]*?\.inspector \{ grid-column: 3; grid-row: 2 \/ -1;[\s\S]*?\.inspector-resize-handle \{ display: block;/,
     );
   });
 

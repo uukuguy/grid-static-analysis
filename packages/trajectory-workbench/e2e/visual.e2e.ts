@@ -29,8 +29,20 @@ test('dark medium layout keeps a resizable right inspector without page overflow
   await expect(page.getByRole('separator', { name: 'Resize trajectory inspector' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page).toHaveScreenshot('business-dark-medium.png', { animations: 'disabled', fullPage: true });
-  await page.getByRole('separator', { name: 'Resize trajectory inspector' }).press('ArrowLeft');
+  const inspector = page.getByRole('complementary', { name: 'Trajectory inspector' });
+  const handle = page.getByRole('separator', { name: 'Resize trajectory inspector' });
+  const initialWidth = await inspector.evaluate((element) => element.getBoundingClientRect().width);
+  await handle.press('ArrowLeft');
   await expect(page.locator('.workbench-shell')).toHaveCSS('--inspector-width', '454px');
+  await expect.poll(() => inspector.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(initialWidth);
+  const handleBox = await handle.boundingBox();
+  if (!handleBox) throw new Error('Inspector resize handle has no bounding box');
+  const keyboardWidth = await inspector.evaluate((element) => element.getBoundingClientRect().width);
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x - 24, handleBox.y + handleBox.height / 2);
+  await page.mouse.up();
+  await expect.poll(() => inspector.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(keyboardWidth);
 });
 
 test('narrow workbench opens the inspector as a bottom sheet without horizontal overflow', async ({ page }) => {
