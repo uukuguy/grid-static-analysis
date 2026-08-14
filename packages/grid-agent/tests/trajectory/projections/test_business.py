@@ -159,6 +159,22 @@ def test_business_projection_accepts_claim_only_after_matching_submission() -> N
     assert all(node.kind != "claim" for node in trajectory.problems[0].nodes)
 
 
+def test_business_projection_does_not_accept_claim_from_another_turn_submission() -> None:
+    events = (
+        *q7_events(),
+        Event(
+            6,
+            "answer.submitted",
+            RunScope(turn_id="turn-8"),
+            {"submission_id": "claim-1", "artifact_ref": "artifact:answer"},
+        ),
+    )
+
+    trajectory = project_business(events, Artifacts())
+
+    assert all(node.kind != "claim" for node in trajectory.problems[0].nodes)
+
+
 def test_business_projection_requires_every_verified_result_ref_to_be_verified() -> None:
     class MixedArtifacts(Artifacts):
         def verify(self, reference: str) -> Document:

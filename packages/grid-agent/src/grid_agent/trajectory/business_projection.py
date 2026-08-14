@@ -97,9 +97,11 @@ def _is_verified_result_capability(capability: str) -> bool:
     return capability.startswith(("analysis.", "result."))
 
 
-def _accepted_submissions(events: Sequence[ReplayEventLike]) -> dict[str, int]:
+def _accepted_submissions(
+    events: Sequence[ReplayEventLike],
+) -> dict[tuple[str | None, str], int]:
     return {
-        str(_payload(event)["submission_id"]): event.sequence
+        (event.scope.turn_id, str(_payload(event)["submission_id"])): event.sequence
         for event in events
         if event.event_type == "answer.submitted"
     }
@@ -130,7 +132,9 @@ def project_business(
                 )
             )
         elif event.event_type == "business.claim.declared" and (
-            submission_sequence := accepted_submissions.get(str(payload["submission_id"]))
+            submission_sequence := accepted_submissions.get(
+                (event.scope.turn_id, str(payload["submission_id"]))
+            )
         ) is not None:
             nodes.append(
                 BusinessNode(
