@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from grid_agent.trajectory.canonical import canonical_json_bytes
+from grid_agent.trajectory.canonical import canonical_json_bytes, sha256_ref
 from grid_agent.trajectory.events import EventDraft, RunScope, build_event
 from grid_agent.trajectory.reader import RunEventReader
 
@@ -45,6 +45,11 @@ def write_three_valid_events(tmp_path: Path) -> Path:
     path.parent.mkdir(parents=True)
     path.write_bytes(b"".join(canonical_json_bytes(event.model_dump(mode="json")) for event in (first, second, third)))
     return path
+
+
+def rehash_raw_event(row: dict[str, object]) -> None:
+    content = {key: value for key, value in row.items() if key != "event_hash"}
+    row["event_hash"] = sha256_ref(canonical_json_bytes(content))
 
 
 def test_reader_stops_at_first_hash_mismatch(tmp_path: Path) -> None:
@@ -111,6 +116,55 @@ def test_reader_rejects_raw_non_finite_json_constants(
     assert prefix.failure is not None
     assert prefix.failure.line_number == 1
     assert prefix.failure.code == "malformed_json"
+
+
+def test_reader_rejects_raw_hashed_string_sequence(tmp_path: Path) -> None:
+    path = write_three_valid_events(tmp_path)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["sequence"] = "1"
+    rehash_raw_event(rows[0])
+    path.write_bytes(b"".join(canonical_json_bytes(row) for row in rows))
+
+    prefix = RunEventReader(path).read_prefix()
+
+    assert prefix.events == ()
+    assert prefix.failure is not None
+    assert prefix.failure.line_number == 1
+    assert prefix.failure.code == "invalid_event"
+
+
+def test_reader_rejects_raw_hashed_string_numeric_payload(tmp_path: Path) -> None:
+    path = write_three_valid_events(tmp_path)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[1]["payload"]["ordinal"] = "1"
+    rehash_raw_event(rows[1])
+    path.write_bytes(b"".join(canonical_json_bytes(row) for row in rows))
+
+    prefix = RunEventReader(path).read_prefix()
+
+    assert [event.sequence for event in prefix.events] == [1]
+    assert prefix.failure is not None
+    assert prefix.failure.line_number == 2
+    assert prefix.failure.code == "invalid_event"
+
+
+def test_reader_preserves_prefix_when_json_number_overflows_to_infinity(
+    tmp_path: Path,
+) -> None:
+    path = write_three_valid_events(tmp_path)
+    rows = path.read_text().splitlines()
+    rows[2] = rows[2].replace(
+        '"payload":{"duration_seconds":null,"status":"success"}',
+        '"payload":{"duration_seconds":1e999,"status":"success"}',
+    )
+    path.write_text("\n".join(rows) + "\n")
+
+    prefix = RunEventReader(path).read_prefix()
+
+    assert [event.sequence for event in prefix.events] == [1, 2]
+    assert prefix.failure is not None
+    assert prefix.failure.line_number == 3
+    assert prefix.failure.code == "invalid_event"
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Literal
 
@@ -80,6 +81,13 @@ class RunEventReader:
             except (ValueError, UnicodeDecodeError) as exc:
                 return self._failure(trusted, line_number, "malformed_json", str(exc))
 
+            if not _has_only_finite_numbers(decoded):
+                return self._failure(
+                    trusted,
+                    line_number,
+                    "invalid_event",
+                    "event contains a non-finite number",
+                )
             if not isinstance(decoded, Mapping):
                 return self._failure(
                     trusted, line_number, "invalid_event", "event line must be a JSON object"
@@ -104,6 +112,13 @@ class RunEventReader:
                 event = RunEvent.model_validate(decoded)
             except (ValidationError, ValueError) as exc:
                 return self._failure(trusted, line_number, "invalid_event", str(exc))
+            if not _matches_native_json(decoded, event.model_dump(mode="json")):
+                return self._failure(
+                    trusted,
+                    line_number,
+                    "invalid_event",
+                    "event values do not use the required JSON-native types",
+                )
             if event.sequence != line_number:
                 return self._failure(
                     trusted,
@@ -141,6 +156,31 @@ class RunEventReader:
 
 def _reject_non_finite_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON constant is not permitted: {value}")
+
+
+def _has_only_finite_numbers(value: object) -> bool:
+    if isinstance(value, float):
+        return isfinite(value)
+    if isinstance(value, Mapping):
+        return all(_has_only_finite_numbers(item) for item in value.values())
+    if isinstance(value, list):
+        return all(_has_only_finite_numbers(item) for item in value)
+    return True
+
+
+def _matches_native_json(decoded: object, validated: object) -> bool:
+    if type(decoded) is not type(validated):
+        return False
+    if isinstance(decoded, Mapping) and isinstance(validated, Mapping):
+        return decoded.keys() == validated.keys() and all(
+            _matches_native_json(decoded[key], validated[key]) for key in decoded
+        )
+    if isinstance(decoded, list) and isinstance(validated, list):
+        return len(decoded) == len(validated) and all(
+            _matches_native_json(raw_item, validated_item)
+            for raw_item, validated_item in zip(decoded, validated, strict=True)
+        )
+    return decoded == validated
 
 
 def recompute_event_hash(event: RunEvent | Mapping[str, object]) -> str:
