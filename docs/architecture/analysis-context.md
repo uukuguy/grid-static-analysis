@@ -19,6 +19,24 @@ Python, or legacy query aliases.
 Simulator-backed runs write current-run evidence under `runs/<analysis_id>/`.
 Offline informational answers do not create analysis context evidence.
 
+## Four-Layer Context Architecture
+
+Continuous analysis has four explicit layers:
+
+1. The **ledger kernel** appends validated events and deterministically replays
+   the snapshot. It owns ordering, hashes, turns, and current-run integrity.
+2. The **capability catalog** reads simulator contracts. Their `context_effect`
+   selects a projector and declares required, consumed, produced, and
+   invalidated semantic state.
+3. The typed **domain state** stores pandapower meaning rather than question
+   answers. It is the `domain_state` field in the durable snapshot.
+4. The **bounded agent view** selects the active model revision and concise,
+   source-bearing summaries for the next prompt. Full history stays in the
+   ledger and artifacts.
+
+No layer branches on question number, validation wording, or expected answer.
+Capability contracts and verified result shapes select projection.
+
 ## State and Event Schemas
 
 The durable snapshot has `schema_version: "analysis-context/1.0"` and is
@@ -114,17 +132,61 @@ for every model injection, but never enter the authoritative context ledger or
 change its revision. Tool-derived context events retain their compact RPC
 `trace_sequence` in that ledger.
 
+Context projection and answer audit are advisory consumers of the successful
+tool conversation. A projection failure records a concrete diagnostic and may
+leave a semantic record absent, but it does not overwrite an accepted answer
+or terminate later turns. Simulator failures and reference integrity failures
+remain visible and are not relabeled as a generic execution limitation.
+
+## Typed Domain State
+
+`domain_state` contains these records:
+
+- `model`: active immutable model, revision, source, and element counts.
+- `operating_state`: current solved or observed operating-state summary.
+- `constraints`: source-bearing voltage, loading, or other bounds.
+  `source_kind` is `model`, `user`, `standard`, or `task`; `source_ref`
+  identifies its supporting record.
+- `scenarios`: isolated changes such as a single-branch outage, including
+  parent, status, and result relationships.
+- `calculations`: typed power-flow or contingency results, solver status,
+  applicability, artifact path, and evidence.
+- `capabilities`: capability-family availability with a concrete reason.
+- `artifacts`: typed links to complete data retained in the run.
+
+Every record is tied to a model revision and producer turn.
+`domain.state.projected` is accepted only in that turn; calculations must
+reference an already registered result at the same baseline revision. Opening
+another model changes the active projection without erasing history.
+
+Capability availability has five distinct meanings:
+
+- `published`: callable in the current runtime.
+- `not_published`: known family with no exposed semantic capability.
+- `not_applicable`: published behavior does not apply to the active model,
+  scenario, or result.
+- `unavailable`: supported behavior currently lacks a runtime prerequisite.
+- `failed`: an actual invocation was attempted and failed.
+
+These statuses must not be collapsed into one generic failure label.
+
 ## Model-facing Context View
 
 Before every prompt, `grid-agent` writes
 `context/analysis-context-view.json` (`analysis-context-view/1.0`) and passes
 that bounded view to Pi. The view includes the current revision and state hash,
-the active baseline, the active turn, completed turn summaries, reusable
-results, verified facts grouped by predicate, and unresolved limitations. It
+the active baseline and `active_model`, capability status, sourced constraints,
+active scenarios, reusable calculations, the active turn, completed turn
+summaries, verified facts grouped by predicate, and unresolved limitations. It
 must preserve provenance fields (`result_ref`, `revision_ref`, `evidence_refs`,
 `producer_observation`) rather than truncating references. Large simulator
 tables are omitted from the view and remain available only through registered
 artifacts and follow-on grid tools.
+
+Only calculations whose context and revision match the active `model` are
+reusable in the injected view. Stale calculations remain in
+`context/analysis-context.json` and their artifacts for replay and audit, but
+are not offered as applicable inputs to the next instruction.
 
 ## Report Projection
 
@@ -210,7 +272,7 @@ reused refs and shows no fabricated ranking artifact.
 Capability input:
 
 ```json
-{"capability":"analysis.contingency.n_minus_one.run","arguments":{"context_ref":"context:sha256:...","branch_refs":["asset:line:..."],"policy":"static-analysis-v1"}}
+{"capability":"analysis.contingency.n_minus_one.run","arguments":{"context_ref":"context:sha256:...","branch_refs":["asset:line:..."]}}
 ```
 
 The branch reference should come from a prior verified topology or ranking
@@ -225,3 +287,25 @@ include
 `{"predicate":"n1.violation_count","value":1}`. The report projection lists
 the N-1 result and evidence dependencies, the copied input, the context ledger,
 the compact trace, and the turn-level context revision change.
+
+## Held-Out Continuous Flow
+
+A five-turn flow whose wording is absent from the validation question list
+demonstrates the general state transitions:
+
+1. Load the registered network and explain one branch endpoint. `context.open`
+   sets `model`; topology evidence does not create a calculation.
+2. Ask what voltage bounds “this network” defines. The next prompt resolves
+   `active_model.context_ref`, calls `model.constraints.describe`, and projects
+   model-sourced `constraints`.
+3. Run AC flow and report active loss. The capability consumes the active model
+   and creates a registered power-flow result plus one `calculations` record.
+4. Ask to rank five branches “using that result”. The exact compatible result
+   is reused; power flow is not rerun.
+5. Ask to outage “the first”. The active context and ranking are reused,
+   `scenarios` and a contingency calculation are added, and raw metrics are
+   reported with the returned model constraint evaluation.
+
+The Pi process provides language continuity for omitted subjects. The
+structured view independently provides authoritative model identity, revision,
+constraint sources, and result applicability.

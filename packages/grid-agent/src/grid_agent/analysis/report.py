@@ -168,14 +168,26 @@ def _constraint_lines(constraints: Sequence[Any]) -> list[str]:
         if item.quantity == "bus.vm_pu" and item.lower is not None and item.upper is not None:
             lines.append(f"- 母线电压约束：{item.lower:g}–{item.upper:g} {item.unit}（{source}）。")
         elif item.upper is not None:
-            lines.append(f"- {_constraint_label(item.quantity)}：≤{item.upper:g} {item.unit}（{source}）。")
+            lines.append(
+                f"- {_constraint_label(item.quantity, item.subject_kind)}："
+                f"≤{item.upper:g} {_display_unit(item.unit)}（{source}）。"
+            )
         elif item.lower is not None:
-            lines.append(f"- {_constraint_label(item.quantity)}：≥{item.lower:g} {item.unit}（{source}）。")
+            lines.append(
+                f"- {_constraint_label(item.quantity, item.subject_kind)}："
+                f"≥{item.lower:g} {_display_unit(item.unit)}（{source}）。"
+            )
     return lines
 
 
-def _constraint_label(quantity: str) -> str:
-    return {"branch.loading_percent": "支路负载约束"}.get(quantity, quantity)
+def _constraint_label(quantity: str, subject_kind: str) -> str:
+    if quantity == "branch.loading_percent":
+        return {"line": "线路负载约束", "trafo": "变压器负载约束"}.get(subject_kind, "支路负载约束")
+    return quantity
+
+
+def _display_unit(unit: str) -> str:
+    return "%" if unit == "percent" else unit
 
 
 def _calculation_lines(calculations: Sequence[Any]) -> list[str]:
@@ -235,6 +247,7 @@ def _trace_step_summary(step: _TraceStep) -> str:
         "model.element.get": "定位问题涉及的网络元件",
         "model.dataset.describe": "核对可查询的数据集与字段",
         "model.dataset.query": "查询网络模型数据",
+        "model.constraints.describe": "读取活动模型内定义的约束",
         "topology.branch.endpoints.get": "核查支路两端母线",
         "topology.components.get": "核查网络拓扑连通性",
         "result.branches.rank": "按支路运行指标筛选和排序",
@@ -269,6 +282,7 @@ def _evidence_title(capability: str | None, summary: Mapping[str, Any]) -> str:
     capability = capability or _first_string(summary, ("capability_id",))
     labels = {
         "topology.branch.endpoints.get": "网络拓扑事实",
+        "model.constraints.describe": "模型约束数据",
         "analysis.powerflow.ac.run": "交流潮流计算证据",
         "analysis.contingency.n_minus_one.run": "N-1 场景证据",
     }
@@ -1075,8 +1089,7 @@ def _workspace_link(
     resolved = _normalize_workspace_relative_path(workspace, value, diagnostics=diagnostics, description=description)
     if resolved is None:
         return unavailable_label
-    safe_label = label if label == resolved.relative else resolved.relative
-    return _link(resolved.relative, safe_label)
+    return _link(resolved.relative, label)
 
 
 def _link(path: Path | str, label: str) -> str:

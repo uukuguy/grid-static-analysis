@@ -82,6 +82,7 @@ def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: Rep
 
     assert "本题生成" in evidence_section
     assert "潮流证据" in evidence_section
+    assert "[查看证据工件]" in evidence_section
     assert "evidence/analysis/powerflow-evidence.json" in evidence_section
 
 

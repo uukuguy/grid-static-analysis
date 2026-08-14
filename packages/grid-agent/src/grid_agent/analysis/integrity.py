@@ -363,7 +363,11 @@ def _verify_evidence_document(reference: str, digest: str, path: Path, document:
     evidence_type = document.get("evidence_type")
     capability_id = document.get("capability_id")
     if path.parent.name == "network-facts":
-        if evidence_type != "network_fact" or capability_id != "topology.branch.endpoints.get":
+        allowed_network_facts = {
+            "topology.branch.endpoints.get",
+            "model.constraints.describe",
+        }
+        if evidence_type != "network_fact" or capability_id not in allowed_network_facts:
             raise SimulatorIntegrityError(f"claimed evidence document type is not allowed: {reference}")
         return
     allowed_analysis = {

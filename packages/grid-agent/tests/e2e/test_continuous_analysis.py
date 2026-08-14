@@ -72,10 +72,16 @@ def scripted_analysis(tmp_path: Path) -> ScriptedAnalysis:
     return ScriptedAnalysis(project_root=ROOT, pi_path=pi_path, artifact_root=artifact_root, tmp_path=tmp_path)
 
 
-def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage(
+def test_continuous_analysis_generalizes_active_model_constraints_and_result_reuse(
     scripted_analysis: ScriptedAnalysis,
 ) -> None:
-    prompts = ("运行交流潮流", "筛选负载率最高的5条线路", "对最高负载线路开展N-1校核")
+    prompts = (
+        "载入 IEEE-39 并说明第11号线路的连接端",
+        "这个网络自身给母线电压设置了怎样的上下界？",
+        "执行交流潮流并给出有功损耗",
+        "沿用刚才结果列出负载率最高的五条线路",
+        "对其中首位支路进行单一停运分析，报告原始指标和有来源的约束判断",
+    )
     completed = scripted_analysis.run(prompts)
     assert completed.returncode == 0, completed.stderr
     envelope = AnswerEnvelope.model_validate_json(completed.stdout)
@@ -91,7 +97,7 @@ def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage
         ]
         report_text = (root / "report.md").read_text(encoding="utf-8")
 
-        assert len(answers) == 3
+        assert len(answers) == 5
         assert [item["question_id"] for item in answers] == [turn.turn_id for turn in context.turns]
         assert (root / context.input.copied_path).read_text(encoding="utf-8") == expected_input
         assert context.input.source_path == str(scripted_analysis.tmp_path / "instructions.md.txt")
@@ -99,6 +105,14 @@ def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage
         assert context.input.sha256 == sha256(expected_input.encode("utf-8")).hexdigest()
         assert context.input.instruction_count == len(prompts)
         assert scripted_analysis.pi_process_start_count == 1
+        assert context.domain_state.model is not None
+        assert context.domain_state.model.model_id == "ieee39"
+        voltage_constraint = next(
+            item for item in context.domain_state.constraints.values() if item.quantity == "bus.vm_pu"
+        )
+        assert voltage_constraint.lower == 0.94
+        assert voltage_constraint.upper == 1.06
+        assert voltage_constraint.source_kind == "model"
         powerflow_ref = next(
             result.result_ref for result in context.results.values() if result.capability == "analysis.powerflow.ac.run"
         )
@@ -109,8 +123,11 @@ def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage
         )
         ranking = next(item for item in context.observations.values() if item.capability == "result.branches.rank")
         assert ranking.consumed_refs == [powerflow_ref]
-        assert context.turns[1].consumed_refs == [powerflow_ref]
-        assert context.turns[2].consumed_refs
+        assert powerflow_ref in context.domain_state.calculations
+        assert n1_ref in context.domain_state.calculations
+        assert context.domain_state.scenarios
+        assert context.turns[3].consumed_refs == [powerflow_ref]
+        assert context.turns[4].consumed_refs
         for turn, answer in zip(context.turns, answers, strict=True):
             assert turn.answer_path is not None
             archived_answer_path = root / turn.answer_path
@@ -131,15 +148,26 @@ def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage
             detail_trace = root / f"turns/{turn.ordinal:03d}/trace.md"
             assert detail_trace.is_file()
             assert "### 输入" in detail_trace.read_text(encoding="utf-8")
+            section = report_text.split(f"## {turn.ordinal}. ", maxsplit=1)[1]
+            assert section.index("### 回答") < section.index("### 仿真环境上下文")
         assert powerflow_ref not in report_text
         assert n1_ref not in report_text
+        assert "policy" not in report_text.casefold()
+        assert "模型约束数据" in report_text
+        assert "读取活动模型内定义的约束" in report_text
+        assert "线路负载约束：≤100 %（模型数据）" in report_text
+        assert "变压器负载约束：≤100 %（模型数据）" in report_text
+        assert "policy" not in json.dumps(trace, ensure_ascii=False).casefold()
+        assert "policy" not in context.model_dump_json().casefold()
         assert not any(item.get("type") in {"text_delta", "message_update"} for item in trace)
         assert AnalysisContextStore.replay(root / "context/context-events.jsonl") == context
 
         powerflow_start = _tool_start(trace, "grid_analysis_powerflow_ac")
+        constraints_start = _tool_start(trace, "grid_model_constraints_describe")
         ranking_start = _tool_start(trace, "grid_result_branches_rank")
         n1_start = _tool_start(trace, "grid_analysis_contingency_n_minus_one")
         assert ranking_start["args"]["result_ref"] == powerflow_start["result"]["result_ref"]
+        assert constraints_start["args"]["context_ref"] == powerflow_start["result"]["context_ref"]
         assert n1_start["args"]["context_ref"] == powerflow_start["result"]["context_ref"]
         assert n1_start["args"]["branch_refs"][0] in {
             branch["branch_ref"] for branch in ranking_start["result"]["branches"]
@@ -257,52 +285,90 @@ def submit_answer(answer_output, result_refs, claim_evidence_refs, call_id):
     }})
 
 
-def latest_reusable_result(capability):
+def latest_reusable_calculation(kind):
     view = load_json(os.environ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"])
-    matches = [item for item in view["reusable_results"] if item["capability"] == capability]
+    matches = [item for item in view["reusable_calculations"] if item["kind"] == kind]
     if not matches:
-        raise RuntimeError(f"context view has no reusable result for {{capability}}")
+        raise RuntimeError(f"context view has no reusable calculation for {{kind}}")
     return matches[-1]
 
 
 def answer_first_turn():
     opened = grid("context.open", {{"model_id": "ieee39"}}, "call-001-open")
-    powerflow = grid("analysis.powerflow.ac.run", {{"context_ref": opened["context_ref"]}}, "call-002-powerflow")
+    endpoints = grid(
+        "topology.branch.endpoints.get",
+        {{"context_ref": opened["context_ref"], "kind": "line", "namespace": "pandapower_index", "identifier": "11"}},
+        "call-002-endpoints",
+    )
     STATE["context_ref"] = opened["context_ref"]
-    STATE["powerflow_ref"] = powerflow["result_ref"]
-    STATE["powerflow_evidence_refs"] = evidence_refs_for(powerflow)
     submit_answer(
-        f"交流潮流已收敛，结果引用 {{powerflow['result_ref']}}。",
-        [powerflow["result_ref"]],
-        evidence_refs_for(powerflow),
+        f"第11号线路连接母线 {{endpoints['from_bus']['name']}} 与 {{endpoints['to_bus']['name']}}。",
+        [],
+        evidence_refs_for(endpoints),
         "call-003-submit",
     )
 
 
 def answer_second_turn():
-    reusable = latest_reusable_result("analysis.powerflow.ac.run")
-    powerflow_ref = reusable["result_ref"]
-    if STATE.get("powerflow_ref") and STATE["powerflow_ref"] != powerflow_ref:
-        raise RuntimeError("context view did not preserve exact powerflow result_ref")
-    ranking = grid(
-        "result.branches.rank",
-        {{"result_ref": powerflow_ref, "metric": "loading_percent", "direction": "descending", "limit": 5, "element_kind": "line"}},
-        "call-004-ranking",
+    view = load_json(os.environ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"])
+    active_model = view.get("active_model")
+    if not isinstance(active_model, dict) or active_model.get("model_id") != "ieee39":
+        raise RuntimeError("continuous context did not expose the active IEEE-39 model")
+    constraints = grid(
+        "model.constraints.describe",
+        {{"context_ref": active_model["context_ref"]}},
+        "call-004-constraints",
     )
-    top_branch = ranking["branches"][0]["branch_ref"]
-    STATE["ranking"] = ranking
-    STATE["top_branch_ref"] = top_branch
+    voltage = next(item for item in constraints["constraints"] if item["quantity"] == "bus.vm_pu")
+    if voltage["lower"] != 0.94 or voltage["upper"] != 1.06 or voltage["source"]["kind"] != "model":
+        raise RuntimeError("voltage constraints were not sourced from the active model")
     submit_answer(
-        f"负载率最高线路为 {{top_branch}}，复用潮流结果 {{powerflow_ref}}。",
-        [powerflow_ref],
-        list(reusable["evidence_refs"]),
+        f"该模型的母线电压上下界为 {{voltage['lower']}}–{{voltage['upper']}} {{voltage['unit']}}，来源为模型数据。",
+        [],
+        evidence_refs_for(constraints),
         "call-005-submit",
     )
 
 
 def answer_third_turn():
-    reusable = latest_reusable_result("analysis.powerflow.ac.run")
+    view = load_json(os.environ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"])
+    active_model = view["active_model"]
+    powerflow = grid(
+        "analysis.powerflow.ac.run",
+        {{"context_ref": active_model["context_ref"]}},
+        "call-006-powerflow",
+    )
+    STATE["powerflow_ref"] = powerflow["result_ref"]
+    loss = powerflow["total_active_loss"]
+    submit_answer(
+        f"交流潮流已收敛，有功损耗为 {{loss['value']}} {{loss['unit']}}。",
+        [powerflow["result_ref"]],
+        evidence_refs_for(powerflow),
+        "call-007-submit",
+    )
+
+
+def answer_fourth_turn():
+    reusable = latest_reusable_calculation("powerflow.ac")
     powerflow_ref = reusable["result_ref"]
+    if powerflow_ref != STATE.get("powerflow_ref"):
+        raise RuntimeError("context view did not preserve exact powerflow result_ref")
+    ranking = grid(
+        "result.branches.rank",
+        {{"result_ref": powerflow_ref, "metric": "loading_percent", "direction": "descending", "limit": 5, "element_kind": "line"}},
+        "call-008-ranking",
+    )
+    STATE["ranking"] = ranking
+    submit_answer(
+        "已沿用前序潮流结果列出负载率最高的五条线路。",
+        [powerflow_ref],
+        list(reusable["evidence_refs"]),
+        "call-009-submit",
+    )
+
+
+def answer_fifth_turn():
+    reusable = latest_reusable_calculation("powerflow.ac")
     ranking = STATE.get("ranking")
     if not ranking:
         raise RuntimeError("ranking result missing before N-1 turn")
@@ -310,13 +376,14 @@ def answer_third_turn():
     n1 = grid(
         "analysis.contingency.n_minus_one.run",
         {{"context_ref": ranking["context_ref"], "branch_refs": [top_branch]}},
-        "call-006-n1",
+        "call-010-n1",
     )
+    scenario = n1["scenarios"][0]
     submit_answer(
-        f"已对最高负载线路 {{top_branch}} 完成 N-1 校核，状态 {{n1['status']}}，复用潮流结果 {{powerflow_ref}}。",
+        f"首位支路停运场景状态 {{scenario['status']}}，最大负载率 {{scenario.get('max_loading_percent')}}%，约束来源 {{scenario['constraint_evaluation']['source']}}。",
         [n1["result_ref"]],
         evidence_refs_for(n1),
-        "call-007-submit",
+        "call-011-submit",
     )
 
 
@@ -325,7 +392,7 @@ previous_starts = marker.read_text(encoding="utf-8").strip() if marker.exists() 
 marker.write_text(str(int(previous_starts or "0") + 1) + "\\n", encoding="utf-8")
 CATALOG = load_json(os.environ["GRID_AGENT_TOOL_CATALOG"])
 STATE = {{}}
-TURN_HANDLERS = [answer_first_turn, answer_second_turn, answer_third_turn]
+TURN_HANDLERS = [answer_first_turn, answer_second_turn, answer_third_turn, answer_fourth_turn, answer_fifth_turn]
 turn_index = 0
 
 for raw in sys.stdin:

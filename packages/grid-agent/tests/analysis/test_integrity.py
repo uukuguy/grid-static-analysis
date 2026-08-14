@@ -107,6 +107,11 @@ def test_verify_evidence_accepts_network_fact_and_analysis_documents(tmp_path: P
         "result_ref": "result:sha256:" + "2" * 64,
         "facts": {"converged": True},
     }
+    model_constraints = {
+        "evidence_type": "network_fact",
+        "capability_id": "model.constraints.describe",
+        "facts": {"constraints": [{"quantity": "bus.vm_pu", "lower": 0.94, "upper": 1.06}]},
+    }
     network_ref = _write_evidence_document(
         tmp_path / "evidence" / "network-facts" / "network-fact-placeholder.json",
         network_fact,
@@ -115,10 +120,15 @@ def test_verify_evidence_accepts_network_fact_and_analysis_documents(tmp_path: P
         tmp_path / "evidence" / "analysis" / "analysis-evidence-placeholder.json",
         analysis_result,
     )
+    constraints_ref = _write_evidence_document(
+        tmp_path / "evidence" / "network-facts" / "network-fact-placeholder.json",
+        model_constraints,
+    )
 
     verifier = ContentReferenceVerifier(tmp_path)
     assert verifier.verify_evidence(network_ref).document == network_fact
     assert verifier.verify_evidence(analysis_ref).document == analysis_result
+    assert verifier.verify_evidence(constraints_ref).document == model_constraints
 
 
 def test_verify_evidence_accepts_generated_ac_and_n1_evidence(tmp_path: Path) -> None:
