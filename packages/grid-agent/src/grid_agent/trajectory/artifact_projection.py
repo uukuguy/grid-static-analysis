@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from grid_agent.trajectory.artifacts import ArtifactPointer
 from grid_agent.trajectory.projection_models import ArtifactIndex, ArtifactIndexRecord
 from grid_agent.trajectory.replay import ReplayEventLike
 
 
 def _pointer(registry: object, reference: str) -> ArtifactPointer | None:
-    if isinstance(registry, Mapping):
-        value = registry.get(reference)
-        return value if isinstance(value, ArtifactPointer) else None
     verify = getattr(registry, "verify_reference", None)
     if callable(verify):
-        value = verify(reference)
+        try:
+            value = verify(reference)
+        except Exception:  # Missing/tampered historical sidecars are projected, not fatal.
+            return None
         return value if isinstance(value, ArtifactPointer) else None
     return None
 
@@ -44,6 +44,8 @@ def project_artifacts(events: Sequence[ReplayEventLike], registry: object) -> Ar
             relative_path=pointer.relative_path if pointer else "unavailable",
             sha256=pointer.sha256 if pointer else "unavailable",
             verification_status="verified" if pointer else "unavailable",
+            status="completed" if pointer else "unavailable",
+            unavailable_reason=None if pointer else "artifact reference could not be verified",
             producing_sequence=producer.sequence if producer else None,
             consuming_sequences=tuple(sorted({event.sequence for event in consumers})),
             turn_id=scope.turn_id, step_id=scope.step_id, request_id=scope.request_id,

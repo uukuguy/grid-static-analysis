@@ -28,7 +28,33 @@ def test_artifact_index_is_bidirectional() -> None:
         Event(3, "tool.completed", refs=EventRefs(produced=(pointer.ref,)), scope=RunScope(turn_id="turn", step_id="step", request_id="request", tool_call_id="tool")),
         Event(5, "business.claim.declared", refs=EventRefs(consumed=(pointer.ref,))),
     )
-    record = project_artifacts(events, {pointer.ref: pointer}).records[pointer.ref]
+    record = project_artifacts(events, _VerifiedRegistry(pointer)).records[pointer.ref]
     assert record.producing_sequence == 3
     assert record.consuming_sequences == (5,)
     assert record.tool_call_id == "tool"
+
+
+def test_artifact_index_marks_unverifiable_references_unavailable() -> None:
+    reference = "artifact:sha256:" + "b" * 64
+    event = Event(3, "tool.completed", refs=EventRefs(produced=(reference,)))
+
+    index = project_artifacts((event,), _BrokenRegistry())
+
+    record = index.records[reference]
+    assert record.status == "unavailable"
+    assert record.verification_status == "unavailable"
+    assert record.unavailable_reason == "artifact reference could not be verified"
+
+
+class _BrokenRegistry:
+    def verify_reference(self, reference: str) -> ArtifactPointer:
+        raise RuntimeError(f"missing {reference}")
+
+
+class _VerifiedRegistry:
+    def __init__(self, pointer: ArtifactPointer) -> None:
+        self.pointer = pointer
+
+    def verify_reference(self, reference: str) -> ArtifactPointer:
+        assert reference == self.pointer.ref
+        return self.pointer

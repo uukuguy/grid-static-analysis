@@ -33,6 +33,8 @@ class ProjectionMaterializer:
         self.cache_root = Path(cache_root)
 
     def _paths(self, analysis_id: str, fingerprint: str) -> MaterializedPaths:
+        _validate_cache_segment("analysis_id", analysis_id)
+        _validate_cache_segment("source_fingerprint", fingerprint)
         root = self.cache_root / analysis_id / fingerprint / PROJECTION_SCHEMA
         return MaterializedPaths(root, root / "projected-run.json", root / "agent.json", root / "business.json", root / "context.json", root / "artifacts.json")
 
@@ -77,6 +79,18 @@ def _atomic_write(path: Path, value: bytes) -> None:
     finally:
         if os.path.exists(temporary_name):
             os.unlink(temporary_name)
+
+
+def _validate_cache_segment(name: str, value: str) -> None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or Path(value).is_absolute()
+        or "/" in value
+        or "\\" in value
+    ):
+        raise ValueError(f"{name} must be a safe cache path segment")
 
 
 __all__ = ["MaterializedPaths", "PROJECTION_SCHEMA", "ProjectionMaterializer"]
