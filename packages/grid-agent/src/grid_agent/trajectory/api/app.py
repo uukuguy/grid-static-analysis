@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from grid_agent.trajectory.api.artifacts import ArtifactAccessError, ArtifactGateway
 from grid_agent.trajectory.api.catalog import RunNotFoundError, TrajectoryRunCatalog
 from grid_agent.trajectory.api.cursor import CursorCodec, CursorError, CursorExpectation, CursorState
-from grid_agent.trajectory.api.models import ApiError, RunListResponse
+from grid_agent.trajectory.api.models import ApiError, RunListResponse, RunSummary
 from grid_agent.trajectory.api.paging import ProjectionPager, ProjectionRecordTooLarge
 from grid_agent.trajectory.projection_models import ProjectedRun
 
@@ -146,9 +146,13 @@ def create_trajectory_app(catalog: TrajectoryRunCatalog, cursor_codec: CursorCod
     def list_runs() -> RunListResponse:
         return RunListResponse(items=catalog.list_runs())
 
-    @app.get("/api/runs/{analysis_id}", response_model=ProjectedRun)
-    def get_run(analysis_id: str) -> ProjectedRun:
-        return catalog.open(analysis_id)
+    @app.get("/api/runs/{analysis_id}", response_model=RunSummary)
+    def get_run(analysis_id: str) -> RunSummary:
+        """Return only the bounded metadata already exposed by the catalogue."""
+        for summary in catalog.list_runs():
+            if summary.analysis_id == analysis_id:
+                return summary
+        raise RunNotFoundError(analysis_id)
 
     @app.get("/api/runs/{analysis_id}/business", response_model=ProjectionPageResponse)
     def business_page(

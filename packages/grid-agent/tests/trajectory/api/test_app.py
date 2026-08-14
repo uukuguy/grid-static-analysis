@@ -121,6 +121,28 @@ def test_api_lists_runs_with_a_typed_response(tmp_path: Path) -> None:
     assert response.json()["items"][0]["analysis_id"] == "analysis-test"
 
 
+def test_api_run_detail_is_limited_to_catalog_metadata(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get("/api/runs/analysis-test")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "analysis_id": "analysis-test",
+        "status": "completed",
+        "source_kind": "native",
+        "started_at": "2026-08-14T08:18:22Z",
+        "turn_count": 1,
+        "last_sequence": 900,
+        "replay_trusted_through": 900,
+        "diagnostic": None,
+    }
+    assert "agent" not in response.json()
+    assert "business" not in response.json()
+    assert "context" not in response.json()
+    assert "artifacts" not in response.json()
+
+
 def test_api_pages_fixed_business_and_agent_views_with_signed_cursor(tmp_path: Path) -> None:
     app, _, _ = create_test_app(tmp_path)
     client = TestClient(app)
