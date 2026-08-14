@@ -24,7 +24,7 @@ export class ApiError extends Error {
 }
 
 export class TrajectoryApiClient {
-  constructor(private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly fetcher: typeof fetch = (...args) => globalThis.fetch(...args)) {}
 
   private async get<T>(path: string, signal?: AbortSignal): Promise<T> {
     if (!path.startsWith('/api/')) throw new Error('trajectory API path must be same-origin');
