@@ -33,12 +33,22 @@ def test_gateway_opens_only_verified_indexed_artifact(tmp_path: Path) -> None:
 
     response = ArtifactGateway(run_root, index).open(evidence_ref)
 
-    assert response.path.is_file()
     assert response.media_type == "application/json; charset=utf-8"
     assert response.filename == "network-fact.json"
     assert response.sha256 == index.records[evidence_ref].sha256
-    assert response.size_bytes == len(response.path.read_bytes())
-    assert response.path.read_bytes().startswith(b"{")
+    assert response.size_bytes == len(response.content)
+    assert response.content.startswith(b"{")
+
+
+def test_gateway_returns_the_verified_bytes_after_the_file_changes(tmp_path: Path) -> None:
+    run_root, index, evidence_ref = artifact_fixture(tmp_path)
+    path = run_root / index.records[evidence_ref].relative_path
+
+    response = ArtifactGateway(run_root, index).open(evidence_ref)
+    path.write_bytes(b'{"fact":"swapped after verification"}\n')
+
+    assert response.content == b'{"fact":"verified"}\n'
+    assert response.size_bytes == len(response.content)
 
 
 @pytest.mark.parametrize(

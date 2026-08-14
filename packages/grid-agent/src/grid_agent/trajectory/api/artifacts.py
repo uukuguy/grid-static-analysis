@@ -26,7 +26,7 @@ class ArtifactAccessError(RuntimeError):
 class ArtifactResponse:
     """A freshly verified artifact suitable for a fixed read-only response."""
 
-    path: Path
+    content: bytes
     media_type: str
     filename: str
     sha256: str
@@ -80,7 +80,7 @@ class ArtifactGateway:
             raise ArtifactAccessError("artifact integrity mismatch")
 
         return ArtifactResponse(
-            path=resolved,
+            content=value,
             media_type=media_type_for(resolved),
             filename=resolved.name,
             sha256=record.sha256,
