@@ -17,7 +17,6 @@ from grid_simulator.analyses import (
     RECOVERY_ACTIONS_NON_CONVERGENCE,
     PowerflowExecutionError,
     ResultIntegrityError,
-    STATIC_ANALYSIS_V1_LIMITS,
     UnknownBranchError,
     UnknownResultError,
     evidence_path,
@@ -28,6 +27,7 @@ from grid_simulator.analyses import (
 )
 from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.capabilities.schema import CapabilityContract
+from grid_simulator.constraints import describe_model_constraints
 from grid_simulator.engine import Pandapower340Engine
 from grid_simulator.evidence import canonical_json, fingerprint, write_json
 from grid_simulator.models import (
@@ -58,10 +58,10 @@ from grid_simulator.workspace import SimulatorWorkspace
 EXECUTABLE_CAPABILITIES = frozenset(
     {
         "environment.describe",
-        "analysis.policy.describe",
         "model.list",
         "context.open",
         "context.get",
+        "model.constraints.describe",
         "model.element.get",
         "model.dataset.describe",
         "model.dataset.query",
@@ -104,14 +104,14 @@ def _dispatch(
 ) -> dict[str, Any]:
     if request.capability == "environment.describe":
         return _environment_describe(services.capability_registry)
-    if request.capability == "analysis.policy.describe":
-        return _analysis_policy_describe(request.arguments)
     if request.capability == "model.list":
         return _model_list(services.engine)
     if request.capability == "context.open":
         return _context_open(workspace, services.engine, request.arguments)
     if request.capability == "context.get":
         return _context_get(workspace, services.engine, request.arguments)
+    if request.capability == "model.constraints.describe":
+        return _model_constraints_describe(workspace, services.engine, request.arguments)
     if request.capability == "model.element.get":
         return _model_element_get(workspace, services.engine, request.arguments)
     if request.capability == "model.dataset.describe":
@@ -145,12 +145,6 @@ def _environment_describe(registry: CapabilityRegistry) -> dict[str, Any]:
             if contract.id in EXECUTABLE_CAPABILITIES
         ],
     }
-
-
-def _analysis_policy_describe(arguments: dict[str, Any]) -> dict[str, Any]:
-    if arguments["policy"] != "static-analysis-v1":
-        raise _failure("unknown_policy", "Static-analysis policy is not published", phase="resolve")
-    return {"policy": "static-analysis-v1", **STATIC_ANALYSIS_V1_LIMITS}
 
 
 def _model_list(engine: Pandapower340Engine) -> dict[str, Any]:
@@ -196,6 +190,20 @@ def _context_get(workspace: SimulatorWorkspace, engine: Pandapower340Engine, arg
         "context_ref": context.context_ref,
         "model": context.model_id,
         "counts": {"buses": int(len(net.bus)), "lines": int(len(net.line)), "transformers": int(len(net.trafo))},
+    }
+
+
+def _model_constraints_describe(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    described = describe_model_constraints(net, context.revision_ref)
+    evidence_ref = _persist_constraint_fact(workspace, engine, context, described["constraints"])
+    return {
+        "context_ref": context.context_ref,
+        "revision_ref": context.revision_ref,
+        "constraints": described["constraints"],
+        "evidence_refs": [evidence_ref],
     }
 
 
@@ -554,6 +562,39 @@ def _persist_network_fact(
         raise _failure(
             "evidence_persist_failed",
             "Network-fact evidence could not be persisted",
+            phase="persist",
+            allowed_recovery_actions=("retry",),
+        ) from exc
+    return evidence_ref
+
+
+def _persist_constraint_fact(
+    workspace: SimulatorWorkspace,
+    engine: Pandapower340Engine,
+    context: Any,
+    constraints: list[dict[str, Any]],
+) -> str:
+    document = {
+        "evidence_type": "network_fact",
+        "capability_id": "model.constraints.describe",
+        "context_ref": context.context_ref,
+        "revision_ref": context.revision_ref,
+        "facts": {"constraints": constraints},
+        "provenance": {
+            "engine": engine.name,
+            "engine_version": engine.version,
+            "source": "pandapower model tables",
+        },
+    }
+    digest = fingerprint(canonical_json(document))
+    evidence_ref = f"evidence:sha256:{digest}"
+    path = workspace.root / "evidence" / "network-facts" / f"network-fact-{digest}.json"
+    try:
+        write_json(path, document)
+    except OSError as exc:
+        raise _failure(
+            "evidence_persist_failed",
+            "Model-constraint evidence could not be persisted",
             phase="persist",
             allowed_recovery_actions=("retry",),
         ) from exc

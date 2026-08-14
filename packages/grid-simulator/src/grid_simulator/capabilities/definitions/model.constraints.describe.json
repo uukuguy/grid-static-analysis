@@ -1,0 +1,81 @@
+{
+  "id": "model.constraints.describe",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_model_constraints_describe",
+  "title": "Describe model-owned operating constraints",
+  "purpose": "Return voltage and loading bounds explicitly stored in the opened pandapower model, with current-run network-fact evidence.",
+  "applies_to": ["model voltage bounds", "model loading bounds", "constraint source verification"],
+  "not_for": ["generic industry limits", "real-time operator limits", "inventing defaults when model fields are absent"],
+  "terms": {
+    "zh": ["模型约束", "母线电压上下限", "支路负载率上限", "约束来源"],
+    "en": ["model constraints", "bus voltage bounds", "branch loading bound", "constraint provenance"]
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "revision_ref", "constraints", "evidence_refs"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
+      "constraints": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["constraint_ref", "quantity", "subject_kind", "lower", "upper", "unit", "applies_to_count", "source"],
+          "properties": {
+            "constraint_ref": {"type": "string", "pattern": "^constraint:sha256:[0-9a-f]{64}$"},
+            "quantity": {"type": "string", "enum": ["bus.vm_pu", "branch.loading_percent"]},
+            "subject_kind": {"type": "string", "enum": ["bus", "line", "trafo"]},
+            "lower": {"type": ["number", "null"]},
+            "upper": {"type": ["number", "null"]},
+            "unit": {"type": "string", "enum": ["p.u.", "percent"]},
+            "applies_to_count": {"type": "integer", "minimum": 1},
+            "source": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "table", "fields"],
+              "properties": {
+                "kind": {"type": "string", "enum": ["model"]},
+                "table": {"type": "string", "enum": ["bus", "line", "trafo"]},
+                "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+              }
+            }
+          }
+        }
+      },
+      "evidence_refs": {
+        "type": "array",
+        "minItems": 1,
+        "items": {"type": "string", "pattern": "^evidence:sha256:[0-9a-f]{64}$"}
+      }
+    }
+  },
+  "requires": ["context.open"],
+  "consumes": ["network.context", "network.model_fields"],
+  "produces": ["model.constraint", "evidence.network_fact"],
+  "common_next": ["analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run", "evidence.get"],
+  "errors": ["unknown_context", "context_integrity_failed", "evidence_persist_failed"],
+  "recovery": {
+    "unknown_context": ["call context.open for a supported model"],
+    "context_integrity_failed": ["reopen the registered model context"],
+    "evidence_persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "state_effect": "none",
+  "evidence_required": true,
+  "risk": "read_only_model",
+  "pandapower": {
+    "version": "3.4.0",
+    "operation": "read net.bus min_vm_pu/max_vm_pu and net.line/net.trafo max_loading_percent",
+    "limitations": ["Returns only bounds explicitly present in the registered model"]
+  }
+}

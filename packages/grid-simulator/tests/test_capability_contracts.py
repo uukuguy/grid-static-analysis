@@ -15,6 +15,7 @@ EXPECTED_IDS = (
     "context.open",
     "environment.describe",
     "evidence.get",
+    "model.constraints.describe",
     "model.dataset.describe",
     "model.dataset.query",
     "model.element.get",

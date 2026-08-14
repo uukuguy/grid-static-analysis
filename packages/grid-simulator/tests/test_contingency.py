@@ -31,10 +31,11 @@ def test_n_minus_one_preserves_partial_scenario_failure(grid, context_ref: str, 
 
     result = grid.call(
         "analysis.contingency.n_minus_one.run",
-        {"context_ref": context_ref, "branch_refs": line_refs[:2], "policy": "static-analysis-v1"},
+        {"context_ref": context_ref, "branch_refs": line_refs[:2]},
     )
 
     assert result["status"] == "partial"
+    assert "policy" not in result
     assert [item["status"] for item in result["scenarios"]] == ["succeeded", "non_converged"]
     assert all(item["evidence_ref"].startswith("evidence:sha256:") for item in result["scenarios"])
 
@@ -44,7 +45,7 @@ def test_n_minus_one_uses_stable_branch_ref_and_reports_overload_evidence(grid, 
 
     result = grid.call(
         "analysis.contingency.n_minus_one.run",
-        {"context_ref": context_ref, "branch_refs": [line_11_ref], "policy": "static-analysis-v1"},
+        {"context_ref": context_ref, "branch_refs": [line_11_ref]},
     )
 
     assert result["status"] == "succeeded"
@@ -64,3 +65,15 @@ def test_n_minus_one_uses_stable_branch_ref_and_reports_overload_evidence(grid, 
         item["pandapower_index"] for item in scenario["violations"] if item["kind"] == "line_overload"
     ]
     assert overloaded_line_indices == GOLDEN["line_11_outage_overloaded_line_indices"]
+    threshold_violations = [item for item in scenario["violations"] if item["kind"] != "non_convergence"]
+    assert all(item["constraint_ref"].startswith("constraint:sha256:") for item in threshold_violations)
+    assert all(item["constraint_source"] == "model" for item in threshold_violations)
+
+
+def test_n_minus_one_rejects_legacy_policy_argument(grid, context_ref: str, line_refs: list[str]) -> None:
+    error = grid.call_error(
+        "analysis.contingency.n_minus_one.run",
+        {"context_ref": context_ref, "branch_refs": line_refs[:1], "policy": "static-analysis-v1"},
+    )
+
+    assert error.code == "invalid_arguments"

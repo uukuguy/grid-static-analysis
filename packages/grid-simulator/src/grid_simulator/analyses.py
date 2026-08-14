@@ -10,6 +10,7 @@ from typing import Any, Literal
 import pandas as pd
 from pandapower.auxiliary import LoadflowNotConverged
 
+from grid_simulator.constraints import ModelConstraints, evaluate_constraints, extract_model_constraints
 from grid_simulator.evidence import canonical_json, fingerprint, write_json
 from grid_simulator.models import OpenedContext
 from grid_simulator.queries import BranchRecord, asset_ref, find_branch, list_branch_records, list_bus_records
@@ -18,10 +19,6 @@ from grid_simulator.workspace import SimulatorWorkspace
 
 POWERFLOW_CAPABILITY_ID = "analysis.powerflow.ac.run"
 CONTINGENCY_CAPABILITY_ID = "analysis.contingency.n_minus_one.run"
-STATIC_ANALYSIS_V1_LIMITS = {
-    "bus_voltage_pu": {"minimum": 0.95, "maximum": 1.05},
-    "branch_loading_percent": {"maximum": 100.0},
-}
 AC_SOLVER_PROFILE = "ac-default-v1"
 RECOVERY_ACTIONS_NON_CONVERGENCE = (
     "inspect_network_diagnostics",
@@ -151,6 +148,7 @@ def run_n_minus_one(
     branches = [_resolve_branch(net, context.revision_ref, branch_ref) for branch_ref in branch_refs]
     solver = _solver(arguments, engine)
     violation_types = set(arguments.get("violation_types", _default_violation_types()))
+    constraints = extract_model_constraints(net, context.revision_ref)
     scenarios = []
     evidence_refs = []
     for scenario_index, branch in enumerate(branches):
@@ -165,6 +163,7 @@ def run_n_minus_one(
             branch=branch,
             scenario_index=scenario_index,
             violation_types=violation_types,
+            constraints=constraints,
         )
         scenarios.append(scenario)
         evidence_refs.append(scenario["evidence_ref"])
@@ -175,7 +174,7 @@ def run_n_minus_one(
         "capability_id": CONTINGENCY_CAPABILITY_ID,
         "context_ref": context.context_ref,
         "revision_ref": context.revision_ref,
-        "policy": str(arguments["policy"]),
+        "constraint_evaluation": constraints.evaluation_summary(),
         "status": status,
         "solver": _solver_summary(solver),
         "scenario_count": len(scenarios),
@@ -188,7 +187,7 @@ def run_n_minus_one(
         "result_ref": persisted.ref,
         "context_ref": context.context_ref,
         "revision_ref": context.revision_ref,
-        "policy": str(arguments["policy"]),
+        "constraint_evaluation": constraints.evaluation_summary(),
         "status": status,
         "solver": _solver_summary(solver),
         "evidence_refs": evidence_refs,
@@ -260,6 +259,7 @@ def _run_contingency_scenario(
     branch: BranchRecord,
     scenario_index: int,
     violation_types: set[str],
+    constraints: ModelConstraints,
 ) -> dict[str, Any]:
     try:
         engine.run_ac(net, solver["options"])
@@ -281,6 +281,7 @@ def _run_contingency_scenario(
             "status": "non_converged",
             "converged": False,
             "violations": _filter_violations([_non_convergence_violation(branch.asset_ref)], violation_types),
+            "constraint_evaluation": constraints.evaluation_summary(),
             "evidence_ref": diagnostic.evidence_ref,
             "provenance": _provenance(engine),
         }
@@ -293,6 +294,7 @@ def _run_contingency_scenario(
             "status": "non_converged",
             "converged": False,
             "violations": _filter_violations([_non_convergence_violation(branch.asset_ref)], violation_types),
+            "constraint_evaluation": constraints.evaluation_summary(),
             "evidence_ref": diagnostic.evidence_ref,
         }
     except Exception as exc:
@@ -306,8 +308,10 @@ def _run_contingency_scenario(
         solver=solver,
         extra={"outage": branch.summary(), "scenario_index": scenario_index},
     )
-    violations = _filter_violations(_violations(powerflow), violation_types)
+    evaluated_violations, constraint_evaluation = evaluate_constraints(powerflow, constraints)
+    violations = _filter_violations(evaluated_violations, violation_types)
     max_loading_percent = _max_line_loading(powerflow)
+    min_vm_pu, max_vm_pu = _voltage_extrema(powerflow)
     scenario_status = "succeeded"
     scenario_document = {
         "result_type": "analysis.contingency.n_minus_one.scenario",
@@ -319,7 +323,10 @@ def _run_contingency_scenario(
         "status": scenario_status,
         "converged": True,
         "max_loading_percent": max_loading_percent,
+        "min_vm_pu": min_vm_pu,
+        "max_vm_pu": max_vm_pu,
         "violations": violations,
+        "constraint_evaluation": constraint_evaluation,
         "powerflow": powerflow,
         "provenance": _provenance(engine),
     }
@@ -336,7 +343,10 @@ def _run_contingency_scenario(
             "facts": {
                 "status": scenario_status,
                 "max_loading_percent": max_loading_percent,
+                "min_vm_pu": min_vm_pu,
+                "max_vm_pu": max_vm_pu,
                 "violation_count": len(violations),
+                "constraint_evaluation": constraint_evaluation,
             },
             "provenance": _provenance(engine),
         },
@@ -349,7 +359,10 @@ def _run_contingency_scenario(
         "status": scenario_status,
         "converged": True,
         "max_loading_percent": max_loading_percent,
+        "min_vm_pu": min_vm_pu,
+        "max_vm_pu": max_vm_pu,
         "violations": violations,
+        "constraint_evaluation": constraint_evaluation,
         "evidence_ref": evidence_ref,
     }
 
@@ -543,50 +556,6 @@ def _total_active_loss(net: Any) -> float:
     return total
 
 
-def _violations(powerflow: dict[str, Any]) -> list[dict[str, Any]]:
-    violations = []
-    for row in powerflow["branch_results"]:
-        if row["element_kind"] == "line" and row["loading_percent"] is not None and row["loading_percent"] > STATIC_ANALYSIS_V1_LIMITS["branch_loading_percent"]["maximum"]:
-            violations.append(
-                {
-                    "kind": "line_overload",
-                    "severity": "critical",
-                    "asset_ref": row["branch_ref"],
-                    "element_kind": row["element_kind"],
-                    "pandapower_index": row["pandapower_index"],
-                    "value": row["loading_percent"],
-                    "limit": STATIC_ANALYSIS_V1_LIMITS["branch_loading_percent"]["maximum"],
-                    "unit": "percent",
-                }
-            )
-    for row in powerflow["bus_results"]:
-        if row["vm_pu"] is not None and row["vm_pu"] < STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["minimum"]:
-            violations.append(
-                {
-                    "kind": "bus_voltage_low",
-                    "severity": "warning",
-                    "asset_ref": row["asset_ref"],
-                    "pandapower_index": row["pandapower_index"],
-                    "value": row["vm_pu"],
-                    "limit": STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["minimum"],
-                    "unit": "p.u.",
-                }
-            )
-        if row["vm_pu"] is not None and row["vm_pu"] > STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["maximum"]:
-            violations.append(
-                {
-                    "kind": "bus_voltage_high",
-                    "severity": "warning",
-                    "asset_ref": row["asset_ref"],
-                    "pandapower_index": row["pandapower_index"],
-                    "value": row["vm_pu"],
-                    "limit": STATIC_ANALYSIS_V1_LIMITS["bus_voltage_pu"]["maximum"],
-                    "unit": "p.u.",
-                }
-            )
-    return violations
-
-
 def _max_line_loading(powerflow: dict[str, Any]) -> float:
     values = [
         row["loading_percent"]
@@ -594,6 +563,13 @@ def _max_line_loading(powerflow: dict[str, Any]) -> float:
         if row["element_kind"] == "line" and row["loading_percent"] is not None
     ]
     return float(max(values)) if values else 0.0
+
+
+def _voltage_extrema(powerflow: dict[str, Any]) -> tuple[float | None, float | None]:
+    values = [row["vm_pu"] for row in powerflow["bus_results"] if row["vm_pu"] is not None]
+    if not values:
+        return None, None
+    return float(min(values)), float(max(values))
 
 
 def _non_convergence_violation(branch_ref: str) -> dict[str, Any]:

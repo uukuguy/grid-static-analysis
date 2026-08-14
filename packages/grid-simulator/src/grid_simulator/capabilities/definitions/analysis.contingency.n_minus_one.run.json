@@ -14,7 +14,7 @@
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["context_ref", "branch_refs", "policy"],
+    "required": ["context_ref", "branch_refs"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
       "branch_refs": {
@@ -24,7 +24,6 @@
         "uniqueItems": true,
         "items": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"}
       },
-      "policy": {"type": "string", "enum": ["static-analysis-v1"]},
       "solver_profile": {"type": "string", "enum": ["ac-default-v1"]},
       "algorithm": {"type": "string", "enum": ["nr", "iwamoto_nr", "bfsw"]},
       "calculate_voltage_angles": {"type": "boolean"},
@@ -46,12 +45,22 @@
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["result_ref", "context_ref", "revision_ref", "policy", "status", "solver", "evidence_refs", "scenarios"],
+    "required": ["result_ref", "context_ref", "revision_ref", "constraint_evaluation", "status", "solver", "evidence_refs", "scenarios"],
     "properties": {
       "result_ref": {"type": "string", "pattern": "^result:sha256:[0-9a-f]{64}$"},
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
       "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
-      "policy": {"type": "string", "enum": ["static-analysis-v1"]},
+      "constraint_evaluation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "source", "evaluated_quantities", "unevaluated_quantities"],
+        "properties": {
+          "status": {"type": "string", "enum": ["evaluated", "partially_evaluated", "not_defined"]},
+          "source": {"type": "string", "enum": ["model"]},
+          "evaluated_quantities": {"type": "array", "items": {"type": "string"}},
+          "unevaluated_quantities": {"type": "array", "items": {"type": "string"}}
+        }
+      },
       "status": {"type": "string", "enum": ["succeeded", "partial", "failed"]},
       "solver": {
         "type": "object",
@@ -80,7 +89,7 @@
         "items": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["scenario_result_ref", "branch_ref", "element_kind", "pandapower_index", "status", "converged", "violations", "evidence_ref"],
+          "required": ["scenario_result_ref", "branch_ref", "element_kind", "pandapower_index", "status", "converged", "constraint_evaluation", "violations", "evidence_ref"],
           "properties": {
             "scenario_result_ref": {"type": "string", "pattern": "^result:sha256:[0-9a-f]{64}$"},
             "branch_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"},
@@ -89,6 +98,19 @@
             "status": {"type": "string", "enum": ["succeeded", "non_converged"]},
             "converged": {"type": "boolean"},
             "max_loading_percent": {"type": "number"},
+            "min_vm_pu": {"type": ["number", "null"]},
+            "max_vm_pu": {"type": ["number", "null"]},
+            "constraint_evaluation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "source", "evaluated_quantities", "unevaluated_quantities"],
+              "properties": {
+                "status": {"type": "string", "enum": ["evaluated", "partially_evaluated", "not_defined"]},
+                "source": {"type": "string", "enum": ["model"]},
+                "evaluated_quantities": {"type": "array", "items": {"type": "string"}},
+                "unevaluated_quantities": {"type": "array", "items": {"type": "string"}}
+              }
+            },
             "violations": {
               "type": "array",
               "items": {
@@ -103,7 +125,9 @@
                   "pandapower_index": {"type": "integer", "minimum": 0},
                   "value": {"type": "number"},
                   "limit": {"type": "number"},
-                  "unit": {"type": ["string", "null"], "enum": ["percent", "p.u.", null]}
+                  "unit": {"type": ["string", "null"], "enum": ["percent", "p.u.", null]},
+                  "constraint_ref": {"type": "string", "pattern": "^constraint:sha256:[0-9a-f]{64}$"},
+                  "constraint_source": {"type": "string", "enum": ["model"]}
                 }
               }
             },
@@ -114,10 +138,10 @@
     }
   },
   "requires": ["context.open", "topology.branch.endpoints.get"],
-  "consumes": ["network.context", "network.branch", "analysis.policy"],
-  "produces": ["analysis.contingency.receipt", "analysis.violation", "evidence.record"],
+  "consumes": ["network.context", "network.branch", "model.constraint"],
+  "produces": ["analysis.contingency.receipt", "analysis.raw_metric", "analysis.constraint_evaluation", "evidence.record"],
   "common_next": ["result.branches.rank", "evidence.get"],
-  "errors": ["unknown_context", "unknown_branch", "unsupported_policy", "powerflow_non_converged", "powerflow_failed", "persist_failed"],
+  "errors": ["unknown_context", "unknown_branch", "powerflow_non_converged", "powerflow_failed", "persist_failed"],
   "recovery": {
     "unknown_context": ["call context.open for a supported model"],
     "unknown_branch": ["resolve branch identity with model.element.get or topology.branch.endpoints.get"],
