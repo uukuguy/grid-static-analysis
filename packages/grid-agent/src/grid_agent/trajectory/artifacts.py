@@ -21,6 +21,7 @@ KIND_LAYOUT: dict[str, tuple[str, str]] = {
     "request-input": ("requests/{identity}", "input.json"),
     "model-response": ("requests/{identity}", "response.json"),
     "answer": ("turns/{identity}", "answer.json"),
+    "context-view": ("context/views/{identity}", "view.json"),
 }
 _RESULT_IDENTITY_PATTERN = re.compile(r"^result:sha256:([0-9a-f]{64})$")
 _EVIDENCE_IDENTITY_PATTERN = re.compile(r"^evidence:sha256:([0-9a-f]{64})$")

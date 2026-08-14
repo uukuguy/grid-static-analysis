@@ -14,6 +14,7 @@ from grid_agent.analysis.models import ContextEventDraft, VerifiedFact
 from grid_agent.analysis.projector import AnalysisContextProjector
 from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
 from grid_agent.analysis.workspace import AnalysisWorkspace
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
 
 
 INPUT = {
@@ -188,6 +189,52 @@ def test_projector_stops_on_integrity_failure_but_records_normal_tool_error(
             ),
             turn_id="analysis-test-t001",
         )
+
+
+def test_projector_keeps_compatibility_observation_disjoint_from_native_sidecar(
+    context_harness: ContextHarness,
+) -> None:
+    turn_id = "analysis-test-t001"
+    call_id = "call-1"
+    context_harness.start_turn(turn_id, ordinal=1)
+    artifacts = ImmutableArtifactRegistry(context_harness.workspace.root_path)
+    native = artifacts.write_json(
+        "tool-result",
+        f"{turn_id}:{call_id}",
+        {
+            "schema_version": "grid-tool-invocation/1.0",
+            "turn_id": turn_id,
+            "tool_call_id": call_id,
+            "arguments": {},
+        },
+    )
+    native_path = artifacts.verify(native)
+    native_bytes = native_path.read_bytes()
+
+    context_harness.projector.observe(
+        tool_result(
+            call_id,
+            "analysis.powerflow.ac.run",
+            {},
+            ok=False,
+            error={"code": "powerflow_non_convergence"},
+        ),
+        turn_id=turn_id,
+    )
+
+    observation = next(
+        iter(context_harness.store.snapshot.observations.values())
+    )
+    compatibility_path = (
+        context_harness.workspace.root_path / observation.path
+    )
+    assert artifacts.verify(native) == native_path
+    assert native_path.read_bytes() == native_bytes
+    assert compatibility_path != native_path
+    assert compatibility_path.is_file()
+    assert json.loads(compatibility_path.read_text(encoding="utf-8"))[
+        "capability"
+    ] == "analysis.powerflow.ac.run"
 
 
 def test_projector_requires_start_for_success_but_not_for_normal_failure(

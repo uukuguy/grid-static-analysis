@@ -131,6 +131,11 @@ def test_registry_registers_exact_preexisting_bytes(tmp_path: Path) -> None:
             "analysis-test-t001:call_1",
             "tool-results/analysis-test-t001/call_1.json",
         ),
+        (
+            "context-view",
+            "r7-" + "c" * 64,
+            "context/views/r7-" + "c" * 64 + "/view.json",
+        ),
     ],
 )
 def test_registry_registers_current_run_artifact_kinds_without_rewriting(

@@ -303,7 +303,13 @@ class AnalysisContextProjector:
         return observation_ref
 
     def _tool_result_path(self, turn_id: str, call_id: str) -> Path:
-        return self._verifier.workspace_root / "tool-results" / turn_id / f"{call_id}.json"
+        return (
+            self._verifier.workspace_root
+            / "tool-results"
+            / turn_id
+            / "compatibility"
+            / f"{call_id}.json"
+        )
 
     def _append_results(
         self,

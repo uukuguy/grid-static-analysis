@@ -58,6 +58,7 @@ class AnalysisWorkspace:
     active_turn_path: Path
     active_answer_draft_path: Path
     context_view_path: Path
+    trajectory_capture_state_path: Path
 
     @classmethod
     def create(cls, root: Path, analysis_id: str | None = None) -> AnalysisWorkspace:
@@ -124,6 +125,7 @@ class AnalysisWorkspace:
             active_turn_path=root_path / "active-turn.json",
             active_answer_draft_path=root_path / "answer-draft.json",
             context_view_path=context_path / "analysis-context-view.json",
+            trajectory_capture_state_path=context_path / "trajectory-capture-state.json",
         )
 
     def turn_path(self, ordinal: int) -> Path:

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from grid_agent.analysis.models import ContextEventDraft
 from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
 from grid_agent.analysis.workspace import AnalysisWorkspace
+from grid_agent.trajectory.recorder import RecorderIntegrityError
 
 
 INPUT = {
@@ -75,6 +77,53 @@ def test_initialize_writes_replayable_analysis_started_event(tmp_path: Path) -> 
     assert event["next_revision"] == 1
     assert event["payload"] == {"input": INPUT, "runtime": RUNTIME}
     assert store.snapshot.status == "running"
+
+
+def test_context_transition_commits_native_event_before_legacy_ledger(
+    tmp_path: Path,
+) -> None:
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
+    observed: list[str] = []
+
+    def commit(*_args: object) -> SimpleNamespace:
+        observed.append(
+            "legacy" if workspace.context_events_path.exists() else "native"
+        )
+        return SimpleNamespace(sequence=17)
+
+    AnalysisContextStore.initialize(
+        workspace,
+        input_record=INPUT,
+        runtime_record=RUNTIME,
+        transition_commit=commit,
+    )
+
+    observed.append(
+        "legacy" if workspace.context_events_path.exists() else "missing"
+    )
+    [compatibility_event] = _read_ledger_events(workspace)
+    assert observed == ["native", "legacy"]
+    assert compatibility_event["trace_sequence"] == 17
+
+
+def test_native_commit_failure_prevents_compatibility_append(
+    tmp_path: Path,
+) -> None:
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
+
+    def fail_commit(*_args: object) -> None:
+        raise RecorderIntegrityError("disk full")
+
+    with pytest.raises(ContextStoreError, match="native trajectory"):
+        AnalysisContextStore.initialize(
+            workspace,
+            input_record=INPUT,
+            runtime_record=RUNTIME,
+            transition_commit=fail_commit,
+        )
+
+    assert not workspace.context_events_path.exists()
+    assert not workspace.context_snapshot_path.exists()
 
 
 def test_initialize_seeds_capability_family_state(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -10,6 +11,12 @@ from pydantic import BaseModel, ValidationError
 from grid_agent.analysis.models import AnalysisContext, AnalysisContextEvent, ContextEventDraft
 from grid_agent.analysis.reducer import ContextTransitionError, initial_context, reduce_context
 from grid_agent.analysis.workspace import AnalysisWorkspace
+from grid_agent.trajectory.events import RunEvent
+
+
+ContextTransitionCommit = Callable[
+    [ContextEventDraft, AnalysisContext, AnalysisContext], RunEvent
+]
 
 
 class ContextStoreError(RuntimeError):
@@ -17,9 +24,15 @@ class ContextStoreError(RuntimeError):
 
 
 class AnalysisContextStore:
-    def __init__(self, workspace: AnalysisWorkspace, snapshot: AnalysisContext) -> None:
+    def __init__(
+        self,
+        workspace: AnalysisWorkspace,
+        snapshot: AnalysisContext,
+        transition_commit: ContextTransitionCommit | None = None,
+    ) -> None:
         self._workspace = workspace
         self._snapshot = snapshot
+        self._transition_commit = transition_commit
 
     @property
     def snapshot(self) -> AnalysisContext:
@@ -32,6 +45,7 @@ class AnalysisContextStore:
         *,
         input_record: Mapping[str, Any] | BaseModel,
         runtime_record: Mapping[str, Any] | BaseModel,
+        transition_commit: ContextTransitionCommit | None = None,
     ) -> AnalysisContextStore:
         if workspace.context_events_path.exists() and workspace.context_events_path.read_text(encoding="utf-8"):
             raise ContextStoreError(f"context ledger already exists: {workspace.context_events_path}")
@@ -39,7 +53,7 @@ class AnalysisContextStore:
         input_payload = _model_payload(input_record)
         runtime_payload = _model_payload(runtime_record)
         genesis = initial_context(workspace.analysis_id, input_payload, runtime_payload)
-        store = cls(workspace, genesis)
+        store = cls(workspace, genesis, transition_commit)
         store.append(
             ContextEventDraft(
                 event_type="analysis.started",
@@ -60,8 +74,25 @@ class AnalysisContextStore:
         previous = self._snapshot
         try:
             next_snapshot = reduce_context(previous, draft)
+        except (ContextTransitionError, ValidationError) as exc:
+            raise ContextStoreError(str(exc)) from exc
+
+        trace_sequence = draft.trace_sequence
+        if self._transition_commit is not None:
+            try:
+                native_event = self._transition_commit(
+                    draft, previous, next_snapshot
+                )
+            except Exception as exc:
+                raise ContextStoreError(
+                    f"native trajectory commit failed: {exc}"
+                ) from exc
+            trace_sequence = native_event.sequence
+
+        try:
             event = AnalysisContextEvent(
-                **draft.model_dump(mode="json"),
+                **draft.model_dump(mode="json", exclude={"trace_sequence"}),
+                trace_sequence=trace_sequence,
                 analysis_id=previous.analysis_id,
                 sequence=next_snapshot.revision,
                 previous_revision=previous.revision,
@@ -70,7 +101,7 @@ class AnalysisContextStore:
                 next_state_hash=next_snapshot.state_hash,
                 integrity=integrity,
             )
-        except (ContextTransitionError, ValidationError) as exc:
+        except ValidationError as exc:
             raise ContextStoreError(str(exc)) from exc
 
         _append_jsonl_fsync(self._workspace.context_events_path, event.model_dump(mode="json"))

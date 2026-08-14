@@ -15,6 +15,11 @@ from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
 from grid_agent.analysis.turns import ActiveTurnHandle, FinalizedTurn, TurnController
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.runtime.rpc import PiProtocolError
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.capture import NativeCaptureAdapter
+from grid_agent.trajectory.context_bridge import NativeContextBridge
+from grid_agent.trajectory.reader import RunEventReader
+from grid_agent.trajectory.recorder import RunEventRecorder
 
 
 RESULT_REF = "result:sha256:" + "1" * 64
@@ -33,6 +38,7 @@ class FakePi:
     start_calls: int = 0
     stop_calls: int = 0
     prompts: list[str] = field(default_factory=list)
+    captures: list[Any] = field(default_factory=list)
 
     def start(self) -> None:
         self.start_calls += 1
@@ -47,6 +53,7 @@ class FakePi:
 
     def prompt_and_wait(self, question: str, **kwargs: Any) -> str:
         self.prompts.append(question)
+        self.captures.append(kwargs.get("capture"))
         index = len(self.prompts) - 1
         action = self.behavior[index] if index < len(self.behavior) else {"answer": f"answer {index + 1}"}
         on_semantic_event = kwargs.get("on_semantic_event")
@@ -81,6 +88,9 @@ class FakePi:
                 answer=str(action.get("answer", f"answer {index + 1}")),
                 result_refs=[str(action["produce_result_ref"])] if "produce_result_ref" in action else [],
             )
+        if isinstance(action, dict) and action.get("corrupt_native"):
+            with self.workspace.events_path.open("ab") as stream:
+                stream.write(b"not-json\n")
         return str(action.get("answer", "")) if isinstance(action, dict) else ""
 
 
@@ -211,6 +221,14 @@ class RunnerHarness:
     runner: AnalysisRunner
 
 
+@dataclass
+class NativeRunnerHarness(RunnerHarness):
+    recorder: RunEventRecorder
+    artifacts: ImmutableArtifactRegistry
+    bridge: NativeContextBridge
+    capture: NativeCaptureAdapter
+
+
 @pytest.fixture
 def runner_harness(tmp_path: Path) -> RunnerHarness:
     workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
@@ -240,6 +258,113 @@ def runner_harness(tmp_path: Path) -> RunnerHarness:
         environment={"provider": "test-provider", "model": "test-model"},
     )
     return RunnerHarness(workspace=workspace, store=store, pi=pi, projector=projector, runner=runner)
+
+
+def _native_runner_harness(tmp_path: Path) -> NativeRunnerHarness:
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
+    artifacts = ImmutableArtifactRegistry(workspace.root_path)
+    recorder = RunEventRecorder(
+        workspace.events_path,
+        workspace.analysis_id,
+        artifact_registry=artifacts,
+    )
+    bridge = NativeContextBridge(recorder, artifacts, workspace)
+    store = AnalysisContextStore.initialize(
+        workspace,
+        input_record={
+            "copied_path": "input/instructions.md.txt",
+            "source_path": "task.md.txt",
+            "sha256": "a" * 64,
+            "instruction_count": 1,
+        },
+        runtime_record={
+            "provider": "test-provider",
+            "model": "test-model",
+            "grid_capability_protocol": "1.0",
+            "pandapower_version": "3.4.0",
+        },
+        transition_commit=bridge.commit,
+    )
+    capture = NativeCaptureAdapter(recorder, artifacts, workspace)
+    pi = FakePi(workspace)
+    projector = FakeProjector(store)
+    runner = AnalysisRunner(
+        workspace=workspace,
+        store=store,
+        turn_controller=TurnController(
+            workspace,
+            store,
+            audit_callback=lambda _claimed, _results: (),
+        ),
+        pi_client=pi,
+        projector=projector,
+        environment={"provider": "test-provider", "model": "test-model"},
+        capture=capture,
+        context_bridge=bridge,
+    )
+    return NativeRunnerHarness(
+        workspace=workspace,
+        store=store,
+        pi=pi,
+        projector=projector,
+        runner=runner,
+        recorder=recorder,
+        artifacts=artifacts,
+        bridge=bridge,
+        capture=capture,
+    )
+
+
+def test_runner_records_context_injection_after_artifact_write(
+    tmp_path: Path,
+) -> None:
+    harness = _native_runner_harness(tmp_path)
+
+    outcome = harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
+    )
+
+    prefix = RunEventReader(harness.recorder.events_path).read_prefix()
+    injected = [
+        event for event in prefix.events if event.event_type == "context.injected"
+    ]
+    assert outcome.status == "completed", outcome.error
+    assert prefix.failure is None
+    assert prefix.events[-1].event_type == "analysis.completed"
+    assert injected
+    assert all(
+        event.context.before_revision == event.context.after_revision
+        for event in injected
+    )
+    assert all(
+        event.payload["artifact_ref"] in event.refs.produced
+        for event in injected
+    )
+    assert all(
+        harness.artifacts.verify_reference(event.payload["artifact_ref"])
+        for event in injected
+    )
+    assert harness.pi.captures == [harness.capture]
+    assert harness.capture._turn_id is None
+
+
+def test_runner_prevents_completion_after_native_replay_failure(
+    tmp_path: Path,
+) -> None:
+    harness = _native_runner_harness(tmp_path)
+    harness.pi.behavior = [{"answer": "done", "corrupt_native": True}]
+
+    outcome = harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一",))
+    )
+
+    prefix = RunEventReader(harness.recorder.events_path).read_prefix()
+    assert outcome.status == "failed"
+    assert "native trajectory" in (outcome.error or "")
+    assert prefix.failure is not None
+    assert not any(
+        event.event_type == "analysis.completed" for event in prefix.events
+    )
 
 
 def test_runner_reuses_one_pi_process_and_injects_finalized_prior_context(runner_harness: RunnerHarness) -> None:
