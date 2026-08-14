@@ -6,11 +6,14 @@ from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.lock import PiCommand
 from grid_agent.runtime.environment import PiLaunch
+
+if TYPE_CHECKING:
+    from grid_agent.trajectory.capture import NativeCaptureAdapter
 
 
 SemanticEventCallback = Callable[[dict[str, Any], int], None]
@@ -62,6 +65,7 @@ class PiRpcClient:
         on_heartbeat: Callable[[], None] | None = None,
         heartbeat_seconds: float = 10.0,
         require_answer_text: bool = True,
+        capture: NativeCaptureAdapter | None = None,
     ) -> str:
         if self.process is None or self.process.stdin is None or self.process.stdout is None:
             raise PiProtocolError("Pi RPC process is not started")
@@ -72,7 +76,7 @@ class PiRpcClient:
         lines = self._stdout_lines
         text: list[str] = []
         acknowledged = False
-        pending_tool_calls: list[dict[str, str]] = []
+        pending_tool_calls: dict[str, dict[str, str]] = {}
         while True:
             try:
                 raw = lines.get(timeout=heartbeat_seconds)
@@ -89,6 +93,9 @@ class PiRpcClient:
                 event = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise PiProtocolError("Pi RPC returned invalid JSONL") from exc
+            if capture is not None:
+                capture.drain_provider_requests()
+                capture.on_raw_event(event)
             if on_event is not None:
                 on_event(event)
             if event.get("type") == "text_delta":
@@ -99,6 +106,8 @@ class PiRpcClient:
                     text.append(str(assistant_event.get("delta", "")))
             for payload in _semantic_trace_payloads(event, "".join(text), pending_tool_calls):
                 sequence = self.trace.append("pi_event", payload)
+                if capture is not None:
+                    capture.on_semantic_event(payload, sequence)
                 if on_semantic_event is not None:
                     on_semantic_event(payload, sequence)
             if event.get("type") == "prompt_ack" and event.get("ok") is True:
@@ -165,7 +174,7 @@ def _skip_trace_event(event: dict[str, Any]) -> bool:
     return event.get("type") not in TRACEABLE_RPC_TYPES
 
 
-def _semantic_trace_payloads(event: dict[str, Any], assembled_public_text: str, pending_tool_calls: list[dict[str, str]]) -> tuple[dict[str, Any], ...]:
+def _semantic_trace_payloads(event: dict[str, Any], assembled_public_text: str, pending_tool_calls: dict[str, dict[str, str]]) -> tuple[dict[str, Any], ...]:
     canonical_tool_result = _canonical_tool_result_event(event, pending_tool_calls)
     if canonical_tool_result is not None:
         return (canonical_tool_result,)
@@ -200,8 +209,9 @@ def _semantic_trace_payloads(event: dict[str, Any], assembled_public_text: str, 
             }.items()
             if isinstance(value, str)
         }
-        if pending:
-            pending_tool_calls.append(pending)
+        tool_call_id = pending.get("tool_call_id")
+        if isinstance(tool_call_id, str):
+            pending_tool_calls[tool_call_id] = pending
         return (start,)
     if event_type == "agent_end":
         payloads = [_canonical_agent_end_event(event, assembled_public_text)]
@@ -244,7 +254,7 @@ def _canonical_agent_end_event(event: dict[str, Any], assembled_public_text: str
     return {"type": "agent_end", "stop_status": stop_status}
 
 
-def _canonical_tool_result_event(event: dict[str, Any], pending_tool_calls: list[dict[str, str]] | None = None) -> dict[str, Any] | None:
+def _canonical_tool_result_event(event: dict[str, Any], pending_tool_calls: dict[str, dict[str, str]] | None = None) -> dict[str, Any] | None:
     if event.get("type") not in {"tool_execution_end", "tool_result"}:
         return None
     details = _tool_result_details(event)
@@ -301,7 +311,7 @@ def _tool_result_details(event: dict[str, Any]) -> object:
     return None
 
 
-def _consume_tool_pair(event: dict[str, Any], pending_tool_calls: list[dict[str, str]] | None) -> dict[str, str]:
+def _consume_tool_pair(event: dict[str, Any], pending_tool_calls: dict[str, dict[str, str]] | None) -> dict[str, str]:
     event_pair = {
         key: value
         for key, value in {
@@ -312,25 +322,13 @@ def _consume_tool_pair(event: dict[str, Any], pending_tool_calls: list[dict[str,
     }
     if pending_tool_calls is None:
         return event_pair
-    pending_index = _matching_pending_tool_index(pending_tool_calls, event_pair)
-    pending_pair = pending_tool_calls.pop(pending_index) if pending_index is not None else {}
-    return {**pending_pair, **event_pair}
-
-
-def _matching_pending_tool_index(pending_tool_calls: list[dict[str, str]], event_pair: dict[str, str]) -> int | None:
     tool_call_id = event_pair.get("tool_call_id")
-    if tool_call_id is not None:
-        for index, pending in enumerate(pending_tool_calls):
-            if pending.get("tool_call_id") == tool_call_id:
-                return index
-    tool_name = event_pair.get("tool_name")
-    if tool_name is not None:
-        for index, pending in enumerate(pending_tool_calls):
-            if pending.get("tool_name") == tool_name:
-                return index
-    if pending_tool_calls:
-        return 0
-    return None
+    pending_pair = (
+        pending_tool_calls.pop(tool_call_id, {})
+        if tool_call_id is not None
+        else {}
+    )
+    return {**pending_pair, **event_pair}
 
 
 def _event_tool_call_id(event: dict[str, Any]) -> str | None:

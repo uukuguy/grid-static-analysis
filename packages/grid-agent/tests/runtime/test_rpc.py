@@ -13,6 +13,11 @@ from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.lock import PiCommand, PiRuntimeIdentity
 from grid_agent.runtime.rpc import PiProtocolError, PiRpcClient
 from grid_agent.runtime.environment import PiLaunch
+from grid_agent.analysis.workspace import AnalysisWorkspace
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.capture import NativeCaptureAdapter
+from grid_agent.trajectory.reader import RunEventReader
+from grid_agent.trajectory.recorder import RunEventRecorder
 
 
 OPEN_RESULT: dict[str, object] = {
@@ -404,3 +409,79 @@ def test_rpc_waits_for_pi_auto_retry_after_transient_provider_error(tmp_path: Pa
         assert client.prompt_and_wait("question") == "重试后回答"
     finally:
         client.stop()
+
+
+def test_rpc_drains_request_before_callbacks_and_provider_response_mapping(
+    tmp_path: Path,
+) -> None:
+    callback_event_counts: list[int] = []
+    workspace = AnalysisWorkspace.create(tmp_path / "native", "analysis-test")
+    artifacts = ImmutableArtifactRegistry(workspace.root_path)
+    recorder = RunEventRecorder(
+        workspace.events_path,
+        workspace.analysis_id,
+        artifact_registry=artifacts,
+    )
+    capture = NativeCaptureAdapter(recorder, artifacts, workspace)
+    capture.begin_turn("analysis-test-t001")
+    request_path = workspace.requests_path / "analysis-test-t001-r001" / "input.json"
+    request_path.parent.mkdir(parents=True)
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "grid-model-request-input/1.0",
+                "request_id": "analysis-test-t001-r001",
+                "request_index": 1,
+                "turn_id": "analysis-test-t001",
+                "provider": "scripted",
+                "model": "scripted-model",
+                "captured_at": "2026-08-14T00:00:00.000Z",
+                "source_event_sequences": [],
+                "context_revision": 1,
+                "context_state_hash": "a" * 64,
+                "provider_payload": {"messages": []},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client, _legacy_workspace = scripted_rpc_client(
+        tmp_path,
+        events=[
+            {"type": "response", "command": "prompt", "success": True},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "answer"}],
+                },
+            },
+            {"type": "text_delta", "text": "answer"},
+            {"type": "agent_end", "messages": []},
+        ],
+    )
+
+    client.start()
+    try:
+        assert (
+            client.prompt_and_wait(
+                "question",
+                capture=capture,
+                on_event=lambda _event: callback_event_counts.append(
+                    len(RunEventReader(recorder.events_path).read_prefix().events)
+                ),
+            )
+            == "answer"
+        )
+    finally:
+        client.stop()
+
+    event_types = [
+        event.event_type
+        for event in RunEventReader(recorder.events_path).read_prefix().events
+    ]
+    assert event_types == ["model.request.started", "model.response.completed"]
+    assert callback_event_counts[0] == 1
+    assert callback_event_counts[1] == 2
