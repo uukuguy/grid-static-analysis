@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ProjectionPage, RunSummary } from '../api/types';
+import type { AgentTurn, BusinessNode, BusinessProblem, ContextFrame, EvidenceIndex, ProjectionPage, RunSummary } from '../api/types';
 import { Inspector } from '../components/layout/Inspector';
 import { OverviewTimeline } from '../components/layout/OverviewTimeline';
 import { RunExplorer } from '../components/layout/RunExplorer';
@@ -18,6 +18,7 @@ const api = new TrajectoryApiClient();
 
 /** Data ownership begins here; the Task 2 shell supplies the visual regions. */
 type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Partial<Pick<TrajectoryApiClient, 'getAgentPage' | 'getContextFrame' | 'getEvidenceIndex' | 'artifactUrl'>>;
+type SelectedBusinessEntity = { problem: BusinessProblem; node: BusinessNode | null };
 
 export function App({ client = api }: { client?: AppClient }) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
@@ -114,6 +115,9 @@ export function App({ client = api }: { client?: AppClient }) {
   }, [client, pageAttempts.agent, state.activeView, state.selectedRunId]);
 
   const selectedProblem = problems.find((problem) => problem.id === state.selectedNodeId || problem.turn_id === state.selectedNodeId || problem.nodes.some((node) => node.id === state.selectedNodeId)) ?? null;
+  const selectedEntity: SelectedBusinessEntity | null = selectedProblem
+    ? { problem: selectedProblem, node: selectedProblem.nodes.find((node) => node.id === state.selectedNodeId) ?? null }
+    : null;
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;
 
   useEffect(() => {
@@ -121,9 +125,9 @@ export function App({ client = api }: { client?: AppClient }) {
     // A scrubber selection owns its sequence. Only an external trajectory
     // selection should derive a new context sequence from the business page.
     if (state.selectedNodeId?.startsWith('context:')) return;
-    const sequence = selectedProblem?.source_sequence ?? selectedRun?.last_sequence ?? null;
+    const sequence = selectedEntity?.node?.source_sequence ?? selectedEntity?.problem.source_sequence ?? selectedRun?.last_sequence ?? null;
     setContextSequence(sequence && sequence >= 1 ? sequence : null);
-  }, [state.activeView, state.selectedNodeId, state.selectedRunId, selectedProblem?.source_sequence, selectedRun?.last_sequence]);
+  }, [state.activeView, state.selectedNodeId, state.selectedRunId, selectedEntity?.node?.source_sequence, selectedEntity?.problem.source_sequence, selectedRun?.last_sequence]);
 
   useEffect(() => {
     if (state.activeView !== 'context' || !state.selectedRunId || !client.getContextFrame) return;
@@ -207,7 +211,7 @@ export function App({ client = api }: { client?: AppClient }) {
     {state.activeView === 'business' ? <BusinessView problems={problems} state={state} dispatch={dispatch} hasOlder={businessPage.has_older} onRequestOlder={requestOlder} />
       : state.activeView === 'agent' ? <AgentView trajectory={agentTurns} selectedNodeId={state.selectedNodeId} onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })} artifactUrl={artifactUrl} />
         : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
-          : <EvidenceView index={evidenceIndex} selectedRef={state.selectedNodeId} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
+          : <EvidenceView index={evidenceIndex} selectedRefs={selectedEntity?.node?.refs ?? (state.selectedNodeId ? [state.selectedNodeId] : [])} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
     </AsyncState>
   </section>;
 
@@ -219,7 +223,7 @@ export function App({ client = api }: { client?: AppClient }) {
       </AsyncState>}
       timeline={<OverviewTimeline problems={problems} selectedTurnId={selectedProblem?.turn_id ?? state.selectedNodeId} onSelectTurn={selectTurn} onFocusRange={(range) => dispatch({ type: 'timeline/focused', range })} />}
       content={content}
-      inspector={<Inspector node={selectedProblem} />}
+      inspector={<Inspector entity={selectedEntity} artifactUrl={artifactUrl} />}
       focusedTurnId={selectedProblem?.turn_id ?? state.selectedNodeId}
     />
   </div>;

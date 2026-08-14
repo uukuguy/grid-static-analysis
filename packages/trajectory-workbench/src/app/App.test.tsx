@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type TrajectoryApiClient } from '../api/client';
-import type { BusinessProblem, ContextFrame, RunListResponse } from '../api/types';
+import type { BusinessProblem, ContextFrame, EvidenceIndex, RunListResponse } from '../api/types';
 import { App } from './App';
 
 const run: RunListResponse = {
@@ -196,16 +196,48 @@ describe('App shell', () => {
     expect(new URLSearchParams(window.location.search).get('node')).toBe('analysis-test-t007');
   });
 
-  it('resolves a nested business node deep link to its parent inspector and timeline turn', async () => {
+  it('resolves a nested business node deep link to its exact inspector node while retaining the parent timeline turn', async () => {
     window.history.replaceState({}, '', '/?node=business:7:claim');
     render(<App client={{
       listRuns: async () => run,
       getBusinessPage: async () => ({ items: [nestedProblem], older_cursor: null, newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: false, encoded_bytes: 100 }),
     }} />);
 
-    await screen.findByText('Nested conclusion');
-    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveTextContent('business:7');
+    await screen.findByRole('button', { name: /nested conclusion/i });
+    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveTextContent('business:7:claim');
+    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveTextContent('Nested conclusion');
     expect(screen.getByRole('region', { name: 'Run overview timeline' })).toHaveAttribute('data-focused-turn', 'analysis-test-t007');
+  });
+
+  it('uses a selected business node’s own sequence and artifact references in context and evidence', async () => {
+    const node = { ...nestedProblem.nodes[0], source_sequence: 61, refs: ['evidence:nested'] };
+    const getContextFrame = vi.fn(async (_id: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+    }));
+    const getEvidenceIndex = vi.fn(async (): Promise<EvidenceIndex> => ({ analysis_id: 'analysis-test', records: {
+      'evidence:nested': { id: 'artifact:nested', source: 'observed', source_sequences: [61], rule_id: null, status: 'completed', unavailable_reason: null, reference: 'evidence:nested', kind: 'evidence', relative_path: 'evidence/nested.json', sha256: 'a'.repeat(64), verification_status: 'verified', producing_sequence: 61, consuming_sequences: [], turn_id: null, step_id: null, request_id: null, tool_call_id: null, result_id: null, evidence_id: null, claim_id: null },
+    } }));
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => ({ items: [{ ...nestedProblem, nodes: [node] }], older_cursor: null, newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: false, encoded_bytes: 100 }),
+      getContextFrame,
+      getEvidenceIndex,
+      artifactUrl: (_runId, ref) => `/artifact/${ref}`,
+    }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /nested conclusion/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Context' }));
+    await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 61, expect.any(AbortSignal)));
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }));
+    expect(await screen.findByRole('row', { selected: true })).toHaveTextContent('evidence:nested');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Business' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'References' }));
+    expect(screen.getByRole('link', { name: 'evidence:nested' })).toHaveAttribute('href', '/artifact/evidence:nested');
   });
 
   it('rehydrates a persisted context deep link and fetches its exact sequence', async () => {

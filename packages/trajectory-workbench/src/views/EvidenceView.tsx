@@ -1,10 +1,10 @@
 import type { EvidenceIndex, EvidenceRecord } from '../api/types';
 import { SourceBadge } from '../components/common/SourceBadge';
 
-interface EvidenceViewProps { index: EvidenceIndex | null; selectedRef: string | null; onSelectRef: (ref: string) => void; artifactUrl: (ref: string) => string; }
+interface EvidenceViewProps { index: EvidenceIndex | null; selectedRefs: string[]; onSelectRef: (ref: string) => void; artifactUrl: (ref: string) => string; }
 
-function EvidenceRow({ record, selectedRef, onSelectRef, artifactUrl }: { record: EvidenceRecord; selectedRef: string | null; onSelectRef: (ref: string) => void; artifactUrl: (ref: string) => string }) {
-  const selected = selectedRef === record.reference;
+function EvidenceRow({ record, selectedRefs, onSelectRef, artifactUrl }: { record: EvidenceRecord; selectedRefs: string[]; onSelectRef: (ref: string) => void; artifactUrl: (ref: string) => string }) {
+  const selected = selectedRefs.includes(record.reference);
   return <div role="row" aria-selected={selected} className={selected ? 'evidence-row selected' : 'evidence-row'}>
     <span role="gridcell"><button type="button" onClick={() => onSelectRef(record.reference)} aria-label={`${record.kind} · ${record.reference} · ${record.verification_status}`}><strong>{record.kind}</strong><span>{record.reference}</span></button><small>{record.relative_path}</small></span>
     <span role="gridcell"><SourceBadge source={record.source} /><small>{record.verification_status}{record.unavailable_reason ? ` · ${record.unavailable_reason}` : ''}</small></span>
@@ -13,11 +13,11 @@ function EvidenceRow({ record, selectedRef, onSelectRef, artifactUrl }: { record
   </div>;
 }
 
-export function EvidenceView({ index, selectedRef, onSelectRef, artifactUrl }: EvidenceViewProps) {
+export function EvidenceView({ index, selectedRefs, onSelectRef, artifactUrl }: EvidenceViewProps) {
   const records = index ? Object.values(index.records) : [];
   return <section className="evidence-view" aria-label="Evidence view"><header><h1>Evidence artifacts</h1><p>Immutable artifact projection returned by the trajectory API.</p></header>
     <div role="treegrid" aria-label="Evidence artifacts" className="evidence-grid"><div role="row" className="evidence-head"><span role="columnheader">Artifact / type</span><span role="columnheader">Source / verification</span><span role="columnheader">Producer / consumers</span><span role="columnheader">Download</span></div>
-      {records.map((record) => <EvidenceRow key={record.reference} record={record} selectedRef={selectedRef} onSelectRef={onSelectRef} artifactUrl={artifactUrl} />)}
+      {records.map((record) => <EvidenceRow key={record.reference} record={record} selectedRefs={selectedRefs} onSelectRef={onSelectRef} artifactUrl={artifactUrl} />)}
     </div>
     {records.length === 0 ? <p className="unavailable">No evidence artifacts are available for this run.</p> : null}
   </section>;

@@ -87,7 +87,7 @@ describe('trajectory drill-down views', () => {
 
   it('renders the exact typed evidence artifact projection', () => {
     const selectRef = vi.fn();
-    render(<EvidenceView index={evidence} selectedRef="evidence:q7" onSelectRef={selectRef} artifactUrl={(ref) => `/artifact/${ref}`} />);
+    render(<EvidenceView index={evidence} selectedRefs={['evidence:q7']} onSelectRef={selectRef} artifactUrl={(ref) => `/artifact/${ref}`} />);
     const record = screen.getByRole('button', { name: /evidence.*evidence:q7.*verified/i });
     fireEvent.click(record);
     expect(selectRef).toHaveBeenCalledWith('evidence:q7');

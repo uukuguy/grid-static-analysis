@@ -5,7 +5,7 @@ import { WorkbenchShell } from './WorkbenchShell';
 
 const mobileQuery = '(max-width: 720px)';
 
-function renderMobileShell(inspector = <Inspector node={null} />) {
+function renderMobileShell(inspector = <Inspector entity={null} artifactUrl={() => '#'} />) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
     matches: query === mobileQuery,
     media: query,
