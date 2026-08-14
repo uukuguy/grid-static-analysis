@@ -368,7 +368,6 @@ def _execute_scripted_static_case(
             {
                 "context_ref": context_ref,
                 "branch_refs": [str(dict(element["element"])["asset_ref"])],
-                "policy": "static-analysis-v1",
             },
         )
         evidence_ref = _write_synthetic_evidence(
@@ -383,8 +382,8 @@ def _execute_scripted_static_case(
         client.events[-1] = ToolResultEvent(
             capability="analysis.contingency.n_minus_one.run",
             result={
-                "policy": result["policy"],
                 "status": "partial",
+                "constraint_evaluation": result["constraint_evaluation"],
                 "scenarios": [
                     {"status": "succeeded", "pandapower_index": 11},
                     {"status": "non_converged", "pandapower_index": 21},

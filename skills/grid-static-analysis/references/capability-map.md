@@ -23,10 +23,10 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 - `model.dataset.describe`: describes supported network datasets and fields.
 - `model.dataset.query`: queries curated bus or branch rows.
 - `model.element.get`: resolves a bus, line, transformer, or three-winding transformer to `asset_ref`.
+- `model.constraints.describe`: returns voltage and loading constraints stored in the active model with their source fields.
 - `topology.branch.endpoints.get`: returns branch endpoint buses and topology evidence.
 - `topology.components.get`: returns connected component summaries.
 - `analysis.powerflow.ac.run`: runs AC steady-state power flow.
-- `analysis.policy.describe`: returns the published static-analysis operating limits.
 - `result.branches.rank`: ranks branch rows from a prior power-flow result.
 - `analysis.contingency.n_minus_one.run`: runs isolated single-branch outage scenarios.
 - `evidence.get`: retrieves persisted evidence documents by `evidence_ref`.
@@ -35,8 +35,8 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 
 Catalog calls take no context. Model-specific calls require `context_ref`. Calculation calls require the same `context_ref` and contract-enumerated solver overrides only. Ranking requires an existing `result_ref`, explicit `metric`, `direction`, and `limit`.
 
-Use `model_id: "ieee39"` for the only registered WP-A model. Use policy `static-analysis-v1` for N-1.
-For the normal voltage range or a branch loading limit, call `analysis.policy.describe` with that policy; it returns the limits without requiring a network context or power-flow run.
+Use `model_id: "ieee39"` for the only registered WP-A model. N-1 requires the base context and stable branch refs.
+For a model voltage range or branch loading limit, call `model.constraints.describe` with the active context. User criteria and named standards must remain separately identified sources.
 
 ## Result Fields and Units
 

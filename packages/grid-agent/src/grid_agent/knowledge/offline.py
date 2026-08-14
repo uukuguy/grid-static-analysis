@@ -26,12 +26,7 @@ class DiagnosticPlan:
 
 _ENTRIES = (
     KnowledgeEntry(
-        concept_id="static-analysis-v1.voltage-normal-range",
-        source_id="skills/grid-static-analysis/references/contingency-analysis.md",
-        answer="静态分析策略 static-analysis-v1 中，母线电压正常运行范围为 0.95–1.05 p.u.。",
-    ),
-    KnowledgeEntry(
-        concept_id="static-analysis-v1.n-minus-one-violation-types",
+        concept_id="analysis.contingency.n-minus-one.violation-types",
         source_id="skills/grid-static-analysis/references/contingency-analysis.md",
         answer=(
             "N-1 静态安全校核检查潮流不收敛、母线低电压、母线高电压，"
@@ -55,12 +50,10 @@ _SUPPORTED_OFFLINE_LINE_IDS = frozenset({"11"})
 
 def answer_information(question: str) -> str | None:
     normalized = question.lower()
-    if "电压" in question and ("范围" in question or "正常" in question):
-        return _with_source(_ENTRIES[0])
     if "n-1" in normalized and ("哪些" in question or "什么" in question or "类型" in question):
-        return _with_source(_ENTRIES[1])
+        return _with_source(_ENTRIES[0])
     if "输入" in question and "潮流" in question:
-        return _with_source(_ENTRIES[2])
+        return _with_source(_ENTRIES[1])
     return None
 
 
@@ -104,7 +97,7 @@ def answer_diagnostic(question: str, client: CapabilityClient) -> str:
         branch_ref = str(dict(element["element"])["asset_ref"])
         result = client.invoke(
             "analysis.contingency.n_minus_one.run",
-            {"context_ref": context_ref, "branch_refs": [branch_ref], "policy": "static-analysis-v1"},
+            {"context_ref": context_ref, "branch_refs": [branch_ref]},
         )
         return _answer_n_minus_one(result, line_id)
 
@@ -123,7 +116,7 @@ def answer_diagnostic(question: str, client: CapabilityClient) -> str:
         branch_refs = [str(branch["branch_ref"]) for branch in ranking["branches"]]
         result = client.invoke(
             "analysis.contingency.n_minus_one.run",
-            {"context_ref": context_ref, "branch_refs": branch_refs, "policy": "static-analysis-v1"},
+            {"context_ref": context_ref, "branch_refs": branch_refs},
         )
         return _answer_fault_ranking(result)
 

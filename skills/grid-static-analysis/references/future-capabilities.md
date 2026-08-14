@@ -14,7 +14,7 @@ Unavailable means there is no advertised executable WP-A capability ID for the w
 
 ## Available Capabilities
 
-There are no executable future capabilities in WP-A. Available alternatives are limited to the current capability map: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.policy.describe`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
+There are no executable future capabilities in WP-A. Available alternatives are limited to the current capability map: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `model.constraints.describe`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
 
 Unavailable in WP-A:
 
@@ -25,7 +25,7 @@ Unavailable in WP-A:
 - Time series.
 - Model import, create, edit, or delete.
 - Topology switching or branch status modification outside isolated N-1 scenarios.
-- Richer policy/risk engines beyond `static-analysis-v1`.
+- Richer risk evaluation against user criteria or named external standards.
 - Multiple registered networks beyond `ieee39`.
 - Dynamic stability, protection relay simulation, and remedial action optimization.
 

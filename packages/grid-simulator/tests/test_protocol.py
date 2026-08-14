@@ -88,14 +88,6 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
     assert "capabilities" not in response.result
 
 
-def test_legacy_policy_capability_is_not_published(tmp_path: Path) -> None:
-    response = dispatch(request("analysis.policy.describe", {"policy": "static-analysis-v1"}), tmp_path)
-
-    assert response.ok is False
-    assert response.error is not None
-    assert response.error.code == "unsupported_capability"
-
-
 def test_context_open_rejects_unexpected_arguments_before_persistence(tmp_path: Path) -> None:
     response = dispatch(request("context.open", {"model_id": "ieee39", "unexpected": True}), tmp_path)
 
@@ -161,7 +153,7 @@ def test_executable_semantic_id_validates_arguments_before_execution(tmp_path: P
             {
                 "context_ref": "context:sha256:" + "a" * 64,
                 "line_ids": ["line:index:11"],
-                "policy": "static-analysis-v1",
+                "unsupported_thresholds": {"loading_percent": 100},
             },
         ),
     ),

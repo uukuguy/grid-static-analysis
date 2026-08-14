@@ -21,7 +21,6 @@ def test_task11_validation_inventory_covers_wp_a_required_cases() -> None:
 
     task_required = {
         "topology-line-endpoints-001",
-        "knowledge-voltage-range-001",
         "knowledge-n1-violation-types-001",
         "knowledge-ac-tool-inputs-001",
         "analysis-ac-loss-001",
@@ -51,6 +50,10 @@ def test_task11_validation_inventory_covers_wp_a_required_cases() -> None:
         "limitation-line-171-n1-001",
         "limitation-voltage-overload-risk-001",
     })
+    assert all(
+        "policy" not in case.oracle.arguments
+        for case in cases
+    )
 
 
 def test_topology_case_forbids_unnecessary_powerflow() -> None:

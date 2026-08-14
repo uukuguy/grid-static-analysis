@@ -9,8 +9,8 @@ from grid_agent.validation.oracles import (
 
 
 def test_contains_all_matches_required_values_case_insensitively() -> None:
-    assert contains_all("正常范围为 0.95 到 1.05 PU。", {"values": ["0.95", "1.05", "pu"]})
-    assert not contains_all("正常范围为 0.95 到 1.04 pu。", {"values": ["0.95", "1.05", "pu"]})
+    assert contains_all("示例范围为 2.5 到 3.5 PU。", {"values": ["2.5", "3.5", "pu"]})
+    assert not contains_all("示例范围为 2.5 到 3.4 pu。", {"values": ["2.5", "3.5", "pu"]})
 
 
 def test_truthful_limitation_matches_known_limitation_terms() -> None:

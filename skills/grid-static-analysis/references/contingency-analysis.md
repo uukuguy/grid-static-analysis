@@ -16,11 +16,11 @@ Report `status` as `succeeded`, `partial`, or `failed`. A scenario can be `non_c
 
 ## Available Capabilities
 
-- `analysis.contingency.n_minus_one.run`: run deterministic single-branch outage checks for up to 32 branch refs under policy `static-analysis-v1`.
+- `analysis.contingency.n_minus_one.run`: run deterministic single-branch outage checks for up to 32 branch refs and evaluate available model constraints.
 
 ## Parameters and Defaults
 
-Required: `context_ref`, `branch_refs`, and `policy: "static-analysis-v1"`.
+Required: `context_ref` and `branch_refs`.
 
 `branch_refs` must contain 1 to 32 unique refs matching `asset:line:*`, `asset:trafo:*`, or `asset:trafo3w:*`.
 
@@ -30,13 +30,13 @@ Optional `violation_types`: `line_overload`, `bus_voltage_low`, `bus_voltage_hig
 
 ## Result Fields and Units
 
-Outputs: `result_ref`, `context_ref`, `revision_ref`, `policy`, `status`, `solver`, `evidence_refs`, and `scenarios`.
+Outputs: `result_ref`, `context_ref`, `revision_ref`, `constraint_evaluation`, `status`, `solver`, `evidence_refs`, and `scenarios`.
 
-Each scenario includes `scenario_result_ref`, `branch_ref`, `element_kind`, `pandapower_index`, `status`, `converged`, optional `max_loading_percent`, `violations`, and `evidence_ref`. Violation values use `percent` for loading and `p.u.` for bus voltage.
+Each scenario includes `scenario_result_ref`, `branch_ref`, `element_kind`, `pandapower_index`, `status`, `converged`, raw loading/voltage extrema, `constraint_evaluation`, `violations`, and `evidence_ref`. Violation values use `percent` for loading and `p.u.` for bus voltage; thresholded violations identify their model `constraint_ref`.
 
 ## Single-step Examples
 
-- "Check N-1 for line 171" -> `context.open` -> resolve line 171 with `model.element.get` or endpoint lookup -> call `analysis.contingency.n_minus_one.run` with that branch ref and policy.
+- "Check N-1 for line 171" -> `context.open` -> resolve line 171 with `model.element.get` or endpoint lookup -> call `analysis.contingency.n_minus_one.run` with that branch ref.
 
 ## Multi-step Examples
 
@@ -45,7 +45,7 @@ Each scenario includes `scenario_result_ref`, `branch_ref`, `element_kind`, `pan
 
 ## Failures and Legal Recovery
 
-`unknown_context` requires `context.open`. `unknown_branch` requires resolving with `model.element.get` or `topology.branch.endpoints.get`. `unsupported_policy` requires `static-analysis-v1`. `powerflow_non_converged` should be reported as non-convergence for the affected scenario or handled with a justified solver change. `powerflow_failed` and `persist_failed` must be reported without estimating results.
+`unknown_context` requires `context.open`. `unknown_branch` requires resolving with `model.element.get` or `topology.branch.endpoints.get`. `powerflow_non_converged` should be reported as non-convergence for the affected scenario or handled with a justified solver change. `powerflow_failed` and `persist_failed` must be reported without estimating results. If `constraint_evaluation` is `not_defined` or partial, report raw metrics and the missing constraint coverage without inventing a threshold.
 
 ## Evidence Requirements
 

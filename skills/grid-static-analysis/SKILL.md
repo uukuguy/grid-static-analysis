@@ -13,7 +13,7 @@ The model resolves natural language, entity names, aliases, and analysis intent.
 
 Separate answer types:
 
-- Knowledge answers explain policy or concepts without simulator evidence when no network-specific fact or numerical result is claimed.
+- Knowledge answers explain capability concepts without simulator evidence when no network-specific fact or numerical result is claimed.
 - Network facts come from registered model capabilities and require a current context. Topology facts that return `evidence_ref` must cite that evidence.
 - Calculation results come only from simulator analysis capabilities and must cite current-run `result_ref` and `evidence_refs`.
 
@@ -28,7 +28,7 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 - Topology endpoints and components: [topology-analysis](references/topology-analysis.md).
 - AC power flow and solver profile: [ac-powerflow](references/ac-powerflow.md).
 - N-1 static contingency: [contingency-analysis](references/contingency-analysis.md).
-- Published operating limits: `analysis.policy.describe` with `policy: "static-analysis-v1"`; use it for normal voltage-range questions instead of inferring a policy from a power-flow result.
+- Model-owned voltage and loading limits: `model.constraints.describe` with the active `context_ref`; identify model, user, or named-standard sources explicitly.
 - Result ranking and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
 - Defined future scope that is unavailable in WP-A: [future-capabilities](references/future-capabilities.md).
 
@@ -40,7 +40,7 @@ Only cite evidence that exists in the current run. If a capability says `evidenc
 
 ## Simple Questions
 
-For capability or policy questions, answer from the Skill and knowledge documents. For supported model lists, use `environment.describe` or `model.list` if a runtime-backed answer is required.
+For capability questions, answer from the Skill and knowledge documents. A numerical operating range requires an active model constraint, user criterion, or explicitly named standard. For supported model lists, use `environment.describe` or `model.list` if a runtime-backed answer is required.
 
 For "Which buses does line 11 connect?", open `ieee39` with `context.open`, resolve line 11 with `model.element.get` or directly call `topology.branch.endpoints.get` using `kind: line`, `namespace: pandapower_index`, `identifier: "11"`, then answer from `from_bus`, `to_bus`, and `evidence_ref`.
 
@@ -55,7 +55,7 @@ Plan from stable references:
 3. Resolve requested buses, lines, transformers, or datasets with `model.element.get`, `model.dataset.describe`, or `model.dataset.query`.
 4. Run `analysis.powerflow.ac.run` for numerical AC steady-state values.
 5. Rank existing branch results with `result.branches.rank`; do not rerun power flow for ranking.
-6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context and policy.
+6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context; interpret violations only against returned model constraints.
 7. Use `evidence.get` to inspect a current-run topology or analysis document when its persisted facts are needed. For AC, ranking, and N-1, cite the returned primary `result_ref` and relevant `evidence_refs`; scenario results linked by claimed N-1 evidence are verified automatically.
 
 ## Failure Recovery
@@ -66,6 +66,6 @@ If evidence cannot be read, preserve the original reference and report the artif
 
 ## Capability Status
 
-Available WP-A executable capabilities: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.policy.describe`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
+Available WP-A executable capabilities: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `model.constraints.describe`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
 
-Defined but unavailable future capabilities include DC flow, OPF, short circuit, state estimation, time series, model import/create/modify, richer policy/risk engines, and multiple registered networks. See [future-capabilities](references/future-capabilities.md) before promising those workflows.
+Defined but unavailable future capabilities include DC flow, OPF, short circuit, state estimation, time series, model import/create/modify, richer sourced risk engines, and multiple registered networks. See [future-capabilities](references/future-capabilities.md) before promising those workflows.

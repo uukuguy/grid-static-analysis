@@ -309,7 +309,7 @@ def answer_third_turn():
     top_branch = ranking["branches"][0]["branch_ref"]
     n1 = grid(
         "analysis.contingency.n_minus_one.run",
-        {{"context_ref": ranking["context_ref"], "branch_refs": [top_branch], "policy": "static-analysis-v1"}},
+        {{"context_ref": ranking["context_ref"], "branch_refs": [top_branch]}},
         "call-006-n1",
     )
     submit_answer(

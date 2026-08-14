@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[4]
     "question,expected",
     [
         ("IEEE-39节点系统中线路11连接哪两个母线?", ("6", "11", "evidence:")),
-        ("母线电压正常运行范围是多少?", ("0.95", "1.05")),
         ("N-1静态安全校核需要检查哪些越限类型?", ("电压", "过载")),
     ],
 )
@@ -50,7 +49,7 @@ def test_information_answer_creates_no_run_directory() -> None:
             "--offline",
             "--question-id",
             question_id,
-            "母线电压正常运行范围是多少?",
+            "某个潮流计算工具需要输入哪些参数?",
         ],
         cwd=ROOT,
         text=True,
@@ -60,7 +59,8 @@ def test_information_answer_creates_no_run_directory() -> None:
 
     assert completed.returncode == 0, completed.stderr
     envelope = json.loads(completed.stdout)
-    assert "0.95" in envelope["answer_output"] and "1.05" in envelope["answer_output"]
+    assert "context_ref" in envelope["answer_output"]
+    assert "analysis.powerflow.ac.run" in envelope["answer_output"]
     assert not runs_path.exists()
 
 

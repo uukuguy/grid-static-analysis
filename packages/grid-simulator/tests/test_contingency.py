@@ -70,10 +70,10 @@ def test_n_minus_one_uses_stable_branch_ref_and_reports_overload_evidence(grid, 
     assert all(item["constraint_source"] == "model" for item in threshold_violations)
 
 
-def test_n_minus_one_rejects_legacy_policy_argument(grid, context_ref: str, line_refs: list[str]) -> None:
+def test_n_minus_one_rejects_uncontracted_threshold_argument(grid, context_ref: str, line_refs: list[str]) -> None:
     error = grid.call_error(
         "analysis.contingency.n_minus_one.run",
-        {"context_ref": context_ref, "branch_refs": line_refs[:1], "policy": "static-analysis-v1"},
+        {"context_ref": context_ref, "branch_refs": line_refs[:1], "loading_limit": 100.0},
     )
 
     assert error.code == "invalid_arguments"

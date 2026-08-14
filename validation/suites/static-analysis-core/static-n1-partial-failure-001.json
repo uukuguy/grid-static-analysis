@@ -13,8 +13,8 @@
     "kind": "structured",
     "evaluator": "result_matches",
     "arguments": {
-      "policy": "static-analysis-v1",
       "status": "partial",
+      "constraint_evaluation": {"source": "model"},
       "scenarios": [
         {"status": "succeeded", "pandapower_index": 11},
         {"status": "non_converged", "pandapower_index": 21}
