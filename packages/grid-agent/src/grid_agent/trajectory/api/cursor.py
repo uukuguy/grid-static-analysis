@@ -7,6 +7,7 @@ import binascii
 import hmac
 import os
 import secrets
+import stat
 from pathlib import Path
 from typing import Literal
 
@@ -64,7 +65,7 @@ class CursorCodec:
                 0o600,
             )
         except FileExistsError:
-            key = key_path.read_bytes()
+            key = _read_private_key(key_path)
         else:
             key = secrets.token_bytes(32)
             try:
@@ -116,6 +117,31 @@ def _validate_expected_cursor(state: CursorState, expected: CursorExpectation) -
         raise CursorError("stale projection cursor")
     if state.direction != expected.direction:
         raise CursorError("wrong cursor direction")
+
+
+def _read_private_key(key_path: Path) -> bytes:
+    """Read an existing key only after verifying its secure filesystem identity."""
+    try:
+        path_status = os.lstat(key_path)
+        if not stat.S_ISREG(path_status.st_mode):
+            raise ValueError("cursor key must be a regular file")
+        descriptor = os.open(key_path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise ValueError("cursor key cannot be safely opened") from exc
+
+    with os.fdopen(descriptor, "rb") as handle:
+        key_status = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(key_status.st_mode)
+            or (path_status.st_dev, path_status.st_ino)
+            != (key_status.st_dev, key_status.st_ino)
+        ):
+            raise ValueError("cursor key must be a regular file")
+        if key_status.st_mode & 0o077:
+            raise ValueError("cursor key must be private")
+        if key_status.st_size != 32:
+            raise ValueError("cursor key must contain 32 bytes")
+        return handle.read()
 
 
 __all__ = ["CursorCodec", "CursorError", "CursorExpectation", "CursorState"]
