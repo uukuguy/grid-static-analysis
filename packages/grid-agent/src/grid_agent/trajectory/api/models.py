@@ -52,4 +52,17 @@ class RunSummary(_StrictModel):
     diagnostic: str | None = None
 
 
-__all__ = ["AnalysisManifest", "LegacyV02Manifest", "RunSummary"]
+class RunListResponse(_StrictModel):
+    """The fixed envelope returned by the catalog endpoint."""
+
+    items: tuple[RunSummary, ...] = ()
+
+
+class ApiError(_StrictModel):
+    """A public error that contains no filesystem or implementation detail."""
+
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+
+
+__all__ = ["AnalysisManifest", "ApiError", "LegacyV02Manifest", "RunListResponse", "RunSummary"]
