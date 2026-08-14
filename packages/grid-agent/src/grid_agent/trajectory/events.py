@@ -5,9 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from grid_agent.trajectory.canonical import canonical_json_bytes, sha256_ref
+
+
+ZERO_PREDECESSOR_HASH = "sha256:" + "0" * 64
 
 
 class StrictFrozenModel(BaseModel):
@@ -235,6 +238,25 @@ class RunEvent(EventDraft):
     previous_event_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     event_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
+    @field_validator("timestamp")
+    @classmethod
+    def require_valid_canonical_utc_timestamp(cls, value: str) -> str:
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+        except ValueError as error:
+            raise ValueError("timestamp must be a valid UTC timestamp") from error
+        if parsed.strftime("%Y-%m-%dT%H:%M:%S.%fZ") != value:
+            raise ValueError("timestamp must be a valid UTC timestamp")
+        return value
+
+    @model_validator(mode="after")
+    def require_correct_predecessor_seed(self) -> "RunEvent":
+        if self.sequence == 1 and self.previous_event_hash != ZERO_PREDECESSOR_HASH:
+            raise ValueError("sequence 1 requires the zero predecessor seed")
+        if self.sequence > 1 and self.previous_event_hash == ZERO_PREDECESSOR_HASH:
+            raise ValueError("zero predecessor seed is only valid for sequence 1")
+        return self
+
 
 def build_event(
     draft: EventDraft,
@@ -245,6 +267,8 @@ def build_event(
     previous_event_hash: str,
 ) -> RunEvent:
     """Build a validated native event and its canonical content hash."""
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("timestamp must be an aware instant")
     timestamp_utc = timestamp.astimezone(UTC)
     event_without_hash = {
         "schema_version": "grid-run-event/1.0",

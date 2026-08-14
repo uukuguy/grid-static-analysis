@@ -1,134 +1,152 @@
-# Task 1 Report: Self-contained Analysis workspace
+# Task 1 Report: Canonical JSON and typed event envelope
 
-Date: 2026-08-13
+Date: 2026-08-14
 
 Status: implemented and verified
 
 ## Scope
 
-Built the new focused `grid_agent.analysis` workspace layer without changing the existing `RunWorkspace`. The implementation is limited to the Task 1-owned package and test files plus this report.
+Implemented only the Task 1 trajectory protocol surface. Existing runtime behavior,
+stdout envelopes, simulator boundaries, and existing analysis workspace behavior were
+not changed.
 
-## Files added
+## Files changed
 
-- `packages/grid-agent/src/grid_agent/analysis/__init__.py`
-- `packages/grid-agent/src/grid_agent/analysis/workspace.py`
-- `packages/grid-agent/tests/analysis/__init__.py`
-- `packages/grid-agent/tests/analysis/test_workspace.py`
+- `packages/grid-agent/src/grid_agent/trajectory/__init__.py`
+- `packages/grid-agent/src/grid_agent/trajectory/canonical.py`
+- `packages/grid-agent/src/grid_agent/trajectory/events.py`
+- `packages/grid-agent/tests/trajectory/__init__.py`
+- `packages/grid-agent/tests/trajectory/test_events.py`
 
 ## TDD evidence
 
-### Red
+### RED
 
 Command:
 
-```bash
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_workspace.py -q
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
 ```
 
-Observed failure:
+Observed output:
 
 ```text
-ModuleNotFoundError: No module named 'grid_agent.analysis'
+ImportError while importing test module 'packages/grid-agent/tests/trajectory/test_events.py'.
+ModuleNotFoundError: No module named 'grid_agent.trajectory'
+1 error in 0.07s
 ```
 
-### Green
+This was the expected failure before the new package existed.
+
+### GREEN
 
 Command:
 
-```bash
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_workspace.py -q
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
+```
+
+Observed output:
+
+```text
+..........                                                               [100%]
+10 passed in 0.06s
+```
+
+Also run:
+
+```sh
+git diff --check
+```
+
+Observed result: success with no whitespace errors.
+
+## Implementation
+
+- Added deterministic UTF-8 canonical JSON with sorted keys, compact separators,
+  final newline, non-finite-number rejection, and SHA-256 reference formatting.
+- Added immutable, extra-forbidden envelope models for scope, causation, provenance,
+  context boundaries, references, drafts, and persisted events.
+- Enforced `turn -> step -> request -> tool call` scope nesting.
+- Added the complete closed `PAYLOAD_MODELS` vocabulary and normalized every draft
+  payload through its event-specific Pydantic model before use.
+- Added native `grid-run-event/1.0` event construction, UTC microsecond timestamps,
+  SHA-256 field validation, and canonical pre-hash event construction.
+
+## Self-review
+
+- Confirmed `PAYLOAD_MODELS` includes all 25 required event types and rejects extra
+  payload fields through `StrictFrozenModel`.
+- Confirmed source kinds are limited to persisted `observed` and `agent-declared`;
+  `derived` remains a projection-only concept.
+- Confirmed the hash is formed only from the complete envelope prior to adding
+  `event_hash`, then the final envelope is validated and canonical round-trips.
+- Confirmed no later recorder, reader, artifact, workspace, model-capability, or
+  runtime integration code was added.
+
+## Concerns
+
+None. The future recorder task remains responsible for durable append/fsync,
+registered-reference admission, prohibited-content rejection, and fail-closed replay.
+
+## Review follow-up fix: event timestamp and predecessor seed validation
+
+Addressed the Task 1 review findings within the event envelope only.
+
+### RED
+
+After adding regression coverage, ran:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
 ```
 
 Observed result:
 
 ```text
-2 passed in 0.02s
+..........FFFFF                                                          [100%]
+5 failed, 10 passed in 0.08s
 ```
 
-## Implementation details
+The failures were the intended gaps: a naive `datetime` was accepted, two
+calendar-invalid timestamp strings passed the regex, and both invalid
+zero-predecessor boundaries were accepted.
 
-### `AnalysisWorkspace`
+### GREEN
 
-Added a new immutable workspace model with the required exported paths:
+Ran:
 
-- `manifest_path`
-- `copied_instructions_path`
-- `answers_path`
-- `report_path`
-- `context_snapshot_path`
-- `context_events_path`
-- `trace_path`
-- `turns_path`
-- `evidence_path`
-- `results_path`
-- `tool_results_path`
-- `bin_path`
-- `pi_path`
-- `active_turn_path`
-- `active_answer_draft_path`
-- `context_view_path`
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
+git diff --check
+```
 
-`AnalysisWorkspace.create(root, analysis_id=None)` now:
+Observed result:
 
-- uses `analysis-YYYYMMDDTHHMMSSZ` as the default UTC identifier
-- creates a new analysis root with `mkdir(parents=True, exist_ok=False)`
-- creates the focused analysis directory tree:
-  - `input/`
-  - `output/`
-  - `context/`
-  - `trace/`
-  - `turns/`
-  - `evidence/contexts/`
-  - `evidence/network-facts/`
-  - `evidence/analysis/`
-  - `evidence/results/`
-  - `tool-results/`
-  - `bin/`
-  - `pi/`
+```text
+...............                                                          [100%]
+15 passed in 0.06s
+```
 
-Added `turn_path(ordinal)` to create and return zero-padded turn directories like `turns/001`.
+`git diff --check` completed successfully with no whitespace errors.
 
-### `CopiedInstructions`
+### Changed files
 
-Added an immutable metadata model carrying:
+- `packages/grid-agent/src/grid_agent/trajectory/events.py`
+- `packages/grid-agent/tests/trajectory/test_events.py`
 
-- `source_path`
-- `copied_path`
-- `sha256`
-- `instruction_count`
+### Implementation and self-review
 
-### Instruction copy semantics
+- `build_event` now rejects datetimes without a UTC offset before conversion.
+- `RunEvent` semantically parses its regex-conforming timestamp and requires the
+  exact six-digit UTC `Z` form.
+- The all-zero predecessor hash is required for sequence 1 and forbidden for later
+  sequences. No cross-event sequence-contiguity rule was added; that remains
+  recorder-owned.
+- Regression tests cover naive input, malformed-but-regex-matching date/time values,
+  and both predecessor-seed boundaries.
 
-Added `copy_instructions(source)` with the requested behavior:
+### Concerns
 
-- reads the source as raw bytes
-- preserves bytes exactly in `input/instructions.md.txt`
-- computes SHA-256 on the copied bytes
-- counts instructions using the same semantics as `load_questions`
-  - trim each line
-  - ignore blank lines
-  - ignore comment lines starting with `#` after left trim
-  - raise if there are no instructions
-- flushes and `fsync`s the copied file
-- allows idempotent re-copy of identical bytes
-- raises `RuntimeError` when the destination already contains different bytes
-
-## Design choices
-
-- Kept the analysis workspace independent from `RunWorkspace` as requested.
-- Reimplemented the question-counting semantics locally instead of importing report-generation code, to keep the new workspace layer focused and avoid unnecessary coupling.
-- Returned `copied_path` relative to the analysis root (`input/instructions.md.txt`), which matches the later Analysis plan examples.
-
-## Verification summary
-
-- Focused Task 1 pytest target passes.
-- No unrelated files were modified by this implementation.
-- Existing dirty worktree changes outside Task 1 were left untouched.
-
-## Commit
-
-Pending at report-write time; created immediately after this report is staged with the Task 1 files.
-
-## Concerns
-
-- The task brief did not require manifest contents yet, so `manifest.json` is currently represented as a reserved path rather than eagerly written. Later tasks can safely materialize it when the controller has full metadata to record.
+None. This change intentionally does not determine whether a nonzero predecessor
+hash is the actual prior event; durable chain contiguity belongs to the recorder.

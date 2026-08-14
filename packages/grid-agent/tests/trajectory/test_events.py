@@ -134,3 +134,70 @@ def test_build_event_uses_utc_and_rejects_invalid_hashes() -> None:
             timestamp=datetime(2026, 8, 14, tzinfo=UTC),
             previous_event_hash="not-a-hash",
         )
+
+
+def test_build_event_rejects_naive_timestamp() -> None:
+    draft = EventDraft(event_type="analysis.started", payload={})
+
+    with pytest.raises(ValueError, match="aware instant"):
+        build_event(
+            draft,
+            analysis_id="analysis-test",
+            sequence=1,
+            timestamp=datetime(2026, 8, 14),
+            previous_event_hash="sha256:" + "0" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "2026-02-30T00:00:00.000000Z",
+        "2026-01-01T24:00:00.000000Z",
+    ],
+)
+def test_run_event_rejects_semantically_invalid_canonical_timestamp(
+    timestamp: str,
+) -> None:
+    with pytest.raises(ValidationError, match="valid UTC timestamp"):
+        RunEvent(
+            event_type="analysis.started",
+            payload={},
+            analysis_id="analysis-test",
+            sequence=1,
+            timestamp=timestamp,
+            previous_event_hash="sha256:" + "0" * 64,
+            event_hash="sha256:" + "a" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("sequence", "previous_event_hash", "message"),
+    [
+        (
+            1,
+            "sha256:" + "a" * 64,
+            "sequence 1 requires the zero predecessor seed",
+        ),
+        (
+            2,
+            "sha256:" + "0" * 64,
+            "zero predecessor seed is only valid for sequence 1",
+        ),
+    ],
+)
+def test_run_event_enforces_zero_predecessor_seed_boundaries(
+    sequence: int,
+    previous_event_hash: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        RunEvent(
+            event_type="analysis.started",
+            payload={},
+            analysis_id="analysis-test",
+            sequence=sequence,
+            timestamp="2026-08-14T00:00:00.000000Z",
+            previous_event_hash=previous_event_hash,
+            event_hash="sha256:" + "a" * 64,
+        )
