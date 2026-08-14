@@ -25,6 +25,16 @@ SECURITY_HEADERS = {
 }
 
 
+def _api_error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    response = JSONResponse(
+        status_code=status_code,
+        content=ApiError(code=code, message=message).model_dump(mode="json"),
+    )
+    for name, value in SECURITY_HEADERS.items():
+        response.headers[name] = value
+    return response
+
+
 def create_trajectory_app(catalog: TrajectoryRunCatalog, cursor_codec: object) -> FastAPI:
     """Create the catalog-only read boundary available at this implementation stage.
 
@@ -52,11 +62,18 @@ def create_trajectory_app(catalog: TrajectoryRunCatalog, cursor_codec: object) -
 
     @app.exception_handler(RunNotFoundError)
     async def run_not_found(_: Request, __: RunNotFoundError) -> JSONResponse:
-        return JSONResponse(
+        return _api_error_response(
             status_code=404,
-            content=ApiError(code="run_not_found", message="trajectory run not found").model_dump(
-                mode="json"
-            ),
+            code="run_not_found",
+            message="trajectory run not found",
+        )
+
+    @app.exception_handler(Exception)
+    async def internal_error(_: Request, __: Exception) -> JSONResponse:
+        return _api_error_response(
+            status_code=500,
+            code="internal_error",
+            message="an unexpected error occurred",
         )
 
     @app.get("/api/runs", response_model=RunListResponse)

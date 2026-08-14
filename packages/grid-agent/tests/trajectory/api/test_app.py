@@ -6,7 +6,7 @@ from typing import cast
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from grid_agent.trajectory.api.catalog import TrajectoryRunCatalog
+from grid_agent.trajectory.api.catalog import RunNotFoundError, TrajectoryRunCatalog
 from grid_agent.trajectory.api.models import RunSummary
 
 
@@ -89,3 +89,56 @@ def test_openapi_exposes_only_get_methods() -> None:
     }
 
     assert methods == {"get"}
+
+
+def test_unexpected_catalog_failure_returns_safe_typed_internal_error() -> None:
+    class FailingCatalog(StubCatalog):
+        def list_runs(self) -> tuple[RunSummary, ...]:
+            raise RuntimeError("/operator/private/runs database password=secret")
+
+    from grid_agent.trajectory.api.app import SECURITY_HEADERS, create_trajectory_app
+
+    app = create_trajectory_app(
+        cast(TrajectoryRunCatalog, FailingCatalog()), cast(object, SimpleNamespace())
+    )
+    response = TestClient(app, raise_server_exceptions=False).get("/api/runs")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "code": "internal_error",
+        "message": "an unexpected error occurred",
+    }
+    assert "private" not in response.text
+    assert "password" not in response.text
+    assert {name.lower(): value for name, value in SECURITY_HEADERS.items()}.items() <= response.headers.items()
+
+
+def test_response_serialization_failure_returns_safe_typed_internal_error() -> None:
+    response = TestClient(create_test_app(), raise_server_exceptions=False).get(
+        "/api/runs/analysis-test"
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "code": "internal_error",
+        "message": "an unexpected error occurred",
+    }
+
+
+def test_missing_run_preserves_typed_not_found_response() -> None:
+    class MissingCatalog(StubCatalog):
+        def open(self, analysis_id: str) -> object:
+            raise RunNotFoundError(analysis_id)
+
+    from grid_agent.trajectory.api.app import create_trajectory_app
+
+    app = create_trajectory_app(
+        cast(TrajectoryRunCatalog, MissingCatalog()), cast(object, SimpleNamespace())
+    )
+    response = TestClient(app).get("/api/runs/analysis-missing")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "code": "run_not_found",
+        "message": "trajectory run not found",
+    }
