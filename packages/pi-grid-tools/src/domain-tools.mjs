@@ -6,6 +6,8 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 
+import { configureTrajectoryCapture } from "./trajectory-capture.mjs";
+
 const CANONICAL_SECRET_NAMES = [
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
@@ -71,6 +73,20 @@ export function createGridTool(contract, runner = runGridctl) {
 
 export default function domainToolsExtension(pi) {
   const paths = runtimePaths(process.env);
+  if (
+    paths.trajectoryRequestsPath !== undefined &&
+    paths.trajectoryCaptureStatePath !== undefined &&
+    paths.trajectoryAllowedRefsPath !== undefined
+  ) {
+    configureTrajectoryCapture(pi, {
+      requestsPath: paths.trajectoryRequestsPath,
+      activeTurnPath: paths.activeTurnPath,
+      captureStatePath: paths.trajectoryCaptureStatePath,
+      allowedRefsPath: paths.trajectoryAllowedRefsPath,
+      providerId: paths.providerId,
+      modelId: paths.modelId,
+    });
+  }
   const catalog = readJsonSync(paths.toolCatalogPath);
   for (const contract of catalog.tools) {
     pi.registerTool(createGridTool(contract, (payload) => runGridctl(payload, paths.workspacePath)));
@@ -234,18 +250,66 @@ function runtimePaths(env) {
   const answerDraftPath = requiredWritableRealPath(env, "GRID_AGENT_ANSWER_DRAFT");
   const activeTurnPath = optionalWritableRealPath(env, "GRID_AGENT_ACTIVE_TURN");
   const analysisContextViewPath = optionalExistingRealPath(env, "GRID_AGENT_ANALYSIS_CONTEXT_VIEW");
+  const trajectoryRequestsPath = optionalExistingRealPath(env, "GRID_AGENT_TRAJECTORY_REQUESTS");
+  const trajectoryCaptureStatePath = optionalExistingRealPath(
+    env,
+    "GRID_AGENT_TRAJECTORY_CAPTURE_STATE",
+  );
+  const trajectoryAllowedRefsPath = optionalExistingRealPath(
+    env,
+    "GRID_AGENT_TRAJECTORY_ALLOWED_REFS",
+  );
+  const trajectoryPaths = [
+    trajectoryRequestsPath,
+    trajectoryCaptureStatePath,
+    trajectoryAllowedRefsPath,
+  ];
+  const trajectoryConfigured = trajectoryPaths.every((path) => path !== undefined);
+  if (trajectoryPaths.some((path) => path !== undefined) && !trajectoryConfigured) {
+    throw new Error("trajectory capture requires all three trajectory paths");
+  }
+  const providerId = trajectoryConfigured
+    ? requiredString(env, "GRID_AGENT_PROVIDER_ID")
+    : undefined;
+  const modelId = trajectoryConfigured ? requiredString(env, "GRID_AGENT_MODEL_ID") : undefined;
+  if (trajectoryConfigured && activeTurnPath === undefined) {
+    throw new Error("trajectory capture requires GRID_AGENT_ACTIVE_TURN");
+  }
   for (const [name, candidate] of [
     ["GRID_AGENT_TOOL_CATALOG", toolCatalogPath],
     ["GRID_AGENT_GUIDE_INDEX", guideIndexPath],
     ["GRID_AGENT_ANSWER_DRAFT", answerDraftPath],
     ["GRID_AGENT_ACTIVE_TURN", activeTurnPath],
     ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW", analysisContextViewPath],
+    ["GRID_AGENT_TRAJECTORY_REQUESTS", trajectoryRequestsPath],
+    ["GRID_AGENT_TRAJECTORY_CAPTURE_STATE", trajectoryCaptureStatePath],
+    ["GRID_AGENT_TRAJECTORY_ALLOWED_REFS", trajectoryAllowedRefsPath],
   ]) {
     if (candidate !== undefined && !isInside(candidate, workspacePath)) {
       throw new Error(`${name} resolved path ${candidate} is outside GRID_AGENT_WORKSPACE`);
     }
   }
-  return { workspacePath, toolCatalogPath, guideIndexPath, answerDraftPath, activeTurnPath, analysisContextViewPath };
+  return {
+    workspacePath,
+    toolCatalogPath,
+    guideIndexPath,
+    answerDraftPath,
+    activeTurnPath,
+    analysisContextViewPath,
+    trajectoryRequestsPath,
+    trajectoryCaptureStatePath,
+    trajectoryAllowedRefsPath,
+    providerId,
+    modelId,
+  };
+}
+
+function requiredString(env, name) {
+  const value = env[name];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+  return value;
 }
 
 function requiredAbsolutePath(env, name) {

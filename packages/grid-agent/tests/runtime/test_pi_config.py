@@ -106,6 +106,59 @@ def test_pi_launch_exposes_analysis_paths_only_when_configured(tmp_path: Path) -
     )
 
 
+def test_pi_launch_exposes_native_capture_paths_only_when_configured(
+    tmp_path: Path,
+) -> None:
+    legacy = _runtime_paths(tmp_path / "legacy")
+    native = replace(
+        _runtime_paths(tmp_path / "native"),
+        trajectory_requests_path=tmp_path / "native/run/requests",
+        trajectory_capture_state_path=tmp_path
+        / "native/run/context/trajectory-capture-state.json",
+        trajectory_allowed_refs_path=tmp_path
+        / "native/run/context/trajectory-allowed-refs.json",
+        provider_id="deepseek",
+        model_id="deepseek-v4-flash",
+    )
+
+    legacy_launch = build_pi_launch(
+        _resolved_openai(),
+        legacy,
+        base_environment={"PATH": "/bin", "HOME": "/tmp"},
+    )
+    native_launch = build_pi_launch(
+        _resolved_openai(),
+        native,
+        base_environment={"PATH": "/bin", "HOME": "/tmp"},
+    )
+
+    for key in (
+        "GRID_AGENT_TRAJECTORY_REQUESTS",
+        "GRID_AGENT_TRAJECTORY_CAPTURE_STATE",
+        "GRID_AGENT_TRAJECTORY_ALLOWED_REFS",
+        "GRID_AGENT_PROVIDER_ID",
+        "GRID_AGENT_MODEL_ID",
+    ):
+        assert key not in legacy_launch.environment
+    assert native_launch.environment["GRID_AGENT_TRAJECTORY_REQUESTS"] == str(
+        native.trajectory_requests_path
+    )
+    assert native_launch.environment["GRID_AGENT_TRAJECTORY_CAPTURE_STATE"] == str(
+        native.trajectory_capture_state_path
+    )
+    assert native_launch.environment["GRID_AGENT_TRAJECTORY_ALLOWED_REFS"] == str(
+        native.trajectory_allowed_refs_path
+    )
+    assert native_launch.environment["GRID_AGENT_PROVIDER_ID"] == "deepseek"
+    assert native_launch.environment["GRID_AGENT_MODEL_ID"] == "deepseek-v4-flash"
+    trajectory_environment = {
+        key: value
+        for key, value in native_launch.environment.items()
+        if key.startswith("GRID_AGENT_TRAJECTORY")
+    }
+    assert "super-secret" not in json.dumps(trajectory_environment)
+
+
 def _resolved_openai() -> ResolvedLLM:
     return ResolvedLLM(
         config=ResolvedLLMConfig(
