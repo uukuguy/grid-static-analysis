@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 
 export interface WorkbenchShellProps {
   explorer: ReactNode;
@@ -11,7 +11,9 @@ export interface WorkbenchShellProps {
 
 export function WorkbenchShell({ explorer, header, timeline, content, inspector, focusedTurnId }: WorkbenchShellProps) {
   const isMobile = useMobileInspector();
+  const isMedium = useMediumInspector();
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorWidth, setInspectorWidth] = useState<number | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
@@ -50,7 +52,28 @@ export function WorkbenchShell({ explorer, header, timeline, content, inspector,
     }
   };
 
-  return <div className="workbench-shell">
+  const resizeInspector = (event: PointerEvent<HTMLDivElement>) => {
+    const initialWidth = event.currentTarget.parentElement?.querySelector<HTMLElement>('.inspector')?.getBoundingClientRect().width;
+    if (!initialWidth) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const resize = (move: globalThis.PointerEvent) => setInspectorWidth(clampInspectorWidth(initialWidth + startX - move.clientX));
+    const stop = () => {
+      window.removeEventListener('pointermove', resize);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', resize);
+    window.addEventListener('pointerup', stop, { once: true });
+  };
+  const resizeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const currentWidth = inspectorWidth ?? window.innerWidth * 0.42;
+    setInspectorWidth(clampInspectorWidth(currentWidth + (event.key === 'ArrowLeft' ? 24 : -24)));
+  };
+
+  const shellStyle = isMedium && inspectorWidth !== null ? { '--inspector-width': `${inspectorWidth}px` } as CSSProperties : undefined;
+  return <div className="workbench-shell" style={shellStyle}>
     <header className="topbar">{header}</header>
     <aside className="run-rail">{explorer}</aside>
     <section className="timeline-region" aria-label="Run overview timeline" data-focused-turn={focusedTurnId ?? undefined}>{timeline}</section>
@@ -63,7 +86,10 @@ export function WorkbenchShell({ explorer, header, timeline, content, inspector,
           {inspector}
         </aside>
       </div> : null}
-    </> : <aside className="inspector" aria-label="Trajectory inspector">{inspector}</aside>}
+    </> : <>
+      {isMedium ? <div className="inspector-resize-handle" role="separator" aria-label="Resize trajectory inspector" aria-orientation="vertical" tabIndex={0} onPointerDown={resizeInspector} onKeyDown={resizeWithKeyboard} /> : null}
+      <aside className="inspector" aria-label="Trajectory inspector">{inspector}</aside>
+    </>}
   </div>;
 }
 
@@ -77,15 +103,26 @@ function isTabbable(element: HTMLElement) {
 }
 
 function useMobileInspector() {
-  const query = '(max-width: 720px)';
-  const [isMobile, setIsMobile] = useState(() => window.matchMedia?.(query).matches ?? false);
+  return useMediaQuery('(max-width: 799px)');
+}
+
+function useMediumInspector() {
+  return useMediaQuery('(min-width: 800px) and (max-width: 1199px)');
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => window.matchMedia?.(query).matches ?? false);
   useEffect(() => {
     const media = window.matchMedia?.(query);
     if (!media) return;
-    const update = () => setIsMobile(media.matches);
+    const update = () => setMatches(media.matches);
     update();
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);
-  return isMobile;
+  return matches;
+}
+
+function clampInspectorWidth(width: number) {
+  return Math.min(Math.round(window.innerWidth * 0.63), Math.max(300, Math.round(width)));
 }

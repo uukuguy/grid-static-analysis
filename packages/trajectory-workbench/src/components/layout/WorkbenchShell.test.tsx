@@ -1,18 +1,24 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Inspector } from './Inspector';
 import { WorkbenchShell } from './WorkbenchShell';
 
-const mobileQuery = '(max-width: 720px)';
+const mobileQuery = '(max-width: 799px)';
+const mediumQuery = '(min-width: 800px) and (max-width: 1199px)';
 
-function renderMobileShell(inspector = <Inspector entity={null} artifactUrl={() => '#'} />) {
+function renderShell(mediaQuery: string, inspector: ReactNode = <Inspector entity={null} artifactUrl={() => '#'} />) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
-    matches: query === mobileQuery,
+    matches: query === mediaQuery,
     media: query,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
   })));
   render(<WorkbenchShell explorer={<p>Runs</p>} header={<p>Header</p>} timeline={<p>Timeline</p>} content={<button type="button">Content action</button>} inspector={inspector} />);
+}
+
+function renderMobileShell(inspector?: ReactNode) {
+  renderShell(mobileQuery, inspector);
 }
 
 describe('WorkbenchShell mobile inspector', () => {
@@ -50,5 +56,13 @@ describe('WorkbenchShell mobile inspector', () => {
     fireEvent.keyDown(close, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Trajectory inspector' })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it('keeps the inspector in the right column with a keyboard-accessible resize handle at medium widths', () => {
+    renderShell(mediumQuery);
+
+    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open inspector' })).not.toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'Resize trajectory inspector' })).toBeVisible();
   });
 });
