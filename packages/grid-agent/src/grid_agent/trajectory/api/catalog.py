@@ -14,6 +14,11 @@ from grid_agent.trajectory.reader import RunEventReader
 
 
 ANALYSIS_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+NATIVE_MANIFEST_SCHEMA = "grid-agent-analysis-manifest/1.0"
+LEGACY_V02_REQUIRED_FILES = (
+    "context/context-events.jsonl",
+    "trace/events.jsonl",
+)
 
 
 class ProjectionOpener(Protocol):
@@ -92,16 +97,18 @@ class TrajectoryRunCatalog:
         if native is not None:
             if native.analysis_id != directory_id or not ANALYSIS_ID.fullmatch(native.analysis_id):
                 raise ValueError("manifest identity does not match run directory")
-            events_path = run_root / native.events_path
-            if native.schema_version == "grid-agent-analysis-manifest/1.0" or events_path.is_file():
-                if native.events_path != "events/run-events.jsonl":
-                    raise ValueError("native manifest does not name the native event stream")
-                events_path = _safe_run_file(run_root, native.events_path)
-                return native, "native"
+            if native.schema_version != NATIVE_MANIFEST_SCHEMA:
+                raise ValueError("native manifest schema is unsupported")
+            if native.events_path != "events/run-events.jsonl":
+                raise ValueError("native manifest does not name the native event stream")
+            _safe_run_file(run_root, native.events_path)
+            return native, "native"
 
         legacy = LegacyV02Manifest.model_validate_json(raw)
         if legacy.analysis_id != directory_id or not ANALYSIS_ID.fullmatch(legacy.analysis_id):
             raise ValueError("manifest identity does not match run directory")
+        for path in LEGACY_V02_REQUIRED_FILES:
+            _safe_run_file(run_root, path)
         return legacy, "legacy-v0.2"
 
     def _summary(

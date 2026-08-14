@@ -12,8 +12,11 @@ class _StrictModel(BaseModel):
 class AnalysisManifest(_StrictModel):
     """Validated native manifest identity and trajectory location."""
 
+    model_config = ConfigDict(extra="allow", frozen=True, strict=True)
+
     schema_version: str | None = None
     analysis_id: str = Field(min_length=1)
+    question_id: str | None = None
     status: str = Field(min_length=1)
     started_at: str | None = None
     events_path: str = "events/run-events.jsonl"
@@ -30,7 +33,7 @@ class AnalysisManifest(_StrictModel):
 class LegacyV02Manifest(BaseModel):
     """The compatible identity subset of an immutable v0.2 manifest."""
 
-    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     analysis_id: str = Field(min_length=1)
     status: str | None = None
