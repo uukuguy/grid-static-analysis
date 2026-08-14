@@ -60,6 +60,51 @@ def test_report_uses_per_question_narrative_and_real_trace_steps(report_fixture:
     assert "结果依赖关系" not in report
 
 
+def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: ReportFixture) -> None:
+    evidence_key = next(iter(report_fixture.context.evidence))
+    global_evidence = report_fixture.context.evidence[evidence_key].model_copy(update={"turn_id": None})
+    first_turn = report_fixture.context.turns[1].model_copy(update={"produced_refs": [RESULT_REF, EVIDENCE_REF]})
+    context = report_fixture.context.model_copy(
+        update={
+            "turns": [report_fixture.context.turns[0], first_turn, *report_fixture.context.turns[2:]],
+            "evidence": {evidence_key: global_evidence},
+        }
+    )
+    report = render_analysis_report(
+        context=context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+    evidence_section = report.split("## 1. 运行潮流并复用前序结果", maxsplit=1)[1].split("### 证据来源", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+
+    assert "本题生成" in evidence_section
+    assert "潮流证据" in evidence_section
+    assert "evidence/analysis/powerflow-evidence.json" in evidence_section
+
+
+def test_report_writes_detailed_trace_page_with_safe_input_output_and_raw_link(report_fixture: ReportFixture) -> None:
+    tool_result = report_fixture.workspace.tool_results_path / f"{report_fixture.workspace.analysis_id}-t001" / "rank-call.json"
+    tool_result.parent.mkdir(parents=True, exist_ok=True)
+    tool_result.write_text(json.dumps({"result_ref": RESULT_REF, "branches": []}), encoding="utf-8")
+
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+    detail_path = report_fixture.workspace.turn_path(1) / "trace.md"
+    detail = detail_path.read_text(encoding="utf-8")
+
+    assert "详细执行轨迹" in report
+    assert "turns/001/trace.md" in report
+    assert "## 1. 按支路运行指标筛选和排序" in detail
+    assert "### 输入" in detail
+    assert "loading_percent" in detail
+    assert "### 输出摘要" in detail
+    assert "tool-results/analysis-report-t001/rank-call.json" in detail
+    assert RESULT_REF not in detail
+
+
 def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: ReportFixture) -> None:
     report = render_analysis_report(
         context=report_fixture.with_audit_error(),

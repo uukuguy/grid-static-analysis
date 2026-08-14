@@ -35,6 +35,7 @@ def render_analysis_report(
     diagnostics.extend(ledger.diagnostics)
     trace = _read_trace_steps(workspace.trace_path)
     diagnostics.extend(trace.diagnostics)
+    trace_pages = _write_turn_trace_pages(context, workspace, trace.steps, diagnostics)
     counts = {status: sum(turn.status == status for turn in context.turns) for status in ("success", "failed")}
     lines = [
         "# 系统仿真分析报告",
@@ -47,7 +48,7 @@ def render_analysis_report(
         *_render_environment(context, environment),
     ]
     for turn in sorted(context.turns, key=lambda item: item.ordinal):
-        lines.extend(_render_narrative_turn(context, turn, workspace, trace.steps, diagnostics))
+        lines.extend(_render_narrative_turn(context, turn, workspace, trace.steps, trace_pages, diagnostics))
     audit = _render_audit_review(context, workspace, diagnostics)
     if audit:
         lines.extend(["", "## 审计复核", "", *audit])
@@ -77,6 +78,7 @@ def _render_narrative_turn(
     turn: TurnRecord,
     workspace: AnalysisWorkspace,
     trace_steps: Sequence[_TraceStep],
+    trace_pages: Mapping[str, str],
     diagnostics: list[str],
 ) -> list[str]:
     limitations = [item for item in context.unresolved_limitations if item.turn_id == turn.turn_id]
@@ -103,6 +105,7 @@ def _render_narrative_turn(
         "### 实际分析过程",
         "",
         *_render_trace_steps(steps),
+        f"- 详细执行轨迹：{_workspace_link(workspace, trace_pages[turn.turn_id], label='查看本题调用输入、输出和原始工件', unavailable_label='轨迹页不可用', diagnostics=diagnostics, description='详细执行轨迹')}。" if turn.turn_id in trace_pages else "- 详细执行轨迹不可用。",
         "",
         "### 证据来源",
         "",
@@ -189,17 +192,111 @@ def _render_turn_evidence(
     workspace: AnalysisWorkspace,
     diagnostics: list[str],
 ) -> list[str]:
-    records = [item for item in context.evidence.values() if item.turn_id == turn.turn_id]
+    produced = set(turn.produced_refs)
+    references = dict.fromkeys([*turn.produced_refs, *turn.consumed_refs])
+    records = [(context.evidence[reference], "本题生成" if reference in produced else "复用前序分析") for reference in references if reference in context.evidence]
     if not records:
-        return ["本题未新增独立证据工件；如复用了前序结果，其来源已在连续分析上下文中登记。"]
+        return ["本题没有可追溯的仿真证据。"]
     lines: list[str] = []
-    for record in records[:4]:
-        title = _first_string(record.summary, ("title", "description")) or "当前运行持久化的仿真证据"
+    for record, origin in records[:4]:
+        title = _evidence_title(record.capability, record.summary)
         location = _workspace_link(workspace, record.path, label="查看证据工件", unavailable_label="证据工件不可用", diagnostics=diagnostics, description="仿真证据")
-        lines.append(f"- {title}（{location}）。")
+        lines.append(f"- {title}（{origin}；{location}）。")
     if len(records) > 4:
         lines.append(f"- 其余 {len(records) - 4} 个场景证据已保存在本次分析目录，避免用重复条目掩盖主要结论。")
     return lines
+
+
+def _evidence_title(capability: str | None, summary: Mapping[str, Any]) -> str:
+    capability = capability or _first_string(summary, ("capability_id",))
+    labels = {
+        "topology.branch.endpoints.get": "网络拓扑事实",
+        "analysis.powerflow.ac.run": "交流潮流计算证据",
+        "analysis.contingency.n_minus_one.run": "N-1 场景证据",
+    }
+    fallback = _first_string(summary, ("title", "description")) or "当前运行持久化的仿真证据"
+    return labels.get(capability, fallback) if capability else fallback
+
+
+def _write_turn_trace_pages(
+    context: AnalysisContext,
+    workspace: AnalysisWorkspace,
+    trace_steps: Sequence[_TraceStep],
+    diagnostics: list[str],
+) -> dict[str, str]:
+    paths: dict[str, str] = {}
+    for turn in context.turns:
+        path = workspace.turn_path(turn.ordinal) / "trace.md"
+        try:
+            _write_text_atomic(path, _render_turn_trace_page(turn, _steps_for_turn(context, turn.turn_id, trace_steps), workspace, path, diagnostics))
+        except OSError:
+            diagnostics.append(f"回合 {turn.ordinal} 详细执行轨迹不可写入")
+            continue
+        paths[turn.turn_id] = str(path.relative_to(workspace.root_path))
+    return paths
+
+
+def _render_turn_trace_page(
+    turn: TurnRecord,
+    steps: Sequence[_TraceStep],
+    workspace: AnalysisWorkspace,
+    path: Path,
+    diagnostics: list[str],
+) -> str:
+    lines = ["# 详细执行轨迹", "", f"## {turn.ordinal}. {_md(turn.instruction)}", ""]
+    if not steps:
+        lines.append("未观察到与本题关联的领域工具调用。")
+        return "\n".join(lines) + "\n"
+    for ordinal, step in enumerate(steps, start=1):
+        state = "完成" if step.ok else "返回受限/错误"
+        lines.extend(
+            [
+                f"### {ordinal}. {_trace_step_summary(step)}",
+                "",
+                f"- 能力：`{step.capability}`",
+                f"- 状态：{state}",
+                f"- 耗时：{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else "- 耗时：未记录",
+                "",
+                "### 输入",
+                "",
+                "```json",
+                _trace_json(step.args),
+                "```",
+                "",
+                "### 输出摘要",
+                "",
+                "```json",
+                _trace_json(step.result),
+                "```",
+                "",
+                "### 原始工件",
+                "",
+                f"- {_turn_trace_tool_result_link(workspace, path, turn.turn_id, step.tool_call_id, diagnostics)}",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _trace_json(value: Mapping[str, Any]) -> str:
+    return _redact_internal_refs(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _turn_trace_tool_result_link(
+    workspace: AnalysisWorkspace,
+    trace_path: Path,
+    turn_id: str,
+    tool_call_id: str | None,
+    diagnostics: list[str],
+) -> str:
+    if tool_call_id is None:
+        return "原始工具结果工件不可用"
+    relative = Path("tool-results") / turn_id / f"{tool_call_id}.json"
+    resolved = _normalize_workspace_relative_path(workspace, relative, diagnostics=diagnostics, description="原始工具结果工件")
+    if resolved is None or not resolved.absolute.is_file():
+        return "原始工具结果工件不可用"
+    href = Path(os.path.relpath(resolved.absolute, start=trace_path.parent)).as_posix()
+    return _link(href, "查看原始工具结果")
 
 
 def _render_audit_review(context: AnalysisContext, workspace: AnalysisWorkspace, diagnostics: list[str]) -> list[str]:

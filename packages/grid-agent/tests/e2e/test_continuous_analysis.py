@@ -124,8 +124,13 @@ def test_continuous_analysis_reuses_powerflow_result_and_reports_context_lineage
         assert report_text.count("### 回答") == len(prompts)
         assert report_text.count("### 实际分析过程") == len(prompts)
         assert report_text.count("### 仿真环境上下文") == len(prompts)
+        assert report_text.count("详细执行轨迹") == len(prompts)
         for prompt in prompts:
             assert prompt in report_text
+        for turn in context.turns:
+            detail_trace = root / f"turns/{turn.ordinal:03d}/trace.md"
+            assert detail_trace.is_file()
+            assert "### 输入" in detail_trace.read_text(encoding="utf-8")
         assert powerflow_ref not in report_text
         assert n1_ref not in report_text
         assert not any(item.get("type") in {"text_delta", "message_update"} for item in trace)

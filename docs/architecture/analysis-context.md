@@ -128,6 +128,11 @@ It is organized for an operator reading one instruction at a time: **question
 → accepted answer → execution information → simulation context → actual tool
 process → evidence sources**. Tool steps are reconstructed from the recorded
 start/result trace and are presented with semantic descriptions and durations.
+Evidence is associated with a turn by its produced and consumed references,
+because an evidence artifact can be registered globally while still supporting
+one specific answer. The main report links each turn to `turns/<ordinal>/trace.md`;
+that page records redacted tool inputs, structured outputs, timing, and links to
+the corresponding raw tool-result artifact.
 Internal content-addressed references are replaced by a provenance marker in
 the answer body so that conclusions are not
 buried under hashes; the accepted original answer remains linked as an
