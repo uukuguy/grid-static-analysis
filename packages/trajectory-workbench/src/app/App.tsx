@@ -11,6 +11,8 @@ import { BusinessView } from '../views/BusinessView';
 import { AgentView } from '../views/AgentView';
 import { ContextView } from '../views/ContextView';
 import { EvidenceView } from '../views/EvidenceView';
+import { ApiError } from '../api/client';
+import { AsyncState, type AsyncStateName } from '../components/common/AsyncState';
 
 const api = new TrajectoryApiClient();
 
@@ -20,6 +22,9 @@ type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Par
 export function App({ client = api }: { client?: AppClient }) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [runListState, setRunListState] = useState<AsyncStateName>('loading');
+  const [runListDiagnostic, setRunListDiagnostic] = useState<string | null>(null);
+  const [runListAttempt, setRunListAttempt] = useState(0);
   const [problems, setProblems] = useState<BusinessProblem[]>([]);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [contextFrame, setContextFrame] = useState<ContextFrame | null>(null);
@@ -50,13 +55,21 @@ export function App({ client = api }: { client?: AppClient }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    setRunListState('loading');
+    setRunListDiagnostic(null);
     void client.listRuns(controller.signal).then(({ items }) => {
       setRuns(items);
+      setRunListState(items.length === 0 ? 'empty' : 'ready');
       dispatch({ type: 'run/selected', runId: items[0]?.analysis_id ?? null });
       if (deepLinkNode.current) dispatch({ type: 'node/selected', nodeId: deepLinkNode.current });
-    }).catch(() => undefined);
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setRuns([]);
+      setRunListState(error instanceof ApiError && error.status === 501 ? 'unsupported' : 'network-error');
+      setRunListDiagnostic(error instanceof Error ? error.message : null);
+    });
     return () => controller.abort();
-  }, [client]);
+  }, [client, runListAttempt]);
 
   useEffect(() => {
     if (!state.selectedRunId) return;
@@ -141,17 +154,26 @@ export function App({ client = api }: { client?: AppClient }) {
   };
 
   const artifactUrl = (ref: string) => client.artifactUrl ? client.artifactUrl(state.selectedRunId ?? '', ref) : '#';
-  const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`}>
+  const viewState: AsyncStateName = selectedRun?.status === 'partial' ? 'partial'
+    : selectedRun?.status === 'corrupt' ? 'corrupt'
+      : state.pageStatus[state.activeView] === 'loading' ? 'loading'
+        : state.pageError[state.activeView]?.includes('unsupported') ? 'unsupported'
+          : state.pageStatus[state.activeView] === 'failed' ? 'network-error' : 'ready';
+  const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
+    <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]}>
     {state.activeView === 'business' ? <BusinessView problems={problems} state={state} dispatch={dispatch} hasOlder={businessPage.has_older} onRequestOlder={requestOlder} />
       : state.activeView === 'agent' ? <AgentView trajectory={agentTurns} selectedNodeId={state.selectedNodeId} onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })} artifactUrl={artifactUrl} />
         : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
           : <EvidenceView index={evidenceIndex} selectedRef={state.selectedNodeId} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
+    </AsyncState>
   </section>;
 
   return <div className="workbench-bootstrap" aria-label="Trajectory workbench" data-view={state.activeView}>
     <WorkbenchShell
       header={<RunHeader run={selectedRun} activeView={state.activeView} onViewSelect={(view) => dispatch({ type: 'view/selected', view })} />}
-      explorer={<RunExplorer runs={runs} selectedRunId={state.selectedRunId} onSelectRun={(runId) => dispatch({ type: 'run/selected', runId })} />}
+      explorer={<AsyncState state={runListState} diagnostic={runListDiagnostic} onRetry={() => setRunListAttempt((attempt) => attempt + 1)}>
+        <RunExplorer runs={runs} selectedRunId={state.selectedRunId} onSelectRun={(runId) => dispatch({ type: 'run/selected', runId })} />
+      </AsyncState>}
       timeline={<OverviewTimeline problems={problems} selectedTurnId={selectedProblem?.turn_id ?? state.selectedNodeId} onSelectTurn={selectTurn} onFocusRange={(range) => dispatch({ type: 'timeline/focused', range })} />}
       content={content}
       inspector={<Inspector node={selectedProblem} />}

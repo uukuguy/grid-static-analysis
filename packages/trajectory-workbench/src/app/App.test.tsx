@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TrajectoryApiClient } from '../api/client';
+import { ApiError, type TrajectoryApiClient } from '../api/client';
 import type { BusinessProblem, ContextFrame, RunListResponse } from '../api/types';
 import { App } from './App';
 
@@ -59,6 +59,48 @@ describe('App shell', () => {
     expect(screen.getByRole('region', { name: 'Run overview timeline' })).toBeVisible();
     expect(screen.getByRole('tab', { name: 'Business' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toBeVisible();
+  });
+
+  it('shows a loading state while the run list is being requested', () => {
+    render(<App client={{ listRuns: () => new Promise<RunListResponse>(() => undefined), getBusinessPage: vi.fn() }} />);
+
+    expect(screen.getByTestId('state-loading')).toHaveTextContent('Loading runs');
+  });
+
+  it('shows an empty state when the run list has no items', async () => {
+    render(<App client={{ listRuns: async () => ({ items: [] }), getBusinessPage: vi.fn() }} />);
+
+    expect(await screen.findByTestId('state-empty')).toHaveTextContent('No runs available');
+  });
+
+  it('retries a failed run-list request', async () => {
+    const listRuns = vi.fn()
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce(run);
+    render(<App client={{ ...fixtureClient(), listRuns }} />);
+
+    const error = await screen.findByTestId('state-network-error');
+    expect(error).toHaveAttribute('role', 'alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('navigation', { name: 'Runs' })).toBeVisible();
+    expect(listRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['analysis-partial', 'state-partial'],
+    ['analysis-corrupt', 'state-corrupt'],
+  ])('shows the recorded %s run condition', async (analysisId, stateId) => {
+    render(<App client={fixtureClient()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(analysisId) }));
+    expect(await screen.findByTestId(stateId)).toBeVisible();
+  });
+
+  it('shows an unsupported state when the runs API returns 501', async () => {
+    render(<App client={{ listRuns: async () => { throw new ApiError(501, 'unsupported', 'Upgrade the workbench.'); }, getBusinessPage: vi.fn() }} />);
+
+    expect(await screen.findByTestId('state-unsupported')).toHaveTextContent('Upgrade the workbench.');
   });
 
   it('selecting Q7 synchronizes timeline, content, and inspector', async () => {
