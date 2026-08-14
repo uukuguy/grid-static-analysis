@@ -116,31 +116,33 @@ export interface ContextFrameWithoutRequest extends ContextFrameBase {
 
 export type ContextFrame = ContextFrameWithRequest | ContextFrameWithoutRequest;
 
-/** Evidence is a typed, declared graph; UI code never derives links from answer prose. */
-export type EvidenceNodeType = 'claim' | 'decision' | 'result' | 'evidence' | 'scenario' | 'tool' | 'model-revision';
-export type EvidenceIntegrity = 'verified' | 'declared' | 'unavailable' | 'stale';
-
-export interface EvidenceNode {
-  ref: string;
-  type: EvidenceNodeType;
-  label: string;
+/** Exact immutable artifact projection returned by the read-only evidence endpoint. */
+export interface EvidenceRecord {
+  id: string;
   source: NodeSource;
-  integrity: EvidenceIntegrity;
-  producing_sequence: number | null;
-  consumers: number;
-  artifact_ref: string | null;
+  source_sequences: number[];
+  rule_id: string | null;
+  status: LifecycleStatus;
   unavailable_reason: string | null;
-}
-
-export interface EvidenceRelation {
-  from_ref: string;
-  to_ref: string;
-  relation: string;
+  reference: string;
+  kind: string;
+  relative_path: string;
+  sha256: string;
+  verification_status: string;
+  producing_sequence: number | null;
+  consuming_sequences: number[];
+  turn_id: string | null;
+  step_id: string | null;
+  request_id: string | null;
+  tool_call_id: string | null;
+  result_id: string | null;
+  evidence_id: string | null;
+  claim_id: string | null;
 }
 
 export interface EvidenceIndex {
-  nodes: EvidenceNode[];
-  relations: EvidenceRelation[];
+  analysis_id: string;
+  records: Record<string, EvidenceRecord>;
 }
 
 export interface RunSummary {

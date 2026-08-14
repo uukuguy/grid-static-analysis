@@ -188,6 +188,11 @@ def create_trajectory_app(catalog: TrajectoryRunCatalog, cursor_codec: CursorCod
         )
         return value
 
+    @app.get("/api/runs/{analysis_id}/evidence")
+    def evidence_index(analysis_id: str) -> dict[str, Any]:
+        """Expose the immutable typed artifact projection without business inference."""
+        return catalog.open(analysis_id).artifacts.model_dump(mode="json")
+
     @app.get("/api/runs/{analysis_id}/artifacts/{artifact_ref}")
     def artifact(analysis_id: str, artifact_ref: str) -> Response:
         projected = catalog.open(analysis_id)

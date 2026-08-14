@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TrajectoryApiClient } from '../api/client';
-import type { BusinessProblem, RunListResponse } from '../api/types';
+import type { BusinessProblem, ContextFrame, RunListResponse } from '../api/types';
 import { App } from './App';
 
 const run: RunListResponse = {
@@ -149,5 +149,22 @@ describe('App shell', () => {
 
     inspectorTab.focus();
     expect(inspectorTab).toHaveFocus();
+  });
+
+  it('fetches the exact context frame selected by the sequence scrubber', async () => {
+    const getContextFrame = vi.fn(async (_id: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+    }));
+    render(<App client={{ ...fixtureClient(), getContextFrame }} />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Context' }));
+    await screen.findByText(/state at sequence 78/i);
+    fireEvent.change(screen.getByLabelText('Event sequence'), { target: { value: '42' } });
+
+    await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 42, expect.any(AbortSignal)));
+    expect(await screen.findByText(/state at sequence 42/i)).toBeVisible();
   });
 });

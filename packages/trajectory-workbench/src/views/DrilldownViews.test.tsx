@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentTurn, ContextFrame, EvidenceIndex } from '../api/types';
 import { AgentView } from './AgentView';
 import { ContextView } from './ContextView';
@@ -28,12 +28,12 @@ const nativeFrame: ContextFrame = {
 
 const legacyFrame: ContextFrame = { ...nativeFrame, request_artifact_ref: null, unavailable_reason: 'Legacy source did not capture model request input' };
 
-const evidence: EvidenceIndex = { nodes: [
-  { ref: 'claim:q7', type: 'claim', label: 'N-1 校核不通过', source: 'agent-declared', integrity: 'declared', producing_sequence: 80, consumers: 1, artifact_ref: null, unavailable_reason: null },
-  { ref: 'evidence:q7', type: 'evidence', label: 'Contingency violations', source: 'observed', integrity: 'verified', producing_sequence: 75, consumers: 1, artifact_ref: 'artifact:evidence:q7', unavailable_reason: null },
-], relations: [{ from_ref: 'claim:q7', to_ref: 'evidence:q7', relation: 'supported by' }] };
+const evidence: EvidenceIndex = { analysis_id: 'analysis-test', records: {
+  'evidence:q7': { id: 'artifact:analysis-test:evidence:q7', source: 'observed', source_sequences: [75], rule_id: null, status: 'completed', unavailable_reason: null, reference: 'evidence:q7', kind: 'evidence', relative_path: 'evidence/analysis/q7.json', sha256: 'a'.repeat(64), verification_status: 'verified', producing_sequence: 75, consuming_sequences: [80], turn_id: null, step_id: null, request_id: null, tool_call_id: null, result_id: null, evidence_id: null, claim_id: null },
+} };
 
 describe('trajectory drill-down views', () => {
+  afterEach(cleanup);
   it('renders request timing retries and paired nested tools', () => {
     render(<AgentView trajectory={agent} selectedNodeId={null} onSelectNode={vi.fn()} artifactUrl={(ref) => `/artifact/${ref}`} />);
     expect(screen.getByText('Request 7.2')).toBeVisible();
@@ -41,6 +41,25 @@ describe('trajectory drill-down views', () => {
     expect(screen.getByText(/Retry 1 of 2/)).toBeVisible();
     const tool = screen.getAllByRole('treeitem', { name: /analysis.contingency.n_minus_one.run.*completed/ }).find((item) => item.getAttribute('aria-level') === '4');
     expect(tool).toBeDefined();
+  });
+
+  it('uses roving focus and standard tree expansion keys for the agent hierarchy', () => {
+    const selectNode = vi.fn();
+    render(<AgentView trajectory={agent} selectedNodeId={null} onSelectNode={selectNode} artifactUrl={(ref) => `/artifact/${ref}`} />);
+    const turn = screen.getByRole('treeitem', { name: /Turn 7.*analysis-test-t007/ });
+    turn.focus();
+    fireEvent.keyDown(turn, { key: 'ArrowRight' });
+    expect(turn).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.keyDown(turn, { key: 'ArrowRight' });
+    expect(screen.getByRole('treeitem', { name: /Step 7.2/ })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('treeitem', { name: /Step 7.2/ }), { key: 'End' });
+    expect(screen.getByRole('treeitem', { name: /Assistant response/ })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('treeitem', { name: /Assistant response/ }), { key: 'Home' });
+    expect(turn).toHaveFocus();
+    fireEvent.keyDown(turn, { key: 'Enter' });
+    expect(selectNode).toHaveBeenCalledWith('agent:turn:7');
+    fireEvent.keyDown(turn, { key: 'ArrowLeft' });
+    expect(turn).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('shows exact before delta after and legacy unavailable request input', () => {
@@ -53,14 +72,13 @@ describe('trajectory drill-down views', () => {
     expect(screen.getByText('Legacy source did not capture model request input')).toBeVisible();
   });
 
-  it('navigates evidence relationships in both directions with a keyboard treegrid', () => {
+  it('renders the exact typed evidence artifact projection', () => {
     const selectRef = vi.fn();
     render(<EvidenceView index={evidence} selectedRef="evidence:q7" onSelectRef={selectRef} artifactUrl={(ref) => `/artifact/${ref}`} />);
-    const claim = screen.getByRole('button', { name: /Claim.*N-1 校核不通过/ });
-    fireEvent.click(claim);
-    expect(selectRef).toHaveBeenCalledWith('claim:q7');
-    expect(screen.getByRole('treegrid')).toHaveAccessibleName('Evidence relationships');
-    fireEvent.keyDown(claim, { key: 'ArrowDown' });
-    expect(screen.getByRole('button', { name: /Evidence.*Contingency violations/ })).toHaveFocus();
+    const record = screen.getByRole('button', { name: /evidence.*evidence:q7.*verified/i });
+    fireEvent.click(record);
+    expect(selectRef).toHaveBeenCalledWith('evidence:q7');
+    expect(screen.getByRole('treegrid')).toHaveAccessibleName('Evidence artifacts');
+    expect(screen.getByText('evidence/analysis/q7.json')).toBeVisible();
   });
 });

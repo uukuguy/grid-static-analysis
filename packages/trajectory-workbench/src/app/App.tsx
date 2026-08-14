@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, EvidenceNode, ProjectionPage, RunSummary } from '../api/types';
+import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ProjectionPage, RunSummary } from '../api/types';
 import { Inspector } from '../components/layout/Inspector';
 import { OverviewTimeline } from '../components/layout/OverviewTimeline';
 import { RunExplorer } from '../components/layout/RunExplorer';
@@ -15,7 +15,7 @@ import { EvidenceView } from '../views/EvidenceView';
 const api = new TrajectoryApiClient();
 
 /** Data ownership begins here; the Task 2 shell supplies the visual regions. */
-type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Partial<Pick<TrajectoryApiClient, 'getAgentPage' | 'getContextFrame' | 'artifactUrl'>>;
+type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Partial<Pick<TrajectoryApiClient, 'getAgentPage' | 'getContextFrame' | 'getEvidenceIndex' | 'artifactUrl'>>;
 
 export function App({ client = api }: { client?: AppClient }) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
@@ -23,6 +23,8 @@ export function App({ client = api }: { client?: AppClient }) {
   const [problems, setProblems] = useState<BusinessProblem[]>([]);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [contextFrame, setContextFrame] = useState<ContextFrame | null>(null);
+  const [contextSequence, setContextSequence] = useState<number | null>(null);
+  const [evidenceIndex, setEvidenceIndex] = useState<EvidenceIndex | null>(null);
   const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const loadingOlder = useRef(false);
   const businessPageRef = useRef<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
@@ -83,8 +85,14 @@ export function App({ client = api }: { client?: AppClient }) {
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;
 
   useEffect(() => {
+    if (state.activeView !== 'context') return;
+    const sequence = selectedProblem?.source_sequence ?? selectedRun?.last_sequence ?? null;
+    setContextSequence(sequence && sequence >= 1 ? sequence : null);
+  }, [state.activeView, state.selectedRunId]);
+
+  useEffect(() => {
     if (state.activeView !== 'context' || !state.selectedRunId || !client.getContextFrame) return;
-    const sequence = selectedProblem?.source_sequence ?? selectedRun?.last_sequence;
+    const sequence = contextSequence;
     if (!sequence || sequence < 1) return;
     const controller = new AbortController();
     dispatch({ type: 'page/requested', view: 'context' });
@@ -93,7 +101,18 @@ export function App({ client = api }: { client?: AppClient }) {
       dispatch({ type: 'page/loaded', view: 'context', page: { firstSequence: frame.source_sequence, lastSequence: frame.source_sequence, hasOlder: false } });
     }).catch(() => { setContextFrame(null); dispatch({ type: 'page/failed', view: 'context', message: 'Unable to load context frame.' }); });
     return () => controller.abort();
-  }, [client, state.activeView, state.selectedRunId, state.selectedNodeId, selectedProblem?.source_sequence, selectedRun?.last_sequence]);
+  }, [client, contextSequence, state.activeView, state.selectedRunId]);
+
+  useEffect(() => {
+    if (state.activeView !== 'evidence' || !state.selectedRunId || !client.getEvidenceIndex) return;
+    const controller = new AbortController();
+    dispatch({ type: 'page/requested', view: 'evidence' });
+    void client.getEvidenceIndex(state.selectedRunId, controller.signal).then((index) => {
+      setEvidenceIndex(index);
+      dispatch({ type: 'page/loaded', view: 'evidence', page: { firstSequence: null, lastSequence: null, hasOlder: false } });
+    }).catch(() => { setEvidenceIndex(null); dispatch({ type: 'page/failed', view: 'evidence', message: 'Unable to load evidence projection.' }); });
+    return () => controller.abort();
+  }, [client, state.activeView, state.selectedRunId]);
 
   const selectTurn = (turnId: string) => dispatch({ type: 'node/selected', nodeId: turnId });
   const requestOlder = () => {
@@ -113,11 +132,10 @@ export function App({ client = api }: { client?: AppClient }) {
   };
 
   const artifactUrl = (ref: string) => client.artifactUrl ? client.artifactUrl(state.selectedRunId ?? '', ref) : '#';
-  const evidenceIndex = evidenceFromProblems(problems);
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`}>
     {state.activeView === 'business' ? <BusinessView problems={problems} state={state} dispatch={dispatch} hasOlder={businessPage.has_older} onRequestOlder={requestOlder} />
       : state.activeView === 'agent' ? <AgentView trajectory={agentTurns} selectedNodeId={state.selectedNodeId} onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })} artifactUrl={artifactUrl} />
-        : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => dispatch({ type: 'node/selected', nodeId: `context:${sequence}` })} artifactUrl={artifactUrl} />
+        : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
           : <EvidenceView index={evidenceIndex} selectedRef={state.selectedNodeId} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
   </section>;
 
@@ -131,22 +149,6 @@ export function App({ client = api }: { client?: AppClient }) {
       focusedTurnId={selectedProblem?.turn_id ?? state.selectedNodeId}
     />
   </div>;
-}
-
-/** Builds only declared typed links from projection refs; it never examines answer prose. */
-function evidenceFromProblems(problems: BusinessProblem[]): EvidenceIndex {
-  const nodes = new Map<string, EvidenceNode>();
-  const relations: EvidenceIndex['relations'] = [];
-  for (const problem of problems) for (const node of problem.nodes) {
-    if (node.kind !== 'claim' && node.kind !== 'decision' && node.kind !== 'verified-result') continue;
-    const reference = node.id;
-    nodes.set(reference, { ref: reference, type: node.kind === 'claim' ? 'claim' : node.kind === 'decision' ? 'decision' : 'result', label: node.title, source: node.source, integrity: node.status === 'unavailable' ? 'unavailable' : node.kind === 'verified-result' ? 'verified' : 'declared', producing_sequence: node.source_sequence, consumers: node.refs.length, artifact_ref: null, unavailable_reason: node.unavailable_reason });
-    for (const ref of node.refs) {
-      if (!nodes.has(ref)) nodes.set(ref, { ref, type: ref.startsWith('result:') ? 'result' : 'evidence', label: ref, source: 'observed', integrity: 'verified', producing_sequence: null, consumers: 1, artifact_ref: ref.startsWith('artifact:') ? ref : null, unavailable_reason: null });
-      relations.push({ from_ref: reference, to_ref: ref, relation: node.kind === 'claim' ? 'supported by' : 'produced' });
-    }
-  }
-  return { nodes: [...nodes.values()], relations };
 }
 
 function pageMetadata<T>(page: ProjectionPage<T>) {

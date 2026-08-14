@@ -1,5 +1,5 @@
 import type {
-  AgentTurn, ApiErrorResponse, BusinessProblem, ContextFrame, ProjectionPage, RunListResponse, RunSummary,
+  AgentTurn, ApiErrorResponse, BusinessProblem, ContextFrame, EvidenceIndex, ProjectionPage, RunListResponse, RunSummary,
 } from './types';
 
 export class ApiError extends Error {
@@ -50,6 +50,9 @@ export class TrajectoryApiClient {
   }
   getContextFrame(id: string, atSequence: number, signal?: AbortSignal) {
     return this.get<ContextFrame>(`/api/runs/${encodeURIComponent(id)}/context?at_sequence=${atSequence}`, signal);
+  }
+  getEvidenceIndex(id: string, signal?: AbortSignal) {
+    return this.get<EvidenceIndex>(`/api/runs/${encodeURIComponent(id)}/evidence`, signal);
   }
   artifactUrl(id: string, ref: string) {
     return `/api/runs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(ref)}`;

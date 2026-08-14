@@ -193,6 +193,15 @@ def test_api_returns_context_frame_and_non_executable_artifact(tmp_path: Path) -
     assert "text/html" not in artifact.headers["content-type"]
 
 
+def test_api_returns_only_the_typed_artifact_projection_for_evidence(tmp_path: Path) -> None:
+    app, catalog, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get("/api/runs/analysis-test/evidence")
+
+    assert response.status_code == 200
+    assert response.json() == catalog.projected.artifacts.model_dump(mode="json")
+
+
 def test_api_has_no_mutation_routes(tmp_path: Path) -> None:
     app, _, _ = create_test_app(tmp_path)
     client = TestClient(app)
