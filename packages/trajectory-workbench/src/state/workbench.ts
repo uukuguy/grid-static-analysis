@@ -8,6 +8,7 @@ export interface LoadedPage {
   firstSequence: number | null;
   lastSequence: number | null;
   hasOlder: boolean;
+  olderCursor?: string | null;
 }
 
 export interface WorkbenchState {

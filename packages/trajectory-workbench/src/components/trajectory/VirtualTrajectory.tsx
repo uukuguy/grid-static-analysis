@@ -59,10 +59,11 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
 
   const requestOlder = () => {
     const first = virtualizer.getVirtualItems()[0];
-    const item = first ? items[first.index] : null;
+    const index = first?.index ?? 0;
+    const item = items[index];
     if (!item) return;
     const focused = document.activeElement instanceof HTMLElement ? document.activeElement.id || null : null;
-    const anchor = { itemId: item.id, offset: first.start - (virtualizer.scrollOffset ?? 0), focusedId: focused };
+    const anchor = { itemId: item.id, offset: (first?.start ?? 0) - (virtualizer.scrollOffset ?? 0), focusedId: focused };
     pendingAnchor.current = anchor;
     onRequestOlder(anchor);
   };

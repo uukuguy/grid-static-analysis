@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TrajectoryApiClient } from '../api/client';
 import type { BusinessProblem, RunListResponse } from '../api/types';
 import { App } from './App';
@@ -27,6 +27,15 @@ const problems: BusinessProblem[] = [
     title: 'Q7 · 线路 17 N-1', nodes: [],
   },
 ];
+
+const nestedProblem: BusinessProblem = {
+  ...problems[0],
+  nodes: [{
+    id: 'business:7:claim', source: 'agent-declared', source_sequences: [61], rule_id: null,
+    status: 'completed', unavailable_reason: null, source_sequence: 61, kind: 'claim',
+    title: 'Nested conclusion', detail: null, refs: [],
+  }],
+};
 
 function fixtureClient(): Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> {
   return {
@@ -91,6 +100,32 @@ describe('App shell', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Q7.*overview segment/i }));
 
     expect(new URLSearchParams(window.location.search).get('node')).toBe('analysis-test-t007');
+  });
+
+  it('resolves a nested business node deep link to its parent inspector and timeline turn', async () => {
+    window.history.replaceState({}, '', '/?node=business:7:claim');
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => ({ items: [nestedProblem], older_cursor: null, newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: false, encoded_bytes: 100 }),
+    }} />);
+
+    await screen.findByText('Nested conclusion');
+    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveTextContent('business:7');
+    expect(screen.getByRole('region', { name: 'Run overview timeline' })).toHaveAttribute('data-focused-turn', 'analysis-test-t007');
+  });
+
+  it('fetches the older cursor once and prepends its problems before the current page', async () => {
+    const getBusinessPage = vi.fn()
+      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'older-page', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
+      .mockResolvedValueOnce({ items: [{ ...problems[0], id: 'business:6', title: 'Q6 · Earlier' }], older_cursor: null, newer_cursor: null, first_sequence: 1, last_sequence: 58, has_older: false, encoded_bytes: 100 });
+    render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
+
+    await screen.findByRole('button', { name: /fold q7/i });
+    fireEvent.click(screen.getByRole('button', { name: 'Load older history' }));
+
+    await waitFor(() => expect(getBusinessPage).toHaveBeenLastCalledWith('analysis-test', 'older-page'));
+    expect(await screen.findByText('Q6 · Earlier')).toBeVisible();
+    expect(screen.getByText('Q6 · Earlier').compareDocumentPosition(screen.getByText('Q7 · 线路 17 N-1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('filters by source kind and groups visible runs by status', async () => {

@@ -46,4 +46,14 @@ describe('BusinessView', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'sourceFilter/changed', source: 'agent-declared' });
     expect(dispatch).toHaveBeenCalledWith({ type: 'statusFilter/changed', status: 'completed' });
   });
+
+  it('keeps problem headers in the bounded virtual window at 100000 problems', async () => {
+    const manyProblems = Array.from({ length: 100_000 }, (_, index) => ({
+      ...problem, id: `business:${index}`, title: `Problem ${index}`, nodes: [],
+    }));
+    render(<BusinessView problems={manyProblems} state={initialWorkbenchState} dispatch={vi.fn()} />);
+
+    expect(await screen.findByRole('button', { name: /fold problem 0/i })).toBeVisible();
+    expect(screen.getAllByRole('button', { name: /fold|expand problem/i }).length).toBeLessThanOrEqual(120);
+  });
 });
