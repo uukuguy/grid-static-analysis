@@ -6,6 +6,7 @@ from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from grid_agent.trajectory.api.catalog import RunNotFoundError, TrajectoryRunCatalog
 from grid_agent.trajectory.api.cursor import CursorCodec, CursorState
@@ -104,12 +105,77 @@ class StubCatalog:
         return self.projected
 
 
-def create_test_app(tmp_path: Path) -> tuple[FastAPI, StubCatalog, CursorCodec]:
+def write_static_fixture(tmp_path: Path) -> Path:
+    static_root = tmp_path / "static"
+    assets = static_root / "assets"
+    assets.mkdir(parents=True)
+    (static_root / "index.html").write_text(
+        '<!doctype html><html><body><div id="root"></div>'
+        '<script type="module" src="/assets/app.js"></script></body></html>',
+        encoding="utf-8",
+    )
+    (assets / "app.js").write_text("console.log('workbench');", encoding="utf-8")
+    (assets / "app.css").write_text("body { color: black; }", encoding="utf-8")
+    return static_root
+
+
+def create_test_app(
+    tmp_path: Path, *, static_root: Path | None = None
+) -> tuple[FastAPI, StubCatalog, CursorCodec]:
     from grid_agent.trajectory.api.app import create_trajectory_app
 
     catalog = StubCatalog(tmp_path)
     codec = CursorCodec.load_or_create(tmp_path / "cursor.key")
-    return create_trajectory_app(cast(TrajectoryRunCatalog, catalog), codec), catalog, codec
+    return (
+        create_trajectory_app(
+            cast(TrajectoryRunCatalog, catalog),
+            codec,
+            static_root=static_root or write_static_fixture(tmp_path),
+        ),
+        catalog,
+        codec,
+    )
+
+
+def test_spa_is_served_with_self_only_csp(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "script-src 'self'" in response.headers["content-security-policy"]
+    assert '<script type="module" src="/assets/app.js"></script>' in response.text
+
+
+def test_non_api_client_routes_fall_back_to_the_spa(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get("/runs/analysis-test/business")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+
+def test_api_404_never_falls_back_to_spa(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get("/api/not-a-route")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+
+
+def test_server_rejects_missing_production_assets(tmp_path: Path) -> None:
+    from grid_agent.trajectory.api.app import create_trajectory_app
+
+    catalog = StubCatalog(tmp_path)
+    codec = CursorCodec.load_or_create(tmp_path / "cursor.key")
+
+    with pytest.raises(RuntimeError, match="make build-workbench"):
+        create_trajectory_app(
+            cast(TrajectoryRunCatalog, catalog), codec, static_root=tmp_path / "missing"
+        )
 
 
 def test_api_lists_runs_with_a_typed_response(tmp_path: Path) -> None:

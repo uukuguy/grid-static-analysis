@@ -56,6 +56,9 @@ var/
 
 **/.venv/
 **/node_modules/
+packages/trajectory-workbench/test-results/
+packages/trajectory-workbench/playwright-report/
+packages/trajectory-workbench/coverage/
 **/__pycache__/
 **/.pytest_cache/
 **/.coverage

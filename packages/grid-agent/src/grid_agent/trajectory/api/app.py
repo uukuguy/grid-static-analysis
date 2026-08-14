@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from grid_agent.trajectory.api.artifacts import ArtifactAccessError, ArtifactGateway
@@ -72,7 +73,12 @@ def _api_error_response(status_code: int, code: str, message: str) -> JSONRespon
     return response
 
 
-def create_trajectory_app(catalog: TrajectoryRunCatalog, cursor_codec: CursorCodec) -> FastAPI:
+def create_trajectory_app(
+    catalog: TrajectoryRunCatalog,
+    cursor_codec: CursorCodec,
+    *,
+    static_root: Path | None = None,
+) -> FastAPI:
     """Create the fixed, local, read-only trajectory projection boundary."""
     app = FastAPI(
         title="grid-agent trajectory",
@@ -202,7 +208,33 @@ def create_trajectory_app(catalog: TrajectoryRunCatalog, cursor_codec: CursorCod
         response.headers["Content-Disposition"] = f'attachment; filename="{opened.filename}"'
         return response
 
+    mount_workbench(app, static_root or _packaged_static_root())
     return app
+
+
+def _packaged_static_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "static"
+
+
+def mount_workbench(app: FastAPI, static_root: Path) -> None:
+    """Serve only the verified packaged SPA after every API route is registered."""
+    index = static_root / "index.html"
+    app_js = static_root / "assets" / "app.js"
+    app_css = static_root / "assets" / "app.css"
+    if not all(path.is_file() for path in (index, app_js, app_css)):
+        raise RuntimeError("trajectory workbench assets are missing; run make build-workbench")
+
+    app.mount(
+        "/assets",
+        StaticFiles(directory=static_root / "assets", check_dir=True),
+        name="trajectory-assets",
+    )
+
+    @app.get("/{client_path:path}", include_in_schema=False)
+    def spa(client_path: str) -> FileResponse:
+        if client_path == "api" or client_path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        return FileResponse(index, media_type="text/html; charset=utf-8")
 
 
 def _page_view(
@@ -253,4 +285,4 @@ def _page_view(
     )
 
 
-__all__ = ["SECURITY_HEADERS", "create_trajectory_app"]
+__all__ = ["SECURITY_HEADERS", "create_trajectory_app", "mount_workbench"]
