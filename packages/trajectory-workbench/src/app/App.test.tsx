@@ -167,4 +167,21 @@ describe('App shell', () => {
     await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 42, expect.any(AbortSignal)));
     expect(await screen.findByText(/state at sequence 42/i)).toBeVisible();
   });
+
+  it('recomputes and fetches context for a newly selected trajectory node', async () => {
+    const getContextFrame = vi.fn(async (_id: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+    }));
+    render(<App client={{ ...fixtureClient(), getContextFrame }} />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Context' }));
+    await screen.findByText(/state at sequence 78/i);
+    fireEvent.click(screen.getByRole('button', { name: /Q7.*overview segment/i }));
+
+    await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 59, expect.any(AbortSignal)));
+    expect(await screen.findByText(/state at sequence 59/i)).toBeVisible();
+  });
 });

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentTurn, ProjectionNode } from '../api/types';
 import { SourceBadge } from '../components/common/SourceBadge';
 
@@ -36,6 +36,9 @@ export function AgentView({ trajectory, selectedNodeId, onSelectNode, artifactUr
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(entries.filter((entry) => children.get(entry.node.id)?.length).map((entry) => entry.node.id)));
   const [activeId, setActiveId] = useState<string | null>(() => entries[0]?.node.id ?? null);
   const itemRefs = useRef(new Map<string, HTMLLIElement>());
+  useEffect(() => {
+    setActiveId((current) => current && entries.some((entry) => entry.node.id === current) ? current : entries[0]?.node.id ?? null);
+  }, [entries]);
   const visible = entries.filter((entry) => {
     for (let parentId = entry.parentId; parentId; parentId = entries.find((candidate) => candidate.node.id === parentId)?.parentId ?? null) if (!expanded.has(parentId)) return false;
     return true;

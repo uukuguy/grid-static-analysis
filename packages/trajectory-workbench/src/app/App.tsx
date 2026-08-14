@@ -88,7 +88,7 @@ export function App({ client = api }: { client?: AppClient }) {
     if (state.activeView !== 'context') return;
     const sequence = selectedProblem?.source_sequence ?? selectedRun?.last_sequence ?? null;
     setContextSequence(sequence && sequence >= 1 ? sequence : null);
-  }, [state.activeView, state.selectedRunId]);
+  }, [state.activeView, state.selectedRunId, selectedProblem?.source_sequence, selectedRun?.last_sequence]);
 
   useEffect(() => {
     if (state.activeView !== 'context' || !state.selectedRunId || !client.getContextFrame) return;

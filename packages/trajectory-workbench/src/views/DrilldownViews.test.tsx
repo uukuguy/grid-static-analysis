@@ -62,6 +62,19 @@ describe('trajectory drill-down views', () => {
     expect(turn).toHaveAttribute('aria-expanded', 'false');
   });
 
+  it('makes the root tab stop available when agent turns arrive after an empty render', () => {
+    const { rerender } = render(<AgentView trajectory={[]} selectedNodeId={null} onSelectNode={vi.fn()} artifactUrl={(ref) => `/artifact/${ref}`} />);
+
+    rerender(<AgentView trajectory={agent} selectedNodeId={null} onSelectNode={vi.fn()} artifactUrl={(ref) => `/artifact/${ref}`} />);
+
+    const turn = screen.getByRole('treeitem', { name: /Turn 7.*analysis-test-t007/ });
+    expect(turn).toHaveAttribute('tabindex', '0');
+    turn.focus();
+    fireEvent.keyDown(turn, { key: 'ArrowRight' });
+    fireEvent.keyDown(turn, { key: 'ArrowRight' });
+    expect(screen.getByRole('treeitem', { name: /Step 7.2/ })).toHaveFocus();
+  });
+
   it('shows exact before delta after and legacy unavailable request input', () => {
     const { rerender } = render(<ContextView frame={nativeFrame} onSelectSequence={vi.fn()} artifactUrl={(ref) => `/artifact/${ref}`} />);
     expect(screen.getByRole('tab', { name: 'Before' })).toBeVisible();
