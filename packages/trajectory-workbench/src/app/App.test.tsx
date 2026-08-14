@@ -231,6 +231,35 @@ describe('App shell', () => {
     expect(screen.getByText('Q6 · Earlier').compareDocumentPosition(screen.getByText('Q7 · 线路 17 N-1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('shows unsupported when loading an older business cursor returns HTTP 501', async () => {
+    const getBusinessPage = vi.fn()
+      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'older-page', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
+      .mockRejectedValueOnce(new ApiError(501, 'unsupported', 'Older business history requires a newer workbench.'));
+    render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load older history' }));
+
+    expect(await screen.findByTestId('state-unsupported')).toHaveTextContent('Older business history requires a newer workbench.');
+    expect(getBusinessPage).toHaveBeenLastCalledWith('analysis-test', 'older-page');
+  });
+
+  it('retries a failed older business cursor instead of the initial page', async () => {
+    const olderProblem = { ...problems[0], id: 'business:6', title: 'Q6 · Earlier' };
+    const getBusinessPage = vi.fn()
+      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'older-page', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
+      .mockRejectedValueOnce(new Error('older history unavailable'))
+      .mockResolvedValueOnce({ items: [olderProblem], older_cursor: null, newer_cursor: null, first_sequence: 1, last_sequence: 58, has_older: false, encoded_bytes: 100 });
+    render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load older history' }));
+    expect(await screen.findByTestId('state-network-error')).toHaveTextContent('older history unavailable');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Q6 · Earlier')).toBeVisible();
+    expect(getBusinessPage).toHaveBeenNthCalledWith(3, 'analysis-test', 'older-page');
+  });
+
   it('filters by source kind and groups visible runs by status', async () => {
     render(<App client={fixtureClient()} />);
     await screen.findByRole('navigation', { name: 'Runs' });

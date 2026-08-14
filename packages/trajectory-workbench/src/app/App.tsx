@@ -34,6 +34,7 @@ export function App({ client = api }: { client?: AppClient }) {
   const [evidenceIndex, setEvidenceIndex] = useState<EvidenceIndex | null>(null);
   const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const loadingOlder = useRef(false);
+  const failedOlderCursor = useRef<string | null>(null);
   const businessPageRef = useRef<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const deepLinkNode = useRef(new URLSearchParams(window.location.search).get('node'));
 
@@ -80,12 +81,14 @@ export function App({ client = api }: { client?: AppClient }) {
     dispatch({ type: 'page/requested', view: 'business' });
     void client.getBusinessPage(state.selectedRunId, undefined, controller.signal).then((page) => {
       setProblems(page.items);
+      failedOlderCursor.current = null;
       businessPageRef.current = page;
       setBusinessPage(page);
       dispatch({ type: 'page/loaded', view: 'business', page: pageMetadata(page) });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       setProblems([]);
+      failedOlderCursor.current = null;
       businessPageRef.current = { older_cursor: null, has_older: false };
       setBusinessPage({ older_cursor: null, has_older: false });
       setPageErrors((errors) => ({ ...errors, business: error }));
@@ -159,20 +162,29 @@ export function App({ client = api }: { client?: AppClient }) {
   }, [client, pageAttempts.evidence, state.activeView, state.selectedRunId]);
 
   const selectTurn = (turnId: string) => dispatch({ type: 'node/selected', nodeId: turnId });
-  const requestOlder = () => {
+  const loadOlder = (cursor: string) => {
     const runId = state.selectedRunId;
     const page = businessPageRef.current;
-    const cursor = page.older_cursor;
     if (!runId || !page.has_older || !cursor || loadingOlder.current) return;
     loadingOlder.current = true;
+    setPageErrors((errors) => ({ ...errors, business: null }));
     dispatch({ type: 'page/requested', view: 'business' });
     void client.getBusinessPage(runId, cursor).then((page) => {
       setProblems((current) => prependProblems(page.items, current));
+      failedOlderCursor.current = null;
       businessPageRef.current = page;
       setBusinessPage(page);
       dispatch({ type: 'page/prepended', view: 'business', page: pageMetadata(page) });
-    }).catch(() => dispatch({ type: 'page/failed', view: 'business', message: 'Unable to load older business trajectory.' }))
+    }).catch((error: unknown) => {
+      failedOlderCursor.current = cursor;
+      setPageErrors((errors) => ({ ...errors, business: error }));
+      dispatch({ type: 'page/failed', view: 'business', message: pageErrorMessage(error, 'Unable to load older business trajectory.') });
+    })
       .finally(() => { loadingOlder.current = false; });
+  };
+  const requestOlder = () => {
+    const cursor = businessPageRef.current.older_cursor;
+    if (cursor) loadOlder(cursor);
   };
 
   const artifactUrl = (ref: string) => client.artifactUrl ? client.artifactUrl(state.selectedRunId ?? '', ref) : '#';
@@ -181,7 +193,14 @@ export function App({ client = api }: { client?: AppClient }) {
     : pageError instanceof ApiError && pageError.status === 501 ? 'unsupported'
       : state.pageStatus[state.activeView] === 'failed' ? 'network-error' : 'ready';
   const viewState: AsyncStateName = selectedRun?.status === 'corrupt' ? 'corrupt' : pageState;
-  const retryActivePage = () => setPageAttempts((attempts) => ({ ...attempts, [state.activeView]: attempts[state.activeView] + 1 }));
+  const retryActivePage = () => {
+    const cursor = state.activeView === 'business' ? failedOlderCursor.current : null;
+    if (cursor) {
+      loadOlder(cursor);
+      return;
+    }
+    setPageAttempts((attempts) => ({ ...attempts, [state.activeView]: attempts[state.activeView] + 1 }));
+  };
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
     {selectedRun?.status === 'partial' ? <AsyncState state="partial" diagnostic={selectedRun.diagnostic} /> : null}
     <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]} onRetry={retryActivePage}>
