@@ -1,17 +1,18 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Inspector } from './Inspector';
 import { WorkbenchShell } from './WorkbenchShell';
 
 const mobileQuery = '(max-width: 720px)';
 
-function renderMobileShell() {
+function renderMobileShell(inspector = <Inspector node={null} />) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
     matches: query === mobileQuery,
     media: query,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
   })));
-  render(<WorkbenchShell explorer={<p>Runs</p>} header={<p>Header</p>} timeline={<p>Timeline</p>} content={<button type="button">Content action</button>} inspector={<><button type="button">Identity</button><button type="button">Artifacts</button></>} />);
+  render(<WorkbenchShell explorer={<p>Runs</p>} header={<p>Header</p>} timeline={<p>Timeline</p>} content={<button type="button">Content action</button>} inspector={inspector} />);
 }
 
 describe('WorkbenchShell mobile inspector', () => {
@@ -39,9 +40,11 @@ describe('WorkbenchShell mobile inspector', () => {
     fireEvent.click(trigger);
 
     const close = await screen.findByRole('button', { name: 'Close inspector' });
-    const lastControl = screen.getByRole('button', { name: 'Artifacts' });
-    lastControl.focus();
-    fireEvent.keyDown(lastControl, { key: 'Tab' });
+    const identity = screen.getByRole('tab', { name: 'Identity' });
+
+    fireEvent.keyDown(close, { key: 'Tab' });
+    identity.focus();
+    fireEvent.keyDown(identity, { key: 'Tab' });
     expect(close).toHaveFocus();
 
     fireEvent.keyDown(close, { key: 'Escape' });

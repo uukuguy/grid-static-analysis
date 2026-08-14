@@ -35,9 +35,9 @@ export function WorkbenchShell({ explorer, header, timeline, content, inspector,
       return;
     }
     if (event.key !== 'Tab') return;
-    const focusable = sheetRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    );
+    const focusable = Array.from(sheetRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]',
+    ) ?? []).filter(isTabbable);
     if (!focusable?.length) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -65,6 +65,15 @@ export function WorkbenchShell({ explorer, header, timeline, content, inspector,
       </div> : null}
     </> : <aside className="inspector" aria-label="Trajectory inspector">{inspector}</aside>}
   </div>;
+}
+
+function isTabbable(element: HTMLElement) {
+  const style = window.getComputedStyle(element);
+  return element.tabIndex >= 0
+    && !element.matches(':disabled')
+    && !element.closest('[hidden], [aria-hidden="true"]')
+    && style.display !== 'none'
+    && style.visibility !== 'hidden';
 }
 
 function useMobileInspector() {
