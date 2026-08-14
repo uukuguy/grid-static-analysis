@@ -51,6 +51,28 @@ describe('App shell', () => {
   afterEach(() => {
     cleanup();
     window.history.replaceState({}, '', '/');
+    window.localStorage.clear();
+    delete document.documentElement.dataset.theme;
+    vi.unstubAllGlobals();
+  });
+
+  it('uses the system theme until an explicit toggle persists a light or dark preference', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-color-scheme: dark)' ? false : false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+
+    render(<App client={fixtureClient()} />);
+
+    await screen.findByRole('navigation', { name: 'Runs' });
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to dark theme' }));
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    expect(window.localStorage.getItem('trajectory-workbench.theme')).toBe('dark');
   });
   it('renders the approved four-region hierarchy and business tab as selected', async () => {
     render(<App client={fixtureClient()} />);

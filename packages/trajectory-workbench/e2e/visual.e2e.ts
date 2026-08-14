@@ -17,18 +17,29 @@ test('approved wide dark business workbench', async ({ page }) => {
 
 test('approved wide light business workbench', async ({ page }) => {
   await ready(page, 1600, 'light');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  expect(await page.locator('html').evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe('rgb(247, 249, 252)');
   await expect(page).toHaveScreenshot('business-light-wide.png', { animations: 'disabled', fullPage: true });
 });
 
-test('dark medium layout preserves the inspector', async ({ page }) => {
+test('dark medium layout keeps a resizable right inspector without page overflow', async ({ page }) => {
   await ready(page, 1024);
   await expect(page.getByRole('complementary', { name: 'Trajectory inspector' })).toBeVisible();
+  await expect(page.getByRole('separator', { name: 'Resize trajectory inspector' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page).toHaveScreenshot('business-dark-medium.png', { animations: 'disabled', fullPage: true });
+  await page.getByRole('separator', { name: 'Resize trajectory inspector' }).press('ArrowLeft');
+  await expect(page.locator('.workbench-shell')).toHaveCSS('--inspector-width', '454px');
 });
 
-test('narrow workbench exposes the inspector without horizontal overflow', async ({ page }) => {
+test('narrow workbench opens the inspector as a bottom sheet without horizontal overflow', async ({ page }) => {
   await ready(page, 768);
-  await expect(page.getByRole('complementary', { name: 'Trajectory inspector' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open inspector' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open inspector' }).click();
+  await expect(page.getByRole('dialog', { name: 'Trajectory inspector' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page).toHaveScreenshot('business-dark-narrow.png', { animations: 'disabled', fullPage: true });
 });
 

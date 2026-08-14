@@ -13,6 +13,7 @@ import { ContextView } from '../views/ContextView';
 import { EvidenceView } from '../views/EvidenceView';
 import { ApiError } from '../api/client';
 import { AsyncState, type AsyncStateName } from '../components/common/AsyncState';
+import { readThemePreference, saveThemePreference, systemTheme, type ResolvedTheme } from '../design/theme';
 
 const api = new TrajectoryApiClient();
 
@@ -22,6 +23,8 @@ type SelectedBusinessEntity = { problem: BusinessProblem; node: BusinessNode | n
 
 export function App({ client = api }: { client?: AppClient }) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
+  const [themePreference, setThemePreference] = useState<ResolvedTheme | null>(readThemePreference);
+  const [activeTheme, setActiveTheme] = useState<ResolvedTheme>(() => themePreference ?? systemTheme());
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runListState, setRunListState] = useState<AsyncStateName>('loading');
   const [runListDiagnostic, setRunListDiagnostic] = useState<string | null>(null);
@@ -38,6 +41,29 @@ export function App({ client = api }: { client?: AppClient }) {
   const failedOlderCursor = useRef<string | null>(null);
   const businessPageRef = useRef<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const deepLinkNode = useRef(new URLSearchParams(window.location.search).get('node'));
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = activeTheme;
+  }, [activeTheme]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return;
+    const update = () => {
+      if (themePreference === null) setActiveTheme(media.matches ? 'dark' : 'light');
+    };
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [themePreference]);
+
+  const toggleTheme = () => {
+    const nextTheme: ResolvedTheme = activeTheme === 'dark' ? 'light' : 'dark';
+    setThemePreference(nextTheme);
+    setActiveTheme(nextTheme);
+    saveThemePreference(nextTheme);
+    dispatch({ type: 'theme/changed', theme: nextTheme });
+  };
 
   useEffect(() => {
     const selectedNode = deepLinkNode.current;
@@ -217,7 +243,7 @@ export function App({ client = api }: { client?: AppClient }) {
 
   return <div className="workbench-bootstrap" aria-label="Trajectory workbench" data-view={state.activeView}>
     <WorkbenchShell
-      header={<RunHeader run={selectedRun} activeView={state.activeView} onViewSelect={(view) => dispatch({ type: 'view/selected', view })} />}
+      header={<RunHeader run={selectedRun} activeView={state.activeView} onViewSelect={(view) => dispatch({ type: 'view/selected', view })} theme={activeTheme} onThemeToggle={toggleTheme} />}
       explorer={<AsyncState state={runListState} diagnostic={runListDiagnostic} onRetry={() => setRunListAttempt((attempt) => attempt + 1)}>
         <RunExplorer runs={runs} selectedRunId={state.selectedRunId} onSelectRun={(runId) => dispatch({ type: 'run/selected', runId })} />
       </AsyncState>}
