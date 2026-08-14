@@ -11,6 +11,7 @@ from pathlib import Path
 import typer
 from dotenv import dotenv_values
 
+from grid_agent.analysis.capabilities import CapabilityContextCatalog
 from grid_agent.analysis.integrity import ContentReferenceVerifier, ReferenceDiagnostic
 from grid_agent.analysis.projector import AnalysisContextProjector
 from grid_agent.analysis.runner import AnalysisOutcome, AnalysisRequest, AnalysisRunner
@@ -334,12 +335,19 @@ def _project_relative(path: Path, project_root: Path) -> str:
     return resolved.relative_to(project_root).as_posix()
 
 
-def _runtime_record(resolved_provider: str, resolved_model: str, environment_description: Mapping[str, Any]) -> dict[str, str]:
+def _runtime_record(
+    resolved_provider: str,
+    resolved_model: str,
+    environment_description: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw_families = environment_description.get("capability_families", [])
+    capability_families = [dict(item) for item in raw_families if isinstance(item, Mapping)]
     return {
         "provider": resolved_provider,
         "model": resolved_model,
         "grid_capability_protocol": str(environment_description.get("protocol_version", "1.0")),
         "pandapower_version": str(environment_description.get("pandapower_version", "3.4.0")),
+        "capability_families": capability_families,
     }
 
 
@@ -397,8 +405,9 @@ def _execute_analysis(
         timeout_seconds=60,
     )
     environment_description = gridctl.invoke("environment.describe", {})
+    capability_documents = load_packaged_capability_documents(_repo_root())
     tool_catalog_path = ToolCatalog.from_environment(
-        load_packaged_capability_documents(_repo_root()),
+        capability_documents,
         environment_description,
     ).materialize(workspace.root_path / "tool-catalog.json")
     guide_index_path = GuideIndex.load(_repo_root() / "skills/grid-static-analysis").materialize(
@@ -452,7 +461,11 @@ def _execute_analysis(
             audit_callback=lambda claimed, results: verifier.audit_answer_references(claimed, results),
         ),
         pi_client=PiRpcClient(launch, workspace, trace),
-        projector=AnalysisContextProjector(store, verifier),
+        projector=AnalysisContextProjector(
+            store,
+            verifier,
+            CapabilityContextCatalog.from_documents(capability_documents),
+        ),
         environment={
             "provider": resolved.config.provider,
             "model": resolved.config.model,

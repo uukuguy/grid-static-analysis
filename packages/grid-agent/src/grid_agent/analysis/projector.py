@@ -7,6 +7,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from grid_agent.analysis.capabilities import CapabilityContextCatalog
+from grid_agent.analysis.domain_projection import project_domain_result
 from grid_agent.analysis.integrity import ContentReferenceVerifier, SimulatorIntegrityError, VerifiedArtifact
 from grid_agent.analysis.models import ContextEventDraft, ResultRecord
 from grid_agent.analysis.store import AnalysisContextStore
@@ -31,9 +33,15 @@ _TOOL_NAME_TO_CAPABILITY: Mapping[str, str] = {
 class AnalysisContextProjector:
     """Project canonical semantic tool events into the analysis context store."""
 
-    def __init__(self, store: AnalysisContextStore, verifier: ContentReferenceVerifier) -> None:
+    def __init__(
+        self,
+        store: AnalysisContextStore,
+        verifier: ContentReferenceVerifier,
+        capability_catalog: CapabilityContextCatalog,
+    ) -> None:
         self._store = store
         self._verifier = verifier
+        self._capability_catalog = capability_catalog
         self._starts: dict[str, Mapping[str, Any]] = {}
 
     def observe(self, event: Mapping[str, Any], *, turn_id: str, trace_sequence: int | None = None) -> None:
@@ -113,6 +121,59 @@ class AnalysisContextProjector:
             turn_id=turn_id,
             start=start,
             evidence_refs=evidence_refs,
+        )
+        self._append_domain_state(
+            capability,
+            result,
+            result_artifacts,
+            turn_id=turn_id,
+            start=start,
+        )
+
+    def _append_domain_state(
+        self,
+        capability: str,
+        result: Mapping[str, Any],
+        result_artifacts: tuple[VerifiedArtifact, ...],
+        *,
+        turn_id: str,
+        start: Mapping[str, Any],
+    ) -> None:
+        spec = self._capability_catalog.require(capability)
+        result_paths = {
+            artifact.reference: _relative_path(artifact.path, self._verifier.workspace_root)
+            for artifact in result_artifacts
+        }
+        context_ref = result.get("context_ref")
+        baseline = self._store.snapshot.baselines.get(context_ref) if isinstance(context_ref, str) else None
+        active_revision_ref = baseline.revision_ref if baseline is not None else None
+        projection_result = dict(result)
+        if spec.projector == "model-context-v1" and baseline is not None:
+            projection_result.setdefault("model", baseline.network.get("name"))
+            projection_result.setdefault("source", "registered")
+            projection_result.setdefault(
+                "counts",
+                {
+                    "bus": baseline.network.get("bus_count", 0),
+                    "line": baseline.network.get("line_count", 0),
+                    "trafo": baseline.network.get("trafo_count", 0),
+                },
+            )
+        delta = project_domain_result(
+            spec,
+            result=projection_result,
+            arguments=_start_args(start),
+            turn_id=turn_id,
+            result_paths=result_paths,
+            active_revision_ref=active_revision_ref,
+        )
+        self._store.append(
+            ContextEventDraft(
+                event_type="domain.state.projected",
+                turn_id=turn_id,
+                capability=capability,
+                payload=delta.model_dump(mode="json"),
+            )
         )
 
     def _record_tool_error(

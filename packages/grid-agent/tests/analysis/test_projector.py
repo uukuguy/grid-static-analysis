@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from grid_agent.analysis.integrity import ContentReferenceVerifier, SimulatorIntegrityError
+from grid_agent.analysis.capabilities import CapabilityContextCatalog
 from grid_agent.analysis.models import ContextEventDraft, VerifiedFact
 from grid_agent.analysis.projector import AnalysisContextProjector
 from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
@@ -75,10 +76,16 @@ class OpenedContext:
 def context_harness(tmp_path: Path) -> ContextHarness:
     workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
     store = AnalysisContextStore.initialize(workspace, input_record=INPUT, runtime_record=RUNTIME)
+    definition_root = Path(__file__).resolve().parents[4] / "packages/grid-simulator/src/grid_simulator/capabilities/definitions"
+    documents = tuple(json.loads(path.read_text(encoding="utf-8")) for path in sorted(definition_root.glob("*.json")))
     return ContextHarness(
         workspace=workspace,
         store=store,
-        projector=AnalysisContextProjector(store, ContentReferenceVerifier(workspace.root_path)),
+        projector=AnalysisContextProjector(
+            store,
+            ContentReferenceVerifier(workspace.root_path),
+            CapabilityContextCatalog.from_documents(documents),
+        ),
     )
 
 
@@ -133,6 +140,7 @@ def test_projector_registers_powerflow_and_ranking_dependency(context_harness: C
     )
 
     state = context_harness.store.snapshot
+    assert powerflow_result["result_ref"] in state.domain_state.calculations
     assert powerflow_result["result_ref"] in state.results
     ranking = next(item for item in state.observations.values() if item.capability == "result.branches.rank")
     assert ranking.consumed_refs == [powerflow_result["result_ref"]]
@@ -526,9 +534,9 @@ def test_projector_promotes_n_minus_one_aggregate_and_scenario_facts(
     context_harness.start_turn("analysis-test-t001", ordinal=1)
     context_harness.projector.observe(
         tool_start(
-            "call-1",
-            "grid_analysis_contingency_n_minus_one",
-            {"context_ref": opened.context_ref, "branch_refs": ["asset:line:11"], "policy": "static-analysis-v1"},
+                "call-1",
+                "grid_analysis_contingency_n_minus_one",
+                {"context_ref": opened.context_ref, "branch_refs": ["asset:line:11"]},
         ),
         turn_id="analysis-test-t001",
     )

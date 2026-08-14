@@ -178,11 +178,10 @@ def test_verify_evidence_refs_accepts_generated_ac_and_n1_evidence(tmp_path: Pat
     )
     contingency = client.invoke(
         "analysis.contingency.n_minus_one.run",
-        {
-            "context_ref": context_ref,
-            "branch_refs": [str(dict(element["element"])["asset_ref"])],
-            "policy": "static-analysis-v1",
-        },
+            {
+                "context_ref": context_ref,
+                "branch_refs": [str(dict(element["element"])["asset_ref"])],
+            },
     )
 
     _verify_evidence_refs(
