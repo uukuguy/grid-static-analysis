@@ -17,12 +17,13 @@ from grid_agent.trajectory.events import (
     EventDraft,
     EventRefs,
     EventSource,
+    EventType,
     RunScope,
 )
 from grid_agent.trajectory.recorder import RunEventRecorder
 
 
-SEMANTIC_EVENT_MAP = {
+SEMANTIC_EVENT_MAP: Mapping[str, EventType] = {
     "tool_execution_start": "tool.started",
     "tool_result": "tool.completed",
 }
@@ -35,8 +36,11 @@ _SENSITIVE_FIELD = re.compile(
 
 
 class CaptureWorkspace(Protocol):
-    root_path: Path
-    requests_path: Path
+    @property
+    def root_path(self) -> Path: ...
+
+    @property
+    def requests_path(self) -> Path: ...
 
 
 class CaptureIntegrityError(RuntimeError):

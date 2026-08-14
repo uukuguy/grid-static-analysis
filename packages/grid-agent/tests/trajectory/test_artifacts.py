@@ -65,10 +65,11 @@ def test_registry_fsyncs_each_parent_before_opening_new_nested_directory(
         dir_fd: int | None = None,
     ) -> int:
         descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
-        component = created_by_parent.get(dir_fd) if dir_fd is not None else None
-        if component == os.fsdecode(path):
-            calls.append(f"open-child:{component}")
-            del created_by_parent[dir_fd]
+        if dir_fd is not None:
+            component = created_by_parent.get(dir_fd)
+            if component == os.fsdecode(path):
+                calls.append(f"open-child:{component}")
+                del created_by_parent[dir_fd]
         return descriptor
 
     monkeypatch.setattr(artifact_module.os, "mkdir", recording_mkdir)

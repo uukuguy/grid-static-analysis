@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from grid_agent.analysis.models import ContextEventDraft
+from grid_agent.analysis.models import AnalysisContext, ContextEventDraft
 from grid_agent.analysis.store import AnalysisContextStore, ContextStoreError
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.trajectory.recorder import RecorderIntegrityError
+from grid_agent.trajectory.events import RunEvent
 
 
 INPUT = {
@@ -85,11 +85,15 @@ def test_context_transition_commits_native_event_before_legacy_ledger(
     workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
     observed: list[str] = []
 
-    def commit(*_args: object) -> SimpleNamespace:
+    def commit(
+        _draft: ContextEventDraft,
+        _before: AnalysisContext,
+        _after: AnalysisContext,
+    ) -> RunEvent:
         observed.append(
             "legacy" if workspace.context_events_path.exists() else "native"
         )
-        return SimpleNamespace(sequence=17)
+        return RunEvent.model_construct(sequence=17)
 
     AnalysisContextStore.initialize(
         workspace,
@@ -111,7 +115,11 @@ def test_native_commit_failure_prevents_compatibility_append(
 ) -> None:
     workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
 
-    def fail_commit(*_args: object) -> None:
+    def fail_commit(
+        _draft: ContextEventDraft,
+        _before: AnalysisContext,
+        _after: AnalysisContext,
+    ) -> RunEvent:
         raise RecorderIntegrityError("disk full")
 
     with pytest.raises(ContextStoreError, match="native trajectory"):

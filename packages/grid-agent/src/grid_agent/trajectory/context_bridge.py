@@ -18,13 +18,14 @@ from grid_agent.trajectory.events import (
     ContextBoundary,
     EventDraft,
     EventRefs,
+    EventType,
     RunEvent,
     RunScope,
 )
 from grid_agent.trajectory.recorder import RunEventRecorder
 
 
-CONTEXT_TO_NATIVE = {
+CONTEXT_TO_NATIVE: Mapping[str, EventType] = {
     "analysis.started": "analysis.started",
     "analysis.completed": "analysis.completed",
     "analysis.failed": "analysis.failed",
@@ -37,8 +38,11 @@ CONTEXT_TO_NATIVE = {
 
 
 class ContextBridgeWorkspace(Protocol):
-    root_path: Path
-    trajectory_capture_state_path: Path
+    @property
+    def root_path(self) -> Path: ...
+
+    @property
+    def trajectory_capture_state_path(self) -> Path: ...
 
 
 class NativeContextBridge:
@@ -61,7 +65,9 @@ class NativeContextBridge:
         before: AnalysisContext,
         after: AnalysisContext,
     ) -> RunEvent:
-        event_type = CONTEXT_TO_NATIVE.get(draft.event_type, "context.projected")
+        event_type: EventType = CONTEXT_TO_NATIVE.get(
+            draft.event_type, "context.projected"
+        )
         answer_pointer = (
             self._admit_answer(draft)
             if event_type == "answer.submitted"
