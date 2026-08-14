@@ -86,9 +86,12 @@ export function App({ client = api }: { client?: AppClient }) {
 
   useEffect(() => {
     if (state.activeView !== 'context') return;
+    // A scrubber selection owns its sequence. Only an external trajectory
+    // selection should derive a new context sequence from the business page.
+    if (state.selectedNodeId?.startsWith('context:')) return;
     const sequence = selectedProblem?.source_sequence ?? selectedRun?.last_sequence ?? null;
     setContextSequence(sequence && sequence >= 1 ? sequence : null);
-  }, [state.activeView, state.selectedRunId, selectedProblem?.source_sequence, selectedRun?.last_sequence]);
+  }, [state.activeView, state.selectedNodeId, state.selectedRunId, selectedProblem?.source_sequence, selectedRun?.last_sequence]);
 
   useEffect(() => {
     if (state.activeView !== 'context' || !state.selectedRunId || !client.getContextFrame) return;

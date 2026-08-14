@@ -48,7 +48,10 @@ function fixtureClient(): Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPag
 }
 
 describe('App shell', () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    window.history.replaceState({}, '', '/');
+  });
   it('renders the approved four-region hierarchy and business tab as selected', async () => {
     render(<App client={fixtureClient()} />);
 
@@ -165,6 +168,25 @@ describe('App shell', () => {
     fireEvent.change(screen.getByLabelText('Event sequence'), { target: { value: '42' } });
 
     await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 42, expect.any(AbortSignal)));
+    expect(await screen.findByText(/state at sequence 42/i)).toBeVisible();
+  });
+
+  it('keeps a scrubbed context sequence after selecting a business problem', async () => {
+    const getContextFrame = vi.fn(async (_id: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+    }));
+    render(<App client={{ ...fixtureClient(), getContextFrame }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Q7.*overview segment/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Context' }));
+    await screen.findByText(/state at sequence 59/i);
+    fireEvent.change(screen.getByLabelText('Event sequence'), { target: { value: '42' } });
+
+    await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 42, expect.any(AbortSignal)));
+    expect(getContextFrame.mock.calls.map(([, sequence]) => sequence)).not.toContain(78);
     expect(await screen.findByText(/state at sequence 42/i)).toBeVisible();
   });
 
