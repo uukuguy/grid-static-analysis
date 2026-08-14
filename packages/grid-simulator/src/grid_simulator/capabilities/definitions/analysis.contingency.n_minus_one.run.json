@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_analysis_contingency_n_minus_one",
+  "availability": "published",
   "title": "Run N-1 static contingency analysis",
   "purpose": "Run deterministic single-branch outage checks against an immutable opened context and persist every scenario before returning the aggregate.",
   "applies_to": ["single branch outage screening", "static security analysis", "post-powerflow overload checks"],
@@ -148,6 +149,14 @@
     "powerflow_non_converged": ["inspect_network_diagnostics", "change_solver_profile", "report_non_convergence"],
     "powerflow_failed": ["report failure instead of estimating numeric values"],
     "persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active", "constraints.model"],
+    "produces_state": ["scenarios.contingency", "calculations.contingency"],
+    "invalidates_state": [],
+    "result_kind": "contingency.n_minus_one",
+    "projector": "contingency-n1-v1"
   },
   "state_effect": "creates_result",
   "evidence_required": true,

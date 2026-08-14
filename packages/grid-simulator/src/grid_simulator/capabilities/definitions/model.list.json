@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_model_list",
+  "availability": "published",
   "title": "List supported grid models",
   "purpose": "Return the deterministic set of grid models that can be opened by the simulator.",
   "applies_to": ["model discovery", "unsupported model recovery", "planning an analysis context"],
@@ -46,6 +47,14 @@
   "errors": ["catalog_unavailable"],
   "recovery": {
     "catalog_unavailable": ["report the supported-model catalog failure"]
+  },
+  "context_effect": {
+    "requires_state": [],
+    "consumes_state": ["capabilities.catalog"],
+    "produces_state": ["model.catalog"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "model-catalog-v1"
   },
   "state_effect": "none",
   "evidence_required": false,

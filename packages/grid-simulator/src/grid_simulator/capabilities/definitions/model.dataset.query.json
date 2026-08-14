@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_model_dataset_query",
+  "availability": "published",
   "title": "Query a model dataset",
   "purpose": "Query curated bus or branch dataset rows with dataset-specific field selection.",
   "applies_to": ["bus data lookup", "branch data lookup", "bounded table queries"],
@@ -225,6 +226,14 @@
     "field_unavailable": ["call model.dataset.describe and select only supported fields"],
     "where_field_unavailable": ["use supported equality predicate keys from model.dataset.describe"],
     "sort_field_unselected": ["include the sort field in select"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active"],
+    "produces_state": ["model.observation"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "model-observation-v1"
   },
   "state_effect": "none",
   "evidence_required": false,

@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_model_element_get",
+  "availability": "published",
   "title": "Get a model element",
   "purpose": "Resolve a user-addressed network element to a stable asset reference and curated attributes.",
   "applies_to": ["line index lookup", "bus lookup", "stable asset reference resolution"],
@@ -63,6 +64,14 @@
     "unknown_context": ["call context.open for a supported model"],
     "unsupported_element": ["choose bus, line, trafo, or trafo3w"],
     "unknown_element": ["call model.dataset.query to inspect available elements"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active"],
+    "produces_state": ["model.observation"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "model-observation-v1"
   },
   "state_effect": "none",
   "evidence_required": false,

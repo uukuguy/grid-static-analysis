@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_topology_branch_endpoints",
+  "availability": "published",
   "title": "Get branch endpoints",
   "purpose": "Return the two endpoint buses for a line or transformer branch in an opened context.",
   "applies_to": ["line endpoint questions", "branch-to-bus topology lookup", "pre-contingency verification"],
@@ -81,6 +82,14 @@
     "unknown_branch": ["resolve the line or transformer with model.element.get"],
     "unsupported_branch_kind": ["use a line, trafo, or trafo3w branch reference"],
     "evidence_persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active"],
+    "produces_state": ["topology.observation"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "topology-observation-v1"
   },
   "state_effect": "none",
   "evidence_required": true,

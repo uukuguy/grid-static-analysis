@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_evidence_get",
+  "availability": "published",
   "title": "Get persisted evidence",
   "purpose": "Retrieve a persisted simulator evidence document by reference so final answers can cite concrete artifacts.",
   "applies_to": ["evidence retrieval", "answer grounding", "artifact inspection"],
@@ -79,6 +80,14 @@
   "recovery": {
     "unknown_evidence": ["do not claim evidence; rerun the producing capability if calculation is required"],
     "artifact_unreadable": ["report the unreadable artifact and preserve the original reference"]
+  },
+  "context_effect": {
+    "requires_state": [],
+    "consumes_state": ["artifacts.evidence"],
+    "produces_state": ["artifacts.observation"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "artifact-observation-v1"
   },
   "state_effect": "none",
   "evidence_required": false,

@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_model_dataset_describe",
+  "availability": "published",
   "title": "Describe a model dataset",
   "purpose": "Describe selectable fields and row counts for supported network datasets in an opened context.",
   "applies_to": ["bus table inspection", "branch table inspection", "dataset planning"],
@@ -56,6 +57,14 @@
   "recovery": {
     "unknown_context": ["call context.open for a supported model"],
     "unsupported_dataset": ["choose network.buses or network.branches"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active"],
+    "produces_state": ["model.observation"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "model-observation-v1"
   },
   "state_effect": "none",
   "evidence_required": false,

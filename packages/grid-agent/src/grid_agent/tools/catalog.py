@@ -67,7 +67,19 @@ class ToolCatalog:
         missing = [capability_id for capability_id in executable_ids if capability_id not in by_id]
         if missing:
             raise ToolCatalogError(f"missing capability documents: {', '.join(missing)}")
-        return cls.from_documents([by_id[capability_id] for capability_id in executable_ids])
+        selected = [by_id[capability_id] for capability_id in executable_ids]
+        environment_by_id = {
+            str(item["id"]): item for item in executable if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        for document in selected:
+            capability_id = str(document["id"])
+            if document.get("availability") != "published":
+                raise ToolCatalogError(f"executable capability {capability_id} is not published")
+            announced = environment_by_id[capability_id]
+            for field in ("availability", "context_effect"):
+                if field in announced and announced[field] != document.get(field):
+                    raise ToolCatalogError(f"environment {field} does not match capability document: {capability_id}")
+        return cls.from_documents(selected)
 
     def require(self, name: str) -> ToolDocument:
         try:
@@ -116,6 +128,8 @@ def _validate_document(document: dict[str, object]) -> None:
     required = (
         "id",
         "tool_name",
+        "availability",
+        "context_effect",
         "purpose",
         "applies_to",
         "not_for",
@@ -132,6 +146,28 @@ def _validate_document(document: dict[str, object]) -> None:
         raise ToolCatalogError("capability id is invalid")
     if not isinstance(document["tool_name"], str) or not _TOOL_NAME_PATTERN.fullmatch(document["tool_name"]):
         raise ToolCatalogError("tool_name is invalid")
+    if document["availability"] != "published":
+        raise ToolCatalogError(f"capability {document['id']} is not published")
+    context_effect = document["context_effect"]
+    if not isinstance(context_effect, dict):
+        raise ToolCatalogError("context_effect must be an object")
+    required_context_fields = {
+        "requires_state",
+        "consumes_state",
+        "produces_state",
+        "invalidates_state",
+        "result_kind",
+        "projector",
+    }
+    if set(context_effect) != required_context_fields:
+        raise ToolCatalogError("context_effect fields are invalid")
+    for field in ("requires_state", "consumes_state", "produces_state", "invalidates_state"):
+        if not isinstance(context_effect[field], list) or not all(isinstance(item, str) for item in context_effect[field]):
+            raise ToolCatalogError(f"context_effect.{field} must be a list of strings")
+    if context_effect["result_kind"] is not None and not isinstance(context_effect["result_kind"], str):
+        raise ToolCatalogError("context_effect.result_kind must be a string or null")
+    if not isinstance(context_effect["projector"], str) or not context_effect["projector"]:
+        raise ToolCatalogError("context_effect.projector is required")
     if not isinstance(document["purpose"], str) or not document["purpose"].strip():
         raise ToolCatalogError("purpose is required")
     for field in ("applies_to", "not_for", "requires", "produces", "common_next"):

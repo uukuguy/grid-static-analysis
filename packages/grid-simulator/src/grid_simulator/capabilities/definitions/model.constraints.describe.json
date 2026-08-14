@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_model_constraints_describe",
+  "availability": "published",
   "title": "Describe model-owned operating constraints",
   "purpose": "Return voltage and loading bounds explicitly stored in the opened pandapower model, with current-run network-fact evidence.",
   "applies_to": ["model voltage bounds", "model loading bounds", "constraint source verification"],
@@ -69,6 +70,14 @@
     "unknown_context": ["call context.open for a supported model"],
     "context_integrity_failed": ["reopen the registered model context"],
     "evidence_persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active"],
+    "produces_state": ["constraints.model"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "model-constraints-v1"
   },
   "state_effect": "none",
   "evidence_required": true,

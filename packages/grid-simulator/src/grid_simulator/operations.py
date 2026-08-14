@@ -26,6 +26,7 @@ from grid_simulator.analyses import (
     run_n_minus_one,
 )
 from grid_simulator.capabilities import CapabilityRegistry
+from grid_simulator.capabilities.families import CAPABILITY_FAMILIES
 from grid_simulator.capabilities.schema import CapabilityContract
 from grid_simulator.constraints import describe_model_constraints
 from grid_simulator.engine import Pandapower340Engine
@@ -140,10 +141,18 @@ def _environment_describe(registry: CapabilityRegistry) -> dict[str, Any]:
         "simulator": "grid-simulator",
         "pandapower_version": "3.4.0",
         "executable_capabilities": [
-            {"id": contract.id, "tool_name": contract.tool_name, "title": contract.title, "risk": contract.risk}
+            {
+                "id": contract.id,
+                "tool_name": contract.tool_name,
+                "title": contract.title,
+                "risk": contract.risk,
+                "availability": contract.availability,
+                "context_effect": contract.context_effect.model_dump(mode="json"),
+            }
             for contract in registry.list()
             if contract.id in EXECUTABLE_CAPABILITIES
         ],
+        "capability_families": [family.model_dump(mode="json") for family in CAPABILITY_FAMILIES],
     }
 
 

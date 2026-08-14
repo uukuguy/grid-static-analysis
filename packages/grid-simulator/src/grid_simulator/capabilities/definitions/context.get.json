@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_context_get",
+  "availability": "published",
   "title": "Get opened grid context metadata",
   "purpose": "Return deterministic metadata for an already opened network context without running calculations.",
   "applies_to": ["context lookup", "model size checks", "reference validation"],
@@ -45,6 +46,14 @@
   "errors": ["unknown_context"],
   "recovery": {
     "unknown_context": ["call context.open with a supported model id"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active"],
+    "produces_state": ["model.active"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "model-context-v1"
   },
   "state_effect": "none",
   "evidence_required": false,

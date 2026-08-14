@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_context_open",
+  "availability": "published",
   "title": "Open a supported grid model",
   "purpose": "Create a deterministic context reference for a supported pandapower network model.",
   "applies_to": ["loading IEEE-39", "creating a context reference", "starting simulator-backed analysis"],
@@ -50,6 +51,14 @@
   "recovery": {
     "model_not_found": ["call model.list and choose a supported model id"],
     "persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "context_effect": {
+    "requires_state": [],
+    "consumes_state": ["model.catalog"],
+    "produces_state": ["model.active"],
+    "invalidates_state": ["model.active"],
+    "result_kind": null,
+    "projector": "model-context-v1"
   },
   "state_effect": "creates_context",
   "evidence_required": true,

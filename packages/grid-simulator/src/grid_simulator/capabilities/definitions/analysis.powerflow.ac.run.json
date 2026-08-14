@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_analysis_powerflow_ac",
+  "availability": "published",
   "title": "Run AC power flow",
   "purpose": "Run pandapower 3.4.0 AC load flow for an immutable opened network context and persist a normalized result artifact.",
   "applies_to": ["AC steady-state load flow", "active loss calculation", "branch loading calculation"],
@@ -82,6 +83,14 @@
     "powerflow_non_converged": ["inspect_network_diagnostics", "change_solver_profile", "report_non_convergence"],
     "powerflow_failed": ["report failure instead of estimating numeric values"],
     "persist_failed": ["retry after checking run workspace permissions"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active", "model.operating_state", "solver.profile"],
+    "produces_state": ["calculations.powerflow"],
+    "invalidates_state": [],
+    "result_kind": "powerflow.ac",
+    "projector": "powerflow-ac-v1"
   },
   "state_effect": "creates_result",
   "evidence_required": true,

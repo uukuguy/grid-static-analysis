@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_topology_components_get",
+  "availability": "published",
   "title": "Get topology components",
   "purpose": "Return connected component summaries for the opened network topology.",
   "applies_to": ["island detection", "connected component summaries", "topology sanity checks"],
@@ -56,6 +57,14 @@
   "recovery": {
     "unknown_context": ["call context.open for a supported model"],
     "topology_unavailable": ["report that components could not be derived from the model topology"]
+  },
+  "context_effect": {
+    "requires_state": ["model.active"],
+    "consumes_state": ["model.active"],
+    "produces_state": ["topology.observation"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "topology-observation-v1"
   },
   "state_effect": "none",
   "evidence_required": false,

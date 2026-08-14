@@ -40,6 +40,13 @@ def test_contracts_have_unique_ids_and_tool_names() -> None:
     assert len({contract.tool_name for contract in contracts}) == len(contracts)
 
 
+def test_every_contract_declares_context_effect() -> None:
+    for contract in CapabilityRegistry.load_packaged().list():
+        assert contract.availability == "published"
+        assert contract.context_effect.projector
+        assert contract.context_effect.produces_state or contract.context_effect.consumes_state
+
+
 @pytest.mark.parametrize("identifier", EXPECTED_IDS)
 def test_contracts_include_semantic_terms_and_composition(identifier: str) -> None:
     contract = CapabilityRegistry.load_packaged().require(identifier)

@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_result_branches_rank",
+  "availability": "published",
   "title": "Rank branch result rows",
   "purpose": "Rank branch rows from a persisted current-run AC result by an explicit numeric metric without rerunning power flow.",
   "applies_to": ["highest loading lines", "largest active losses", "post-powerflow screening"],
@@ -65,6 +66,14 @@
     "result_integrity_failed": ["rerun analysis.powerflow.ac.run and use the new result_ref"],
     "invalid_metric": ["choose loading_percent, p_from_mw, p_to_mw, or pl_mw"],
     "invalid_limit": ["use a limit between 1 and 100"]
+  },
+  "context_effect": {
+    "requires_state": ["calculations.powerflow"],
+    "consumes_state": ["calculations.powerflow"],
+    "produces_state": ["calculations.result_view"],
+    "invalidates_state": [],
+    "result_kind": "result_view.branch_ranking",
+    "projector": "result-view-v1"
   },
   "state_effect": "none",
   "evidence_required": true,

@@ -72,6 +72,15 @@ def test_catalog_rejects_schema_drift() -> None:
                 {
                     "id": "bad.capability",
                     "tool_name": "grid_bad",
+                    "availability": "published",
+                    "context_effect": {
+                        "requires_state": [],
+                        "consumes_state": ["test.input"],
+                        "produces_state": ["test.output"],
+                        "invalidates_state": [],
+                        "result_kind": None,
+                        "projector": "test-v1",
+                    },
                     "purpose": "test",
                     "applies_to": [],
                     "not_for": [],
@@ -82,4 +91,17 @@ def test_catalog_rejects_schema_drift() -> None:
                     "recovery": {},
                 }
             ]
+        )
+
+
+def test_catalog_rejects_non_published_executable_document(
+    capability_documents: tuple[dict[str, object], ...],
+) -> None:
+    environment = next(item for item in capability_documents if item["id"] == "environment.describe")
+    unpublished = {**environment, "availability": "not_published"}
+
+    with pytest.raises(ToolCatalogError, match="not published"):
+        ToolCatalog.from_environment(
+            [unpublished],
+            {"executable_capabilities": [{"id": "environment.describe"}]},
         )

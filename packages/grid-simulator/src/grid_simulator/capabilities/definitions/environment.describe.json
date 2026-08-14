@@ -3,6 +3,7 @@
   "version": "1.0",
   "package": "grid_simulator",
   "tool_name": "grid_environment_describe",
+  "availability": "published",
   "title": "Describe simulator environment",
   "purpose": "Return the simulator protocol, engine, and capability catalog so a caller can plan tool usage without calculations.",
   "applies_to": ["capability discovery", "runtime readiness", "tool planning"],
@@ -20,7 +21,7 @@
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["protocol", "protocol_version", "simulator", "pandapower_version", "executable_capabilities"],
+    "required": ["protocol", "protocol_version", "simulator", "pandapower_version", "executable_capabilities", "capability_families"],
     "properties": {
       "protocol": {"type": "string", "enum": ["grid-capability"]},
       "protocol_version": {"type": "string", "enum": ["1.0"]},
@@ -31,12 +32,39 @@
         "items": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "tool_name", "title", "risk"],
+          "required": ["id", "tool_name", "title", "risk", "availability", "context_effect"],
           "properties": {
             "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"},
             "tool_name": {"type": "string", "pattern": "^grid_[a-z0-9_]+$"},
             "title": {"type": "string", "minLength": 1},
-            "risk": {"type": "string", "enum": ["catalog", "read_only_model", "read_only_analysis"]}
+            "risk": {"type": "string", "enum": ["catalog", "read_only_model", "read_only_analysis"]},
+            "availability": {"type": "string", "enum": ["published"]},
+            "context_effect": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["requires_state", "consumes_state", "produces_state", "invalidates_state", "result_kind", "projector"],
+              "properties": {
+                "requires_state": {"type": "array", "items": {"type": "string"}},
+                "consumes_state": {"type": "array", "items": {"type": "string"}},
+                "produces_state": {"type": "array", "items": {"type": "string"}},
+                "invalidates_state": {"type": "array", "items": {"type": "string"}},
+                "result_kind": {"type": ["string", "null"]},
+                "projector": {"type": "string"}
+              }
+            }
+          }
+        }
+      },
+      "capability_families": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "availability", "reason"],
+          "properties": {
+            "id": {"type": "string"},
+            "availability": {"type": "string", "enum": ["published", "not_published"]},
+            "reason": {"type": "string"}
           }
         }
       }
@@ -49,6 +77,14 @@
   "errors": ["catalog_unavailable"],
   "recovery": {
     "catalog_unavailable": ["report the environment discovery failure without running analysis"]
+  },
+  "context_effect": {
+    "requires_state": [],
+    "consumes_state": ["runtime.catalog"],
+    "produces_state": ["capabilities.catalog"],
+    "invalidates_state": [],
+    "result_kind": null,
+    "projector": "capability-catalog-v1"
   },
   "state_effect": "none",
   "evidence_required": false,
