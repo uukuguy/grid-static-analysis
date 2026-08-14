@@ -15,6 +15,7 @@ from grid_agent.trajectory.projection_models import (
     ProjectionDiagnostic,
 )
 from grid_agent.trajectory.replay import ImportedRunEvent, SourceCoordinate
+from grid_agent.trajectory.service import ProjectionService
 
 
 def test_imported_event_keeps_null_time_and_importer_integrity_label() -> None:
@@ -40,6 +41,16 @@ def test_imported_event_keeps_null_time_and_importer_integrity_label() -> None:
     assert event.schema_version == "grid-run-import-event/1.0"
     assert event.timestamp is None
     assert event.source.integrity == "importer-integrity"
+
+
+def test_projection_service_opens_legacy_run_without_writing_source(tmp_path) -> None:
+    from .test_legacy_v02 import _fixture, _digests
+
+    run = _fixture(tmp_path)
+    before = _digests(run)
+    projected = ProjectionService(tmp_path / ".grid-agent/trajectory-cache").open_run(run)
+    assert projected.analysis_id == "analysis-old"
+    assert _digests(run) == before
 
 
 def test_imported_event_rejects_native_integrity_claim() -> None:
