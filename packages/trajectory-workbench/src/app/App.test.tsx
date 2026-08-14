@@ -171,6 +171,16 @@ describe('App shell', () => {
       .toHaveAttribute('data-focused-turn', 'analysis-test-t007');
   });
 
+  it('keeps timeline controls outside its SVG visual', async () => {
+    render(<App client={fixtureClient()} />);
+
+    const segment = await screen.findByRole('button', { name: /Q7.*overview segment/i });
+    const visual = screen.getByLabelText('Run turn overview');
+
+    expect(segment.tagName).toBe('BUTTON');
+    expect(visual.querySelector('[role="button"], button, [tabindex]:not([tabindex="-1"])')).toBeNull();
+  });
+
   it('persists a selected trajectory item in the same-origin deep link', async () => {
     window.history.replaceState({}, '', '/');
     render(<App client={fixtureClient()} />);
