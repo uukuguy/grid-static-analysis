@@ -364,7 +364,7 @@ def _analysis_report_envelope(outcome: AnalysisOutcome, project_root: Path) -> A
     if outcome.status == "completed":
         answer_output = _project_relative(outcome.report_path, project_root)
     else:
-        answer_output = f"执行限制 / execution limitation: {outcome.error or 'analysis failed'}"
+        answer_output = f"分析未完成；部分报告已保存：{_project_relative(outcome.report_path, project_root)}"
     return AnswerEnvelope(question_id=outcome.analysis_id, answer_output=answer_output)
 
 

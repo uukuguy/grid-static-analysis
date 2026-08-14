@@ -264,6 +264,7 @@ def test_runner_reuses_one_pi_process_and_injects_finalized_prior_context(runner
     assert '"model_id":"ieee39"' in runner_harness.pi.prompts[1]
     assert '"quantity":"bus.vm_pu"' in runner_harness.pi.prompts[1]
     assert "后续指令省略模型、场景或结果时" in runner_harness.pi.prompts[1]
+    assert "不得写入 context/result/evidence/asset/constraint 等内部引用 ID" in runner_harness.pi.prompts[1]
     assert outcome.status == "completed"
     assert runner_harness.store.snapshot.turns[1].consumed_refs == [RESULT_REF]
 

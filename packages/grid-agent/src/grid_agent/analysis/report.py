@@ -849,11 +849,20 @@ def _reader_diagnostic(message: str) -> str:
 
 
 def _redact_internal_refs(value: str) -> str:
-    return re.sub(
-        r"(?:context|revision|result|evidence|observation):sha256:[0-9a-f]{4,64}(?:\.\.\.)?|asset:[^\s:]+:sha256:[0-9a-f]{4,64}",
-        "〔可追溯引用〕",
-        value,
+    reference = (
+        r"(?:context|revision|result|evidence|observation|constraint):"
+        r"sha256:[0-9a-f]{4,64}(?:\.\.\.)?"
+        r"|asset:[^\s:]+:sha256:[0-9a-f]{4,64}"
     )
+    cleaned = re.sub(rf"[（(]\s*(?:{reference})\s*[）)]", "", value)
+    cleaned = re.sub(rf"[，,]\s*上下文\s+(?:{reference})", "", cleaned)
+    cleaned = re.sub(rf"(?:[，,]\s*)?证据引用\s+(?:{reference})", "", cleaned)
+    cleaned = re.sub(reference, "", cleaned)
+    cleaned = re.sub(r"[（(]\s*(?:[，,；;、]|与|和|\s)*[）)]", "", cleaned)
+    cleaned = re.sub(r"([，,；;])\s*(?:与|和|、)\s*(?=[，,；;。．）)])", r"\1", cleaned)
+    cleaned = re.sub(r"\s+([，。；：,.!?])", r"\1", cleaned)
+    cleaned = re.sub(r"([。．])(?:\s*[。．])+", r"\1", cleaned)
+    return cleaned
 
 
 def _tool_label(capability: str) -> str:
@@ -980,7 +989,7 @@ def _accepted_answer_text(
             return str(document["answer_output"])
         return "接受答案文件不可读；请复核注册路径。"
     if limitations:
-        return "执行限制 / execution limitation: " + limitations[0].message
+        return "本题未生成回答：" + _reader_diagnostic(limitations[0].message)
     return "本回合未注册接受答案。"
 
 

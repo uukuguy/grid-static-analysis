@@ -225,7 +225,25 @@ def test_projector_requires_start_for_success_but_not_for_normal_failure(
         ),
         turn_id="analysis-test-t001",
     )
-    assert context_harness.store.snapshot.unresolved_limitations
+
+
+def test_projector_ignores_answer_submission_orchestration_tool(
+    context_harness: ContextHarness,
+) -> None:
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    revision_before = context_harness.store.snapshot.revision
+
+    context_harness.projector.observe(
+        tool_start("submit-1", "grid_submit_answer", {"answer_output": "答案"}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result("submit-1", "grid_submit_answer", {"turn_id": "analysis-test-t001"}),
+        turn_id="analysis-test-t001",
+    )
+
+    assert context_harness.store.snapshot.revision == revision_before
+    assert not context_harness.store.snapshot.unresolved_limitations
 
 
 def test_projector_failed_ranking_with_unknown_result_ref_records_limitation(

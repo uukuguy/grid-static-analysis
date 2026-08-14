@@ -29,6 +29,8 @@ _TOOL_NAME_TO_CAPABILITY: Mapping[str, str] = {
     "grid_analysis_contingency_n_minus_one": "analysis.contingency.n_minus_one.run",
 }
 
+_ORCHESTRATION_CAPABILITIES = frozenset({"grid_submit_answer"})
+
 
 class AnalysisContextProjector:
     """Project canonical semantic tool events into the analysis context store."""
@@ -59,6 +61,10 @@ class AnalysisContextProjector:
         if not isinstance(capability, str):
             return
         call_id = _tool_call_id(event)
+        if capability in _ORCHESTRATION_CAPABILITIES:
+            if call_id is not None:
+                self._starts.pop(call_id, None)
+            return
         result = event.get("result")
         if not isinstance(result, Mapping):
             result = {}

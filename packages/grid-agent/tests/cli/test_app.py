@@ -72,6 +72,33 @@ def test_analysis_cli_emits_one_envelope_and_uses_self_contained_paths(
     assert (analysis_root / "context/analysis-context.json").is_file()
 
 
+def test_failed_analysis_envelope_points_to_partial_report(
+    cli_harness: tuple[CliRunner, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, instructions = cli_harness
+
+    def failed_analysis(**kwargs: Any) -> AnalysisOutcome:
+        completed = _fake_execute_analysis(**kwargs)
+        return AnalysisOutcome(
+            analysis_id=completed.analysis_id,
+            status="failed",
+            report_path=completed.report_path,
+            completed_turns=4,
+            total_turns=9,
+            error="PiProtocolError: Pi provider failure: terminated",
+        )
+
+    monkeypatch.setattr("grid_agent.cli.app._execute_analysis", failed_analysis)
+
+    result = runner.invoke(app, ["analysis", "--instructions", str(instructions)])
+
+    assert result.exit_code == 1
+    envelope = AnswerEnvelope.model_validate_json(result.stdout)
+    assert envelope.answer_output == "分析未完成；部分报告已保存：runs/analysis-test/report.md"
+    assert "execution limitation" not in result.stdout
+
+
 def test_report_command_delegates_to_analysis_without_child_run(
     cli_harness: tuple[CliRunner, Path],
     monkeypatch: pytest.MonkeyPatch,

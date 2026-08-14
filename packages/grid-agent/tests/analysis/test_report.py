@@ -116,9 +116,42 @@ def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: Rep
         environment={},
     )
 
-    assert "接受答案保持原文 〔可追溯引用〕" in report
+    assert "接受答案保持原文" in report
+    assert "〔可追溯引用〕" not in report
+    assert "result:sha256:" not in report
     assert "## 审计复核" in report
     assert "模型草稿（未采纳）" not in report
+
+
+def test_report_elides_internal_ids_without_leaving_reference_placeholders(
+    report_fixture: ReportFixture,
+) -> None:
+    answer_path = report_fixture.workspace.turn_path(1) / "answer.json"
+    answer_path.write_text(
+        json.dumps(
+            {
+                "question_id": f"{report_fixture.workspace.analysis_id}-t001",
+                "answer_output": (
+                    "IEEE-39（pandapower case39，上下文 " + BASELINE_REF + "）中，"
+                    "线路11（" + "asset:line:sha256:" + "6" * 64 + "）连接母线6与母线11。"
+                    "证据引用 " + EVIDENCE_REF + "。"
+                ),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+
+    assert "IEEE-39（pandapower case39）中，线路11连接母线6与母线11。" in report
+    assert "证据引用" not in report
+    assert "〔可追溯引用〕" not in report
+    assert "sha256:" not in report.split("<details>", maxsplit=1)[0]
 
 
 def test_report_renders_failed_turns_and_unresolved_limitations(report_fixture: ReportFixture) -> None:
@@ -129,7 +162,8 @@ def test_report_renders_failed_turns_and_unresolved_limitations(report_fixture: 
     )
 
     assert "状态：未完成" in report
-    assert "执行限制 / execution limitation: solver unavailable" in report
+    assert "本题未生成回答：solver unavailable" in report
+    assert "执行限制 / execution limitation" not in report
     assert "## 审计复核" in report
     assert "solver unavailable" in report
 

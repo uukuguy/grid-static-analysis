@@ -316,6 +316,8 @@ class AnalysisRunner:
             "网络与数值结论只能来自已发布 grid tools 或其中登记的可复用结果。"
             "判断正常、越限或风险时必须指出约束来源；没有约束时只报告原始值，不得猜测阈值。"
             "not_published、not_applicable、prerequisite_missing 和计算失败必须分别说明，不得统称执行限制。"
+            "grid_submit_answer 的 answer_output 面向报告读者，不得写入 context/result/evidence/asset/constraint 等内部引用 ID；"
+            "可追溯关系由运行系统单独登记。"
             "\n\n"
             "<analysis_context_view>\n"
             f"{context_view.rstrip()}\n"
