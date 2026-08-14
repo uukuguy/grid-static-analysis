@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from pydantic import ValidationError
 
 from grid_agent.trajectory.events import EventSource, RunScope
 from grid_agent.trajectory.projection_models import (
+    ArtifactIndex,
     ArtifactIndexRecord,
     BusinessNode,
     ContextCheckpoint,
@@ -68,11 +71,53 @@ def test_projection_nodes_require_provenance_for_derived_source() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("model", "kwargs"),
+    [
+        (
+            ContextFrame,
+            {
+                "id": "context-1",
+                "source_sequences": (1,),
+                "source_sequence": 1,
+                "before_revision": 0,
+                "after_revision": 1,
+                "before_state_hash": "sha256:" + "a" * 64,
+                "after_state_hash": "sha256:" + "b" * 64,
+                "before_state": {},
+                "delta": {},
+                "after_state": {},
+                "request_artifact_ref": "artifact:request",
+            },
+        ),
+        (
+            ProjectionDiagnostic,
+            {
+                "id": "diagnostic-1",
+                "source_sequences": (1,),
+                "severity": "warning",
+                "code": "missing",
+                "message": "Unavailable",
+            },
+        ),
+    ],
+)
+def test_default_derived_projection_nodes_require_nonempty_rule_id(
+    model: type[object], kwargs: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError, match="rule_id"):
+        model(**kwargs)  # type: ignore[operator]
+
+    with pytest.raises(ValidationError, match="rule_id"):
+        model(rule_id="", **kwargs)  # type: ignore[operator]
+
+
 def test_context_frame_requires_ordered_revisions_and_reason_for_missing_request() -> None:
     with pytest.raises(ValidationError, match="before_revision"):
         ContextFrame(
             id="context-invalid-revision",
             source_sequences=(1,),
+            rule_id="context-frame.v1",
             source_sequence=1,
             before_revision=2,
             after_revision=1,
@@ -87,6 +132,7 @@ def test_context_frame_requires_ordered_revisions_and_reason_for_missing_request
         ContextFrame(
             id="context-missing-request",
             source_sequences=(1,),
+            rule_id="context-frame.v1",
             source_sequence=1,
             before_revision=0,
             after_revision=1,
@@ -173,6 +219,7 @@ def test_context_frame_states_are_deeply_immutable_and_json_compatible() -> None
     frame = ContextFrame(
         id="context-1",
         source_sequences=(1,),
+        rule_id="context-frame.v1",
         source_sequence=1,
         before_revision=0,
         after_revision=1,
@@ -190,6 +237,28 @@ def test_context_frame_states_are_deeply_immutable_and_json_compatible() -> None
         frame.before_state["nested"]["values"].append("mutated")
     assert frame.model_dump(mode="json")["after_state"] == {
         "nested": {"values": ["after"]}
+    }
+
+
+def test_artifact_index_records_are_deeply_immutable_and_json_compatible() -> None:
+    record = ArtifactIndexRecord(
+        id="artifact-record-1",
+        source_sequences=(1,),
+        reference="artifact:request",
+        kind="request",
+        relative_path="requests/request/input.json",
+        sha256="a" * 64,
+        verification_status="verified",
+    )
+    index = ArtifactIndex(analysis_id="analysis-1", records={record.reference: record})
+    records = cast(dict[str, ArtifactIndexRecord], index.records)
+
+    with pytest.raises(TypeError):
+        records[record.reference] = record
+    with pytest.raises(TypeError):
+        records.update({"artifact:other": record})
+    assert index.model_dump(mode="json")["records"] == {
+        "artifact:request": record.model_dump(mode="json")
     }
 
 

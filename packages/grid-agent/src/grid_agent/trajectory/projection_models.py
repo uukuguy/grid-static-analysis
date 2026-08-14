@@ -49,6 +49,7 @@ class ProjectionNode(StrictFrozenModel):
     id: str = Field(min_length=1)
     source: NodeSource
     source_sequences: tuple[int, ...] = ()
+    rule_id: str | None = Field(default=None, min_length=1)
     status: LifecycleStatus
     unavailable_reason: str | None = None
 
@@ -58,6 +59,10 @@ class ProjectionNode(StrictFrozenModel):
             raise ValueError("projection node requires source_sequences")
         if any(sequence < 1 for sequence in self.source_sequences):
             raise ValueError("source_sequences must contain positive sequence numbers")
+        if self.source == "derived" and self.rule_id is None:
+            raise ValueError("derived node requires rule_id")
+        if self.source != "derived" and self.rule_id is not None:
+            raise ValueError("observed or agent-declared node must not have rule_id")
         return self
 
 
@@ -124,7 +129,6 @@ class AgentTrajectory(StrictFrozenModel):
 
 
 class BusinessNode(ProjectionNode):
-    rule_id: str | None = None
     kind: str = Field(min_length=1)
     title: str = Field(min_length=1)
     detail: str | None = None
@@ -137,15 +141,6 @@ class BusinessNode(ProjectionNode):
             if not value.get("source_sequences") or not value.get("rule_id"):
                 raise ValueError("derived node requires source_sequences and rule_id")
         return value
-
-    @model_validator(mode="after")
-    def require_derived_provenance(self) -> "BusinessNode":
-        if self.source == "derived" and (not self.rule_id or not self.source_sequences):
-            raise ValueError("derived node requires source_sequences and rule_id")
-        if self.source != "derived" and self.rule_id is not None:
-            raise ValueError("observed or agent-declared node must not have rule_id")
-        return self
-
 
 class BusinessProblem(ProjectionNode):
     turn_id: str = Field(min_length=1)
@@ -237,6 +232,11 @@ class ArtifactIndexRecord(ProjectionNode):
 class ArtifactIndex(StrictFrozenModel):
     analysis_id: str = Field(min_length=1)
     records: Mapping[str, ArtifactIndexRecord] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def freeze_records(self) -> "ArtifactIndex":
+        object.__setattr__(self, "records", _deep_freeze(self.records))
+        return self
 
 
 class ProjectionDiagnostic(ProjectionNode):
