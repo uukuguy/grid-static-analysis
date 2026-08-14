@@ -116,6 +116,33 @@ export interface ContextFrameWithoutRequest extends ContextFrameBase {
 
 export type ContextFrame = ContextFrameWithRequest | ContextFrameWithoutRequest;
 
+/** Evidence is a typed, declared graph; UI code never derives links from answer prose. */
+export type EvidenceNodeType = 'claim' | 'decision' | 'result' | 'evidence' | 'scenario' | 'tool' | 'model-revision';
+export type EvidenceIntegrity = 'verified' | 'declared' | 'unavailable' | 'stale';
+
+export interface EvidenceNode {
+  ref: string;
+  type: EvidenceNodeType;
+  label: string;
+  source: NodeSource;
+  integrity: EvidenceIntegrity;
+  producing_sequence: number | null;
+  consumers: number;
+  artifact_ref: string | null;
+  unavailable_reason: string | null;
+}
+
+export interface EvidenceRelation {
+  from_ref: string;
+  to_ref: string;
+  relation: string;
+}
+
+export interface EvidenceIndex {
+  nodes: EvidenceNode[];
+  relations: EvidenceRelation[];
+}
+
 export interface RunSummary {
   analysis_id: string;
   status: string;
