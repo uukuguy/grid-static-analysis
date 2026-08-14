@@ -8,3 +8,4 @@
 | `JOURNAL.md` | Append-only durable event log. |
 | `RESUME-NEXT-SESSION.md` | Current recovery baton. |
 | `INDEX.md` | This discovery index. |
+| `DECISIONS.md` | Active architectural decision ledger. |
