@@ -117,6 +117,31 @@ describe('App shell', () => {
     expect(screen.getByRole('region', { name: 'Run overview timeline' })).toHaveAttribute('data-focused-turn', 'analysis-test-t007');
   });
 
+  it('rehydrates a persisted context deep link and fetches its exact sequence', async () => {
+    const getContextFrame = vi.fn(async (_id: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+    }));
+    window.history.replaceState({}, '', '/?node=context:42');
+    render(<App client={{ ...fixtureClient(), getContextFrame }} />);
+
+    await waitFor(() => expect(getContextFrame).toHaveBeenCalledWith('analysis-test', 42, expect.any(AbortSignal)));
+    expect(screen.getByRole('tab', { name: 'Context' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByText(/state at sequence 42/i)).toBeVisible();
+  });
+
+  it('ignores a malformed persisted context deep link without requesting a frame', async () => {
+    const getContextFrame = vi.fn();
+    window.history.replaceState({}, '', '/?node=context:not-a-sequence');
+    render(<App client={{ ...fixtureClient(), getContextFrame }} />);
+
+    await screen.findByRole('navigation', { name: 'Runs' });
+    expect(getContextFrame).not.toHaveBeenCalled();
+    expect(screen.getByRole('tab', { name: 'Business' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('fetches the older cursor once and prepends its problems before the current page', async () => {
     const getBusinessPage = vi.fn()
       .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'older-page', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })

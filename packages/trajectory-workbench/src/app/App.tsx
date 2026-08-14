@@ -32,7 +32,13 @@ export function App({ client = api }: { client?: AppClient }) {
 
   useEffect(() => {
     const selectedNode = deepLinkNode.current;
-    if (selectedNode) dispatch({ type: 'node/selected', nodeId: selectedNode });
+    if (!selectedNode) return;
+    const sequence = contextSequenceFromNodeId(selectedNode);
+    if (sequence !== null) {
+      setContextSequence(sequence);
+      dispatch({ type: 'view/selected', view: 'context' });
+    }
+    dispatch({ type: 'node/selected', nodeId: selectedNode });
   }, []);
 
   useEffect(() => {
@@ -167,4 +173,11 @@ function pageMetadata<T>(page: ProjectionPage<T>) {
 function prependProblems(older: BusinessProblem[], current: BusinessProblem[]) {
   const seen = new Set<string>();
   return [...older, ...current].filter((problem) => !seen.has(problem.id) && (seen.add(problem.id), true));
+}
+
+function contextSequenceFromNodeId(nodeId: string): number | null {
+  const match = /^context:([1-9]\d*)$/.exec(nodeId);
+  if (!match) return null;
+  const sequence = Number(match[1]);
+  return Number.isSafeInteger(sequence) ? sequence : null;
 }
