@@ -11,7 +11,7 @@
     "build": "tsc -b --pretty false && vite build",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:visual": "playwright test e2e/visual.spec.ts"
+    "test:visual": "playwright test e2e/visual.e2e.ts"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.9",
