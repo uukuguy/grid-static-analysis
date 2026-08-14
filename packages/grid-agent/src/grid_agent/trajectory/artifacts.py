@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import secrets
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
+from typing import Iterator, NoReturn
 
 from grid_agent.trajectory.canonical import canonical_json_bytes
 
@@ -19,6 +22,8 @@ KIND_LAYOUT: dict[str, tuple[str, str]] = {
     "model-response": ("requests/{identity}", "response.json"),
     "answer": ("turns/{identity}", "answer.json"),
 }
+_DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+_FILE_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW
 
 
 class ArtifactIntegrityError(RuntimeError):
@@ -40,26 +45,23 @@ class ImmutableArtifactRegistry:
     """Write and admit only safe, immutable artifacts rooted in one run."""
 
     def __init__(self, run_root: Path) -> None:
-        requested_root = Path(run_root).absolute()
-        if _contains_symlink(requested_root):
-            raise ArtifactIntegrityError("artifact run root must not be a symlink")
-        self.run_root = requested_root.resolve(strict=False)
+        self.run_root = Path(os.path.abspath(run_root))
+        _validate_directory_prefix(self.run_root)
 
     def write_json(self, kind: str, identity: str, payload: object) -> ArtifactPointer:
         """Atomically write canonical JSON once, returning a verified pointer."""
         path = self._path_for(kind, identity)
         value = canonical_json_bytes(payload)
-        self._ensure_parent(path, create=True)
-
-        existing = self._read_if_regular(path)
-        if existing is None:
-            published = _write_bytes_atomic(path, value)
-            if not published:
-                existing = self._read_if_regular(path)
-        if existing is not None and existing != value:
-            raise ArtifactIntegrityError(
-                "artifact path already contains different content"
-            )
+        with self._open_parent(path, create=True) as (_, parent_descriptor):
+            existing = _read_regular_at(parent_descriptor, path.name)
+            if existing is None:
+                published = _write_bytes_atomic(parent_descriptor, path.name, value)
+                if not published:
+                    existing = _read_regular_at(parent_descriptor, path.name)
+            if existing is not None and existing != value:
+                raise ArtifactIntegrityError(
+                    "artifact path already contains different content"
+                )
 
         return self._pointer_for(kind, identity, path, value)
 
@@ -73,8 +75,8 @@ class ImmutableArtifactRegistry:
             raise ArtifactIntegrityError(
                 "artifact path is not the registered path for its kind and identity"
             )
-        self._ensure_parent(expected, create=False)
-        value = self._read_if_regular(expected)
+        with self._open_parent(expected, create=False) as (_, parent_descriptor):
+            value = _read_regular_at(parent_descriptor, expected.name)
         if value is None:
             raise ArtifactIntegrityError("registered artifact does not exist")
         return self._pointer_for(kind, identity, expected, value)
@@ -98,14 +100,31 @@ class ImmutableArtifactRegistry:
         if pointer.ref != f"artifact:sha256:{pointer.sha256}":
             raise ArtifactIntegrityError("artifact pointer has an invalid reference")
 
-        self._ensure_parent(path, create=False)
-        value = self._read_if_regular(path)
-        if value is None:
-            raise ArtifactIntegrityError("artifact does not exist")
-        if len(value) != pointer.size_bytes:
-            raise ArtifactIntegrityError("artifact size does not match its pointer")
-        if sha256(value).hexdigest() != pointer.sha256:
-            raise ArtifactIntegrityError("artifact digest does not match its pointer")
+        with self._open_parent(path, create=False) as (
+            root_descriptor,
+            parent_descriptor,
+        ):
+            artifact_descriptor = _open_regular_at(parent_descriptor, path.name)
+            if artifact_descriptor is None:
+                raise ArtifactIntegrityError("artifact does not exist")
+            try:
+                value = _read_descriptor(artifact_descriptor)
+                if len(value) != pointer.size_bytes:
+                    raise ArtifactIntegrityError(
+                        "artifact size does not match its pointer"
+                    )
+                if sha256(value).hexdigest() != pointer.sha256:
+                    raise ArtifactIntegrityError(
+                        "artifact digest does not match its pointer"
+                    )
+                self._verify_named_binding(
+                    path,
+                    root_descriptor=root_descriptor,
+                    parent_descriptor=parent_descriptor,
+                    artifact_descriptor=artifact_descriptor,
+                )
+            finally:
+                os.close(artifact_descriptor)
         return path
 
     def _path_for(self, kind: str, identity: str) -> Path:
@@ -161,106 +180,225 @@ class ImmutableArtifactRegistry:
             raise ArtifactIntegrityError("artifact pointer has an invalid identity")
         return identity
 
-    def _ensure_parent(self, path: Path, *, create: bool) -> None:
-        self._ensure_run_root(create=create)
+    @contextmanager
+    def _open_parent(
+        self, path: Path, *, create: bool
+    ) -> Iterator[tuple[int, int]]:
         try:
             relative = path.relative_to(self.run_root)
         except ValueError as error:
             raise ArtifactIntegrityError("artifact path escapes the run root") from error
-
-        current = self.run_root
-        for component in relative.parts[:-1]:
-            current = current / component
-            details = _lstat(current)
-            if details is None:
-                if not create:
-                    raise ArtifactIntegrityError("registered artifact directory does not exist")
-                try:
-                    current.mkdir()
-                except FileExistsError:
-                    pass
-                details = _lstat(current)
-            if details is None or stat.S_ISLNK(details.st_mode):
-                raise ArtifactIntegrityError("artifact path traverses a symlink")
-            if not stat.S_ISDIR(details.st_mode):
-                raise ArtifactIntegrityError("artifact parent is not a directory")
-
-        resolved_parent = path.parent.resolve(strict=True)
-        if not _is_within(resolved_parent, self.run_root):
-            raise ArtifactIntegrityError("artifact path escapes the real run root")
-
-    def _ensure_run_root(self, *, create: bool) -> None:
-        details = _lstat(self.run_root)
-        if details is None:
-            if not create:
-                raise ArtifactIntegrityError("artifact run root does not exist")
-            self.run_root.mkdir(parents=True, exist_ok=True)
-            details = _lstat(self.run_root)
-        if details is None or stat.S_ISLNK(details.st_mode):
-            raise ArtifactIntegrityError("artifact run root must not be a symlink")
-        if not stat.S_ISDIR(details.st_mode):
-            raise ArtifactIntegrityError("artifact run root is not a directory")
-
-    def _read_if_regular(self, path: Path) -> bytes | None:
-        details = _lstat(path)
-        if details is None:
-            return None
-        if stat.S_ISLNK(details.st_mode):
-            raise ArtifactIntegrityError("artifact file must not be a symlink")
-        if not stat.S_ISREG(details.st_mode):
-            raise ArtifactIntegrityError("artifact file is not regular")
-        return path.read_bytes()
-
-
-def _write_bytes_atomic(path: Path, value: bytes) -> bool:
-    """Publish *value* with no replacement of an existing artifact."""
-    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
-    try:
-        with temporary.open("xb") as stream:
-            stream.write(value)
-            stream.flush()
-            os.fsync(stream.fileno())
+        root_descriptor = _open_directory_path(self.run_root, create=create)
+        parent_descriptor: int | None = None
         try:
-            os.link(temporary, path, follow_symlinks=False)
+            parent_descriptor = _open_relative_directory(
+                root_descriptor, relative.parts[:-1], create=create
+            )
+            yield root_descriptor, parent_descriptor
+        finally:
+            if parent_descriptor is not None:
+                os.close(parent_descriptor)
+            os.close(root_descriptor)
+
+    def _verify_named_binding(
+        self,
+        path: Path,
+        *,
+        root_descriptor: int,
+        parent_descriptor: int,
+        artifact_descriptor: int,
+    ) -> None:
+        """Ensure the verified descriptors are still named by the returned path."""
+        relative = path.relative_to(self.run_root)
+        rebound_root = _open_directory_path(self.run_root, create=False)
+        rebound_parent: int | None = None
+        try:
+            if not _same_file_descriptor(rebound_root, root_descriptor):
+                raise ArtifactIntegrityError("artifact run root changed during verification")
+            rebound_parent = _open_relative_directory(
+                rebound_root, relative.parts[:-1], create=False
+            )
+            if not _same_file_descriptor(rebound_parent, parent_descriptor):
+                raise ArtifactIntegrityError("artifact parent changed during verification")
+            rebound_artifact = _open_regular_at(rebound_parent, path.name)
+            if rebound_artifact is None:
+                raise ArtifactIntegrityError("artifact changed during verification")
+            try:
+                if not _same_file_descriptor(rebound_artifact, artifact_descriptor):
+                    raise ArtifactIntegrityError("artifact changed during verification")
+            finally:
+                os.close(rebound_artifact)
+        finally:
+            if rebound_parent is not None:
+                os.close(rebound_parent)
+            os.close(rebound_root)
+
+
+def _write_bytes_atomic(parent_descriptor: int, filename: str, value: bytes) -> bool:
+    """Publish *value* with no replacement of an existing artifact."""
+    temporary = f".{filename}.{secrets.token_hex(8)}.tmp"
+    temporary_descriptor: int | None = None
+    try:
+        temporary_descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o666,
+            dir_fd=parent_descriptor,
+        )
+        _write_descriptor(temporary_descriptor, value)
+        os.fsync(temporary_descriptor)
+        os.close(temporary_descriptor)
+        temporary_descriptor = None
+        try:
+            os.link(
+                temporary,
+                filename,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
         except FileExistsError:
             return False
-        _fsync_directory(path.parent)
+        os.fsync(parent_descriptor)
         return True
     finally:
+        if temporary_descriptor is not None:
+            os.close(temporary_descriptor)
         try:
-            temporary.unlink()
+            os.unlink(temporary, dir_fd=parent_descriptor)
         except FileNotFoundError:
             pass
 
 
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
+def _validate_directory_prefix(path: Path) -> None:
+    """Reject symlinks/non-directories in the existing prefix of *path*."""
+    descriptor = _open_anchor(path)
     try:
-        os.fsync(descriptor)
+        for component in path.parts[1:]:
+            try:
+                child = os.open(component, _DIRECTORY_OPEN_FLAGS, dir_fd=descriptor)
+            except FileNotFoundError:
+                return
+            except OSError as error:
+                _raise_directory_error(error)
+            os.close(descriptor)
+            descriptor = child
     finally:
         os.close(descriptor)
 
 
-def _lstat(path: Path) -> os.stat_result | None:
+def _open_directory_path(path: Path, *, create: bool) -> int:
+    descriptor = _open_anchor(path)
     try:
-        return path.lstat()
+        for component in path.parts[1:]:
+            child = _open_child_directory(descriptor, component, create=create)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _open_anchor(path: Path) -> int:
+    try:
+        return os.open(path.anchor, _DIRECTORY_OPEN_FLAGS)
+    except OSError as error:
+        _raise_directory_error(error)
+
+
+def _open_relative_directory(
+    root_descriptor: int, components: tuple[str, ...], *, create: bool
+) -> int:
+    descriptor = os.dup(root_descriptor)
+    try:
+        for component in components:
+            child = _open_child_directory(descriptor, component, create=create)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _open_child_directory(
+    parent_descriptor: int, component: str, *, create: bool
+) -> int:
+    try:
+        return os.open(component, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor)
+    except FileNotFoundError as missing:
+        if not create:
+            raise ArtifactIntegrityError(
+                "registered artifact directory does not exist"
+            ) from missing
+        try:
+            os.mkdir(component, dir_fd=parent_descriptor)
+        except FileExistsError:
+            pass
+        try:
+            return os.open(component, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor)
+        except OSError as error:
+            _raise_directory_error(error)
+    except OSError as error:
+        _raise_directory_error(error)
+
+
+def _open_regular_at(parent_descriptor: int, filename: str) -> int | None:
+    try:
+        descriptor = os.open(filename, _FILE_OPEN_FLAGS, dir_fd=parent_descriptor)
     except FileNotFoundError:
         return None
+    except OSError as error:
+        if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise ArtifactIntegrityError("artifact file must not be a symlink") from error
+        raise ArtifactIntegrityError("artifact file could not be opened safely") from error
+
+    details = os.fstat(descriptor)
+    if not stat.S_ISREG(details.st_mode):
+        os.close(descriptor)
+        raise ArtifactIntegrityError("artifact file is not regular")
+    return descriptor
 
 
-def _is_within(path: Path, root: Path) -> bool:
+def _read_regular_at(parent_descriptor: int, filename: str) -> bytes | None:
+    descriptor = _open_regular_at(parent_descriptor, filename)
+    if descriptor is None:
+        return None
     try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
+        return _read_descriptor(descriptor)
+    finally:
+        os.close(descriptor)
 
 
-def _contains_symlink(path: Path) -> bool:
-    current = Path(path.anchor)
-    for component in path.parts[1:]:
-        current /= component
-        details = _lstat(current)
-        if details is not None and stat.S_ISLNK(details.st_mode):
-            return True
-    return False
+def _read_descriptor(descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    while chunk := os.read(descriptor, 1024 * 1024):
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _write_descriptor(descriptor: int, value: bytes) -> None:
+    remaining = memoryview(value)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written == 0:
+            raise ArtifactIntegrityError("artifact temporary write made no progress")
+        remaining = remaining[written:]
+
+
+def _same_file_descriptor(left: int, right: int) -> bool:
+    left_details = os.fstat(left)
+    right_details = os.fstat(right)
+    return (left_details.st_dev, left_details.st_ino) == (
+        right_details.st_dev,
+        right_details.st_ino,
+    )
+
+
+def _raise_directory_error(error: OSError) -> NoReturn:
+    if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+        raise ArtifactIntegrityError(
+            "artifact path traverses a symlink or non-directory"
+        ) from error
+    raise ArtifactIntegrityError("artifact directory could not be opened safely") from error

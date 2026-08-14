@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+import grid_agent.trajectory.artifacts as artifact_module
 from grid_agent.trajectory.artifacts import (
     ArtifactIntegrityError,
     ImmutableArtifactRegistry,
@@ -106,3 +108,58 @@ def test_registry_rejects_existing_path_outside_its_registered_layout(
 
     with pytest.raises(ArtifactIntegrityError, match="registered path"):
         registry.register_existing("request-input", "request-1", path)
+
+
+@pytest.mark.parametrize("replacement", ["parent", "file"])
+def test_registry_rejects_replacement_during_verified_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    run_root = tmp_path / "run"
+    registry = ImmutableArtifactRegistry(run_root)
+    pointer = registry.write_json("request-input", "request-1", {"messages": []})
+    artifact = run_root / pointer.relative_path
+    artifact_parent = artifact.parent
+
+    outside_parent = tmp_path / "outside" / "request-1"
+    outside_parent.mkdir(parents=True)
+    outside_artifact = outside_parent / artifact.name
+    outside_artifact.write_bytes(artifact.read_bytes())
+
+    original_read_bytes = Path.read_bytes
+    original_open = os.open
+    attacked = False
+
+    def replace_checked_path() -> None:
+        nonlocal attacked
+        if attacked:
+            return
+        attacked = True
+        if replacement == "parent":
+            artifact_parent.rename(artifact_parent.with_name("request-1-original"))
+            artifact_parent.symlink_to(outside_parent, target_is_directory=True)
+        else:
+            artifact.rename(artifact.with_name("input-original.json"))
+            artifact.symlink_to(outside_artifact)
+
+    def racing_read_bytes(path: Path) -> bytes:
+        if path == artifact:
+            replace_checked_path()
+        return original_read_bytes(path)
+
+    def racing_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if dir_fd is not None and os.fsdecode(path) == artifact.name:
+            replace_checked_path()
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(Path, "read_bytes", racing_read_bytes)
+    monkeypatch.setattr(artifact_module.os, "open", racing_open)
+
+    with pytest.raises(ArtifactIntegrityError):
+        registry.verify(pointer)
+    assert attacked
