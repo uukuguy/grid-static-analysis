@@ -29,6 +29,68 @@ def test_registry_writes_once_and_verifies_digest(tmp_path: Path) -> None:
     )
 
 
+def test_registry_fsyncs_each_parent_before_opening_new_nested_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_root = tmp_path / "run"
+    registry = ImmutableArtifactRegistry(run_root)
+    calls: list[str] = []
+    created_by_parent: dict[int, str] = {}
+    real_fsync = os.fsync
+    real_mkdir = os.mkdir
+    real_open = os.open
+
+    def recording_mkdir(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        real_mkdir(path, mode, dir_fd=dir_fd)
+        assert dir_fd is not None
+        component = os.fsdecode(path)
+        created_by_parent[dir_fd] = component
+        calls.append(f"mkdir:{component}")
+
+    def recording_fsync(descriptor: int) -> None:
+        if component := created_by_parent.get(descriptor):
+            calls.append(f"fsync-parent:{component}")
+        real_fsync(descriptor)
+
+    def recording_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        component = created_by_parent.get(dir_fd) if dir_fd is not None else None
+        if component == os.fsdecode(path):
+            calls.append(f"open-child:{component}")
+            del created_by_parent[dir_fd]
+        return descriptor
+
+    monkeypatch.setattr(artifact_module.os, "mkdir", recording_mkdir)
+    monkeypatch.setattr(artifact_module.os, "fsync", recording_fsync)
+    monkeypatch.setattr(artifact_module.os, "open", recording_open)
+
+    pointer = registry.write_json("request-input", "request-1", {"messages": []})
+
+    assert pointer.relative_path == "requests/request-1/input.json"
+    assert calls == [
+        "mkdir:run",
+        "fsync-parent:run",
+        "open-child:run",
+        "mkdir:requests",
+        "fsync-parent:requests",
+        "open-child:requests",
+        "mkdir:request-1",
+        "fsync-parent:request-1",
+        "open-child:request-1",
+    ]
+
+
 def test_registry_rejects_overwrite_with_different_content(tmp_path: Path) -> None:
     registry = ImmutableArtifactRegistry(tmp_path / "run")
     registry.write_json("request-input", "request-1", {"messages": []})

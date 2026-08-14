@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -17,8 +18,18 @@ def test_recorder_appends_fsyncs_then_publishes(
 ) -> None:
     calls: list[str] = []
     real_fsync = os.fsync
+
+    def recording_fsync(descriptor: int) -> None:
+        descriptor_kind = (
+            "directory" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
+        )
+        calls.append(f"fsync:{descriptor_kind}")
+        real_fsync(descriptor)
+
     monkeypatch.setattr(
-        os, "fsync", lambda fd: (calls.append("fsync"), real_fsync(fd))[1]
+        os,
+        "fsync",
+        recording_fsync,
     )
     recorder = RunEventRecorder(
         tmp_path / "events/run-events.jsonl",
@@ -35,7 +46,13 @@ def test_recorder_appends_fsyncs_then_publishes(
         )
     )
 
-    assert calls == ["fsync", "publish:1", "fsync", "publish:2"]
+    assert calls == [
+        "fsync:file",
+        "fsync:directory",
+        "publish:1",
+        "fsync:file",
+        "publish:2",
+    ]
     assert second.previous_event_hash == first.event_hash
     assert RunEventReader(recorder.events_path).read_prefix().events == (first, second)
 

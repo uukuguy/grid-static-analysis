@@ -263,3 +263,92 @@ Changed only:
 None known. This is deliberately limited to artifact pointers; validating the
 separate semantic result/evidence reference protocol belongs to its existing
 current-run verification boundary rather than the trajectory artifact registry.
+
+## Review Follow-up: Directory-entry Durability
+
+Date: 2026-08-14
+
+### Finding
+
+The recorder fsynced appended event bytes before subscriber publication, but a
+first append that created `events/run-events.jsonl` did not fsync the containing
+directory. The artifact registry fsynced its atomically published artifact name,
+but opened each newly created directory before fsyncing that directory's parent.
+In either case, a crash could lose a namespace entry whose contents had otherwise
+been treated as durable.
+
+### TDD Evidence
+
+RED command (after adding the ordering regressions and before production changes):
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_recorder.py::test_recorder_appends_fsyncs_then_publishes packages/grid-agent/tests/trajectory/test_artifacts.py::test_registry_fsyncs_each_parent_before_opening_new_nested_directory -q
+```
+
+Observed output:
+
+```text
+FF                                                                       [100%]
+2 failed in 0.13s
+```
+
+The recorder trace omitted `fsync:directory` between the first file fsync and
+`publish:1`. The nested artifact trace observed `mkdir:<child>` followed directly
+by `open-child:<child>` for `run`, `requests`, and `request-1`, with no intervening
+parent fsync.
+
+GREEN command:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_recorder.py::test_recorder_appends_fsyncs_then_publishes packages/grid-agent/tests/trajectory/test_artifacts.py::test_registry_fsyncs_each_parent_before_opening_new_nested_directory -q
+```
+
+Observed output:
+
+```text
+..                                                                       [100%]
+2 passed in 0.09s
+```
+
+The deterministic traces now require:
+
+- first log append: file fsync, parent-directory fsync, subscriber publication;
+- later log append: file fsync, subscriber publication, with no redundant entry sync;
+- every registry-created directory: mkdir, parent-descriptor fsync, no-follow child open.
+
+### Implementation
+
+`RunEventRecorder` remembers whether its event path was absent when ownership was
+claimed. After the first successful file fsync, it opens and fsyncs the parent
+directory before advancing sequence state or invoking subscribers. Any open or
+fsync failure follows the existing fail-closed recorder path.
+
+`ImmutableArtifactRegistry._open_child_directory()` now fsyncs the already-open
+parent descriptor after a successful descriptor-relative `mkdir` and before its
+descriptor-relative `O_DIRECTORY | O_NOFOLLOW` open of the child. Atomic artifact
+publication and descriptor-rooted no-follow verification are unchanged.
+
+### Verification
+
+```text
+recorder + artifact suites: 47 passed in 0.19s
+complete trajectory suite: 90 passed in 0.19s
+ruff over changed production/tests: All checks passed!
+git diff --check: exited 0
+```
+
+### Scope
+
+Changed only:
+
+- `packages/grid-agent/src/grid_agent/trajectory/recorder.py`
+- `packages/grid-agent/src/grid_agent/trajectory/artifacts.py`
+- `packages/grid-agent/tests/trajectory/test_recorder.py`
+- `packages/grid-agent/tests/trajectory/test_artifacts.py`
+- `.superpowers/sdd/event-spine-integration-fix-report.md`
+
+### Concerns
+
+None known. Existing empty event logs are treated as pre-existing namespace
+entries; the additional parent-directory fsync is performed only when this
+recorder's first append creates the log entry.

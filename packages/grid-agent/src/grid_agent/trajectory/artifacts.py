@@ -436,6 +436,13 @@ def _open_child_directory(
             os.mkdir(component, dir_fd=parent_descriptor)
         except FileExistsError:
             pass
+        else:
+            try:
+                os.fsync(parent_descriptor)
+            except OSError as error:
+                raise ArtifactIntegrityError(
+                    "artifact directory entry could not be synchronized"
+                ) from error
         try:
             return os.open(component, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor)
         except OSError as error:

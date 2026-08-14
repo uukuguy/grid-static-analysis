@@ -72,6 +72,7 @@ class RunEventRecorder:
         self._previous_hash = ZERO_PREDECESSOR_HASH
         self._append_lock = Lock()
         self._lock_stream: BinaryIO | None = None
+        self._events_entry_requires_sync = False
         self._closed = True
         self._claim_ownership()
 
@@ -100,6 +101,16 @@ class RunEventRecorder:
                         )
                     stream.flush()
                     os.fsync(stream.fileno())
+                if self._events_entry_requires_sync:
+                    directory_descriptor = os.open(
+                        self.events_path.parent,
+                        os.O_RDONLY | os.O_DIRECTORY,
+                    )
+                    try:
+                        os.fsync(directory_descriptor)
+                    finally:
+                        os.close(directory_descriptor)
+                    self._events_entry_requires_sync = False
             except OSError as exc:
                 self._close_locked()
                 raise RecorderIntegrityError(f"trajectory append failed: {exc}") from exc
@@ -134,7 +145,8 @@ class RunEventRecorder:
                 raise RecorderIntegrityError(
                     f"trajectory path is already owned: {self.events_path}"
                 ) from None
-            if self.events_path.exists() and self.events_path.stat().st_size > 0:
+            events_path_exists = self.events_path.exists()
+            if events_path_exists and self.events_path.stat().st_size > 0:
                 raise RecorderIntegrityError(
                     f"trajectory path already contains events: {self.events_path}"
                 )
@@ -146,6 +158,7 @@ class RunEventRecorder:
             raise RecorderIntegrityError(
                 f"trajectory ownership failed: {exc}"
             ) from exc
+        self._events_entry_requires_sync = not events_path_exists
         self._lock_stream = lock_stream
         self._closed = False
 
