@@ -61,8 +61,12 @@ invented when it is ambiguous.
 
 `refs.consumed`, `refs.produced`, and `refs.evidence` contain non-empty
 current-run references. `context.before_revision` and `after_revision`
-identify the surrounding analysis-context state; an event with no context
-change records the same revision on both sides.
+identify the surrounding analysis-context state when an authoritative
+surrounding state exists. Either value may be null/unknown when no
+authoritative surrounding state exists; non-null revisions identify a concrete
+state only when that state is authoritatively available. When both values are
+known and an event has no context change, it records the same revision on both
+sides.
 
 ## Event Vocabulary and Payloads
 
@@ -122,9 +126,11 @@ authoritative.
 Trusted replay accepts only JSON-native finite values, the complete validated
 envelope, contiguous sequence numbers, the expected previous hash, and a
 matching recomputed event hash. On malformed JSON, an invalid envelope, a
-sequence gap, invalid nested scope, hash mismatch, impossible transition, or
-unknown required event, replay stops at the last valid sequence. It does not
-merge the invalid suffix into business conclusions.
+sequence gap, invalid nested scope, hash mismatch, or unknown required event,
+replay stops at the last valid sequence. The current reader has no lifecycle
+transition state machine, so replay does not reject an event based on an
+inferred business transition. It does not merge the invalid suffix into
+business conclusions.
 
 Compatible protocol changes add only optional fields with documented absence
 semantics and regenerate the checked-in schema. Incompatible envelope or
