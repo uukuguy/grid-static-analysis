@@ -22,7 +22,7 @@ export function OverviewTimeline({ problems, selectedTurnId, onFocusRange, onSel
   };
   return <div className="overview-timeline">
     <div className="timeline-visual">
-    <svg viewBox={`0 0 ${Math.max(problems.length, 1) * 120} 54`} role="img" aria-label="Run turn overview">
+    <svg viewBox={`0 0 ${Math.max(problems.length, 1) * 120} 54`} aria-hidden="true" focusable="false">
       {problems.map((problem, index) => {
         const x = index * 120 + 4;
         const active = problem.turn_id === selectedTurnId;

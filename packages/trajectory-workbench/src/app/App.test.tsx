@@ -175,9 +175,15 @@ describe('App shell', () => {
     render(<App client={fixtureClient()} />);
 
     const segment = await screen.findByRole('button', { name: /Q7.*overview segment/i });
-    const visual = screen.getByLabelText('Run turn overview');
+    const region = screen.getByRole('region', { name: 'Run overview timeline' });
+    const visual = region.querySelector('svg');
+    if (!visual) throw new Error('timeline visual is missing');
 
     expect(segment.tagName).toBe('BUTTON');
+    expect(visual).toHaveAttribute('aria-hidden', 'true');
+    expect(visual).toHaveAttribute('focusable', 'false');
+    expect(visual).not.toHaveAttribute('role');
+    expect(visual).not.toHaveAttribute('aria-label');
     expect(visual.querySelector('[role="button"], button, [tabindex]:not([tabindex="-1"])')).toBeNull();
   });
 
