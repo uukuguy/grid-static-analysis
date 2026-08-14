@@ -4,7 +4,13 @@ import pytest
 from pydantic import ValidationError
 
 from grid_agent.trajectory.events import EventSource, RunScope
-from grid_agent.trajectory.projection_models import BusinessNode, ContextFrame
+from grid_agent.trajectory.projection_models import (
+    ArtifactIndexRecord,
+    BusinessNode,
+    ContextCheckpoint,
+    ContextFrame,
+    ProjectionDiagnostic,
+)
 from grid_agent.trajectory.replay import ImportedRunEvent, SourceCoordinate
 
 
@@ -65,6 +71,8 @@ def test_projection_nodes_require_provenance_for_derived_source() -> None:
 def test_context_frame_requires_ordered_revisions_and_reason_for_missing_request() -> None:
     with pytest.raises(ValidationError, match="before_revision"):
         ContextFrame(
+            id="context-invalid-revision",
+            source_sequences=(1,),
             source_sequence=1,
             before_revision=2,
             after_revision=1,
@@ -77,6 +85,8 @@ def test_context_frame_requires_ordered_revisions_and_reason_for_missing_request
 
     with pytest.raises(ValidationError, match="unavailable_reason"):
         ContextFrame(
+            id="context-missing-request",
+            source_sequences=(1,),
             source_sequence=1,
             before_revision=0,
             after_revision=1,
@@ -87,3 +97,114 @@ def test_context_frame_requires_ordered_revisions_and_reason_for_missing_request
             after_state={},
             request_artifact_ref=None,
         )
+
+
+@pytest.mark.parametrize(
+    ("model", "kwargs"),
+    [
+        (
+            ContextFrame,
+            {
+                "source_sequence": 1,
+                "before_revision": 0,
+                "after_revision": 1,
+                "before_state_hash": "sha256:" + "a" * 64,
+                "after_state_hash": "sha256:" + "b" * 64,
+                "before_state": {},
+                "delta": {},
+                "after_state": {},
+                "request_artifact_ref": "artifact:request",
+            },
+        ),
+        (
+            ArtifactIndexRecord,
+            {
+                "reference": "artifact:request",
+                "kind": "request",
+                "relative_path": "requests/request/input.json",
+                "sha256": "a" * 64,
+                "verification_status": "verified",
+            },
+        ),
+        (
+            ProjectionDiagnostic,
+            {"severity": "warning", "code": "missing", "message": "Unavailable"},
+        ),
+    ],
+)
+def test_node_like_projection_models_require_id_and_positive_provenance(
+    model: type[object], kwargs: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError, match="id"):
+        model(**kwargs)  # type: ignore[operator]
+
+    with pytest.raises(ValidationError, match="source_sequences"):
+        model(id="stable-id", source_sequences=(), **kwargs)  # type: ignore[operator]
+
+    with pytest.raises(ValidationError, match="positive"):
+        model(id="stable-id", source_sequences=(0,), **kwargs)  # type: ignore[operator]
+
+
+def test_imported_event_payload_is_deeply_immutable_and_json_compatible() -> None:
+    event = ImportedRunEvent(
+        analysis_id="analysis-old",
+        sequence=1,
+        timestamp=None,
+        event_type="turn.started",
+        import_previous_hash="sha256:" + "0" * 64,
+        import_hash="sha256:" + "1" * 64,
+        source_coordinate=SourceCoordinate(
+            path="context/context-events.jsonl", sequence=2, sha256="a" * 64
+        ),
+        source=EventSource(kind="observed", integrity="importer-integrity"),
+        payload={"nested": {"values": ["original"]}},
+    )
+
+    with pytest.raises(TypeError):
+        event.payload["nested"]["values"] += ("mutated",)
+    with pytest.raises(AttributeError):
+        event.payload["nested"]["values"].append("mutated")
+    assert event.model_dump(mode="json")["payload"] == {
+        "nested": {"values": ["original"]}
+    }
+
+
+def test_context_frame_states_are_deeply_immutable_and_json_compatible() -> None:
+    frame = ContextFrame(
+        id="context-1",
+        source_sequences=(1,),
+        source_sequence=1,
+        before_revision=0,
+        after_revision=1,
+        before_state_hash="sha256:" + "a" * 64,
+        after_state_hash="sha256:" + "b" * 64,
+        before_state={"nested": {"values": ["before"]}},
+        delta={"nested": {"values": ["change"]}},
+        after_state={"nested": {"values": ["after"]}},
+        request_artifact_ref="artifact:request",
+    )
+
+    with pytest.raises(TypeError):
+        frame.after_state["nested"]["values"] += ("mutated",)
+    with pytest.raises(AttributeError):
+        frame.before_state["nested"]["values"].append("mutated")
+    assert frame.model_dump(mode="json")["after_state"] == {
+        "nested": {"values": ["after"]}
+    }
+
+
+def test_context_checkpoint_state_is_deeply_immutable_and_json_compatible() -> None:
+    checkpoint = ContextCheckpoint(
+        source_sequence=1,
+        context_revision=1,
+        state_hash="sha256:" + "a" * 64,
+        state={"nested": {"values": ["checkpoint"]}},
+    )
+
+    with pytest.raises(TypeError):
+        checkpoint.state["nested"]["values"] += ("mutated",)
+    with pytest.raises(AttributeError):
+        checkpoint.state["nested"]["values"].append("mutated")
+    assert checkpoint.model_dump(mode="json")["state"] == {
+        "nested": {"values": ["checkpoint"]}
+    }

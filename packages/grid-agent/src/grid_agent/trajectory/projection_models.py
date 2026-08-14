@@ -10,6 +10,33 @@ from pydantic import Field, model_validator
 from grid_agent.trajectory.events import StrictFrozenModel
 
 
+class _FrozenDict(dict[str, Any]):
+    """A JSON-compatible dictionary that rejects every in-place mutation."""
+
+    def __init__(self, values: Mapping[str, Any]) -> None:
+        dict.__init__(self, values)
+
+    def _immutable(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("mapping is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    __ior__ = _immutable  # type: ignore[reportAssignmentType]
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable  # type: ignore[reportAssignmentType]
+    setdefault = _immutable  # type: ignore[reportAssignmentType]
+    update = _immutable  # type: ignore[reportAssignmentType]
+
+
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _FrozenDict({str(key): _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
 NodeSource = Literal["observed", "agent-declared", "derived"]
 LifecycleStatus = Literal[
     "running", "completed", "failed", "interrupted", "unavailable"
@@ -131,20 +158,17 @@ class BusinessTrajectory(StrictFrozenModel):
     problems: tuple[BusinessProblem, ...] = ()
 
 
-class ContextFrame(StrictFrozenModel):
-    id: str | None = None
+class ContextFrame(ProjectionNode):
     source: NodeSource = "derived"
-    source_sequences: tuple[int, ...] = ()
     status: LifecycleStatus = "completed"
-    unavailable_reason: str | None = None
     source_sequence: int = Field(ge=1)
     before_revision: int = Field(ge=0)
     after_revision: int = Field(ge=0)
     before_state_hash: str = Field(min_length=1)
     after_state_hash: str = Field(min_length=1)
-    before_state: dict[str, Any]
-    delta: dict[str, Any]
-    after_state: dict[str, Any]
+    before_state: Mapping[str, Any]
+    delta: Mapping[str, Any]
+    after_state: Mapping[str, Any]
     request_artifact_ref: str | None = None
 
     @model_validator(mode="after")
@@ -159,12 +183,24 @@ class ContextFrame(StrictFrozenModel):
             raise ValueError("unavailable_reason requires a null request_artifact_ref")
         return self
 
+    @model_validator(mode="after")
+    def freeze_states(self) -> "ContextFrame":
+        object.__setattr__(self, "before_state", _deep_freeze(self.before_state))
+        object.__setattr__(self, "delta", _deep_freeze(self.delta))
+        object.__setattr__(self, "after_state", _deep_freeze(self.after_state))
+        return self
+
 
 class ContextCheckpoint(StrictFrozenModel):
     source_sequence: int = Field(ge=1)
     context_revision: int = Field(ge=0)
     state_hash: str = Field(min_length=1)
-    state: dict[str, Any]
+    state: Mapping[str, Any]
+
+    @model_validator(mode="after")
+    def freeze_state(self) -> "ContextCheckpoint":
+        object.__setattr__(self, "state", _deep_freeze(self.state))
+        return self
 
 
 class ContextTimeline(StrictFrozenModel):
@@ -179,12 +215,9 @@ class ContextTimeline(StrictFrozenModel):
         raise KeyError(f"no context frame for sequence {sequence}")
 
 
-class ArtifactIndexRecord(StrictFrozenModel):
-    id: str = Field(min_length=1)
+class ArtifactIndexRecord(ProjectionNode):
     source: NodeSource = "observed"
-    source_sequences: tuple[int, ...] = ()
     status: LifecycleStatus = "completed"
-    unavailable_reason: str | None = None
     reference: str = Field(min_length=1)
     kind: str = Field(min_length=1)
     relative_path: str = Field(min_length=1)
@@ -206,12 +239,9 @@ class ArtifactIndex(StrictFrozenModel):
     records: Mapping[str, ArtifactIndexRecord] = Field(default_factory=dict)
 
 
-class ProjectionDiagnostic(StrictFrozenModel):
-    id: str = Field(min_length=1)
+class ProjectionDiagnostic(ProjectionNode):
     source: NodeSource = "derived"
-    source_sequences: tuple[int, ...] = ()
     status: LifecycleStatus = "unavailable"
-    unavailable_reason: str | None = None
     severity: Literal["info", "warning", "error"]
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
