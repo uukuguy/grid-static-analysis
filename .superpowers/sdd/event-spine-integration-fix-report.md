@@ -156,3 +156,110 @@ artifact-before-event ordering guarantee rather than trusting discovery by path.
 ## Commit
 
 Atomic commit subject: `fix: enforce trajectory artifact admission`
+
+## Review Follow-up: Claim and Answer Array Reference Admission
+
+Date: 2026-08-14
+
+### Finding
+
+The original recorder admission walk checked `artifact_ref` values but did not
+inspect the `result_refs` and `evidence_refs` arrays on
+`business.claim.declared` and `answer.submitted`. An unregistered
+`artifact:sha256:...` value in any of those four payload locations could
+therefore be appended to the event log.
+
+### Design
+
+Only entries beginning with `artifact:` in those two arrays are sidecar
+pointers and must pass the existing process-local immutable-registry admission
+check. Existing semantic `result:sha256:...` and `evidence:sha256:...`
+references remain outside this sidecar-pointer check, so reference-free events
+and existing non-artifact result/evidence references retain their behavior.
+
+### TDD Evidence
+
+RED command (after adding the regression tests and before changing recorder
+production code):
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_recorder.py::test_recorder_rejects_unregistered_artifact_claim_and_answer_references packages/grid-agent/tests/trajectory/test_recorder.py::test_recorder_accepts_registered_artifact_claim_and_answer_references -q
+```
+
+Observed output:
+
+```text
+FFFF....                                                                 [100%]
+4 failed, 4 passed in 0.15s
+```
+
+Each failure was the intended missing-admission symptom:
+
+```text
+Failed: DID NOT RAISE RecorderIntegrityError
+```
+
+The four failing parametrizations covered unregistered `artifact:sha256:...`
+entries in each of:
+
+- `business.claim.declared.result_refs`
+- `business.claim.declared.evidence_refs`
+- `answer.submitted.result_refs`
+- `answer.submitted.evidence_refs`
+
+The four green parametrizations registered an exact-byte current-run result or
+evidence sidecar via `ImmutableArtifactRegistry.register_existing(...)`, placed
+its returned `ArtifactPointer.ref` in the corresponding array, and appended the
+event successfully. `answer.submitted` additionally used a separately
+registered answer artifact, isolating the array-under-test.
+
+GREEN command:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_recorder.py -q
+```
+
+Observed output:
+
+```text
+.......................                                                  [100%]
+23 passed in 0.14s
+```
+
+Additional focused verification:
+
+```sh
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory -q
+uv run --project packages/grid-agent ruff check packages/grid-agent/src/grid_agent/trajectory/recorder.py packages/grid-agent/tests/trajectory/test_recorder.py
+git diff --check
+```
+
+Observed output:
+
+```text
+89 passed in 0.38s
+All checks passed!
+git diff --check exited 0
+```
+
+### Implementation
+
+`RunEventRecorder._payload_artifact_references()` now collects only
+`artifact:`-prefixed string members of `result_refs` and `evidence_refs`, then
+uses the same `ImmutableArtifactRegistry.verify_reference()` path already used
+for direct payload and `EventRefs` artifact pointers. Admission still happens
+before event construction and opening the event log for append.
+
+### Scope
+
+Changed only:
+
+- `packages/grid-agent/src/grid_agent/trajectory/recorder.py`
+- `packages/grid-agent/tests/trajectory/test_recorder.py`
+- `.superpowers/sdd/event-spine-integration-fix-report.md`
+
+### Concerns
+
+None known. This is deliberately limited to artifact pointers; validating the
+separate semantic result/evidence reference protocol belongs to its existing
+current-run verification boundary rather than the trajectory artifact registry.

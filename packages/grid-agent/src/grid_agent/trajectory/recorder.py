@@ -206,6 +206,18 @@ class RunEventRecorder:
                     and isinstance(item, str)
                 ):
                     references.add(item)
+                if (
+                    isinstance(key, str)
+                    and key in {"result_refs", "evidence_refs"}
+                    and isinstance(item, Sequence)
+                    and not isinstance(item, (str, bytes, bytearray))
+                ):
+                    references.update(
+                        reference
+                        for reference in item
+                        if isinstance(reference, str)
+                        and reference.startswith("artifact:")
+                    )
                 references.update(cls._payload_artifact_references(item))
         elif isinstance(value, Sequence) and not isinstance(
             value, (str, bytes, bytearray)

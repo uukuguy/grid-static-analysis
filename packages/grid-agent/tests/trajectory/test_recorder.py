@@ -172,6 +172,121 @@ def test_recorder_accepts_registered_digest_verified_artifact_pointer(
 
 
 @pytest.mark.parametrize(
+    ("event_type", "reference_field"),
+    [
+        ("business.claim.declared", "result_refs"),
+        ("business.claim.declared", "evidence_refs"),
+        ("answer.submitted", "result_refs"),
+        ("answer.submitted", "evidence_refs"),
+    ],
+)
+def test_recorder_rejects_unregistered_artifact_claim_and_answer_references(
+    tmp_path: Path, event_type: str, reference_field: str
+) -> None:
+    run_root = tmp_path / "run"
+    registry = ImmutableArtifactRegistry(run_root)
+    answer_pointer = registry.write_json("answer", "submission-1", {"answer": "ok"})
+    recorder = RunEventRecorder(
+        run_root / "events/run-events.jsonl",
+        "analysis-test",
+        artifact_registry=registry,
+    )
+    payload: dict[str, object] = {
+        "submission_id": "submission-1",
+        "result_refs": [],
+        "evidence_refs": [],
+    }
+    if event_type == "business.claim.declared":
+        payload.update(
+            statement="The registered network has a constraint.",
+            category="constraint",
+        )
+    else:
+        payload["artifact_ref"] = answer_pointer.ref
+    payload[reference_field] = ["artifact:sha256:" + "a" * 64]
+
+    with pytest.raises(RecorderIntegrityError, match="registered and verified"):
+        recorder.append(EventDraft(event_type=event_type, payload=payload))
+
+    assert not recorder.events_path.exists()
+    recorder.close()
+
+
+@pytest.mark.parametrize(
+    ("event_type", "reference_field", "kind", "identity", "relative_path"),
+    [
+        (
+            "business.claim.declared",
+            "result_refs",
+            "result",
+            "result:sha256:" + "a" * 64,
+            "evidence/results/powerflow-" + "a" * 64 + ".json",
+        ),
+        (
+            "business.claim.declared",
+            "evidence_refs",
+            "evidence",
+            "evidence:sha256:" + "b" * 64,
+            "evidence/network-facts/network-fact-" + "b" * 64 + ".json",
+        ),
+        (
+            "answer.submitted",
+            "result_refs",
+            "result",
+            "result:sha256:" + "c" * 64,
+            "evidence/results/powerflow-" + "c" * 64 + ".json",
+        ),
+        (
+            "answer.submitted",
+            "evidence_refs",
+            "evidence",
+            "evidence:sha256:" + "d" * 64,
+            "evidence/network-facts/network-fact-" + "d" * 64 + ".json",
+        ),
+    ],
+)
+def test_recorder_accepts_registered_artifact_claim_and_answer_references(
+    tmp_path: Path,
+    event_type: str,
+    reference_field: str,
+    kind: str,
+    identity: str,
+    relative_path: str,
+) -> None:
+    run_root = tmp_path / "run"
+    registry = ImmutableArtifactRegistry(run_root)
+    path = run_root / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"preserve":"exact bytes"}\n')
+    registered_pointer = registry.register_existing(kind, identity, path)
+    answer_pointer = registry.write_json("answer", "submission-1", {"answer": "ok"})
+    recorder = RunEventRecorder(
+        run_root / "events/run-events.jsonl",
+        "analysis-test",
+        artifact_registry=registry,
+    )
+    payload: dict[str, object] = {
+        "submission_id": "submission-1",
+        "result_refs": [],
+        "evidence_refs": [],
+        reference_field: [registered_pointer.ref],
+    }
+    if event_type == "business.claim.declared":
+        payload.update(
+            statement="The registered network has a constraint.",
+            category="constraint",
+        )
+    else:
+        payload["artifact_ref"] = answer_pointer.ref
+
+    event = recorder.append(EventDraft(event_type=event_type, payload=payload))
+
+    assert event.payload[reference_field] == [registered_pointer.ref]
+    assert RunEventReader(recorder.events_path).read_prefix().events == (event,)
+    recorder.close()
+
+
+@pytest.mark.parametrize(
     "payload",
     [
         {
