@@ -60,6 +60,8 @@ make analysis INSTRUCTIONS=validation/questions/task.md.txt
 
 ## 本地轨迹工作台
 
+面向日常操作的界面说明、排障和 API 示例见 [轨迹工作台操作手册](TRAJECTORY-WORKBENCH-OPERATOR-GUIDE.md)。
+
 已存在的原生或兼容 v0.2 分析目录可通过只绑定回环接口的服务检查：
 
 ```sh
