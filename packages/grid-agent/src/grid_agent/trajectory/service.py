@@ -13,7 +13,8 @@ from grid_agent.trajectory.artifact_projection import project_artifacts
 from grid_agent.trajectory.business_projection import project_business
 from grid_agent.trajectory.context_projection import project_context
 from grid_agent.trajectory.legacy_v02 import LegacyV02Importer
-from grid_agent.trajectory.artifacts import ArtifactPointer
+from grid_agent.analysis.integrity import ContentReferenceVerifier
+from grid_agent.trajectory.artifacts import ArtifactIntegrityError, ArtifactPointer, ImmutableArtifactRegistry
 from grid_agent.trajectory.materialize import ProjectionMaterializer
 from grid_agent.trajectory.projection_models import ProjectedRun, ProjectionDiagnostic
 from grid_agent.trajectory.reader import RunEventReader
@@ -49,21 +50,48 @@ class _NativeArtifacts:
         self.run_root = run_root
 
     def verify_reference(self, reference: str) -> ArtifactPointer:
-        if not reference.startswith("artifact:sha256:"):
-            raise RuntimeError("native artifact reference is unavailable")
-        digest = reference.rsplit(":", 1)[-1]
-        for path in sorted(self.run_root.glob("requests/**/*.json")) + sorted(self.run_root.glob("turns/**/*.json")) + sorted(self.run_root.glob("context/views/**/*.json")):
-            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-                continue
-            relative = path.relative_to(self.run_root).as_posix()
-            kind = "request-input" if relative.startswith("requests/") and path.name == "input.json" else "model-response" if relative.startswith("requests/") else "answer" if relative.startswith("turns/") else "context-view"
-            return ArtifactPointer(ref=reference, kind=kind, relative_path=relative, sha256=digest, size_bytes=path.stat().st_size)
+        if reference.startswith("artifact:sha256:"):
+            for kind, identity, path in self._artifact_ref_candidates():
+                pointer = self._register_existing(kind, identity, path)
+                if pointer is not None and pointer.ref == reference:
+                    return pointer
+            raise RuntimeError("native artifact digest is unavailable")
+        if reference.startswith("result:sha256:"):
+            verified = ContentReferenceVerifier(self.run_root).verify_result(reference)
+            pointer = self._register_existing("result", reference, verified.path)
+            if pointer is not None:
+                return ArtifactPointer(
+                    ref=reference,
+                    kind=pointer.kind,
+                    relative_path=pointer.relative_path,
+                    sha256=pointer.sha256,
+                    size_bytes=pointer.size_bytes,
+                )
+            raise RuntimeError("native result artifact is unavailable")
+        if reference.startswith("evidence:sha256:"):
+            verified = ContentReferenceVerifier(self.run_root).verify_evidence(reference)
+            pointer = self._register_existing("evidence", reference, verified.path)
+            if pointer is not None:
+                return ArtifactPointer(
+                    ref=reference,
+                    kind=pointer.kind,
+                    relative_path=pointer.relative_path,
+                    sha256=pointer.sha256,
+                    size_bytes=pointer.size_bytes,
+                )
+            raise RuntimeError("native evidence artifact is unavailable")
         raise RuntimeError("native artifact digest is unavailable")
 
-    def verify(self, reference: str | ArtifactPointer) -> Path:
+    def verify(self, reference: str | ArtifactPointer) -> Path | SimpleNamespace:
+        if isinstance(reference, str) and reference.startswith(("result:sha256:", "evidence:sha256:")):
+            self.verify_reference(reference)
+            return SimpleNamespace(authority="gridctl", integrity="verified")
         pointer = self.verify_reference(reference) if isinstance(reference, str) else reference
         if not isinstance(pointer, ArtifactPointer):
             raise RuntimeError("native artifact pointer is unavailable")
+        if pointer.ref.startswith(("result:sha256:", "evidence:sha256:")):
+            self.verify_reference(pointer.ref)
+            return SimpleNamespace(authority="gridctl", integrity="verified")
         if pointer.ref != f"artifact:sha256:{pointer.sha256}":
             raise RuntimeError("native artifact pointer has an invalid reference")
         path = self.run_root / pointer.relative_path
@@ -77,6 +105,28 @@ class _NativeArtifacts:
         if hashlib.sha256(value).hexdigest() != pointer.sha256:
             raise RuntimeError("native artifact digest does not match its pointer")
         return path
+
+    def _register_existing(
+        self, kind: str, identity: str, path: Path
+    ) -> ArtifactPointer | None:
+        try:
+            return ImmutableArtifactRegistry(self.run_root).register_existing(kind, identity, path)
+        except (ArtifactIntegrityError, OSError):
+            return None
+
+    def _artifact_ref_candidates(self) -> tuple[tuple[str, str, Path], ...]:
+        candidates: list[tuple[str, str, Path]] = []
+        for path in sorted(self.run_root.glob("requests/*/input.json")):
+            candidates.append(("request-input", path.parent.name, path))
+        for path in sorted(self.run_root.glob("requests/*/response.json")):
+            candidates.append(("model-response", path.parent.name, path))
+        for path in sorted(self.run_root.glob("turns/*/answer.json")):
+            candidates.append(("answer", path.parent.name, path))
+        for path in sorted(self.run_root.glob("context/views/*/view.json")):
+            candidates.append(("context-view", path.parent.name, path))
+        for path in sorted(self.run_root.glob("tool-results/*/*.json")):
+            candidates.append(("tool-result", f"{path.parent.name}:{path.stem}", path))
+        return tuple(candidates)
 
 
 class ProjectionService:

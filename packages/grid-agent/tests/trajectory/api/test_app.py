@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
@@ -11,6 +12,9 @@ import pytest
 from grid_agent.trajectory.api.catalog import RunNotFoundError, TrajectoryRunCatalog
 from grid_agent.trajectory.api.cursor import CursorCodec, CursorState
 from grid_agent.trajectory.api.models import RunSummary
+from grid_agent.analysis.integrity import _sha256_canonical_json
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.events import EventDraft, EventRefs, EventSource, RunScope
 from grid_agent.trajectory.projection_models import (
     AgentStep,
     AgentTrajectory,
@@ -25,6 +29,8 @@ from grid_agent.trajectory.projection_models import (
     ProjectedRun,
     ToolCall,
 )
+from grid_agent.trajectory.recorder import RunEventRecorder
+from grid_agent.trajectory.service import ProjectionService
 
 
 MARKDOWN_REF = "artifact:sha256:" + "a" * 64
@@ -231,6 +237,218 @@ def create_test_app(
     )
 
 
+def write_native_run_with_simulator_artifacts(runs_root: Path) -> tuple[Path, dict[str, str]]:
+    run_root = runs_root / "analysis-native-artifacts"
+    run_root.mkdir(parents=True)
+    registry = ImmutableArtifactRegistry(run_root)
+    recorder = RunEventRecorder(
+        run_root / "events/run-events.jsonl",
+        "analysis-native-artifacts",
+        artifact_registry=registry,
+    )
+    scope = RunScope(
+        turn_id="analysis-native-artifacts-t001",
+        step_id="analysis-native-artifacts-t001-s001",
+        request_id="analysis-native-artifacts-t001-r001",
+        tool_call_id="call-1",
+    )
+    request = registry.write_json(
+        "request-input",
+        "analysis-native-artifacts-t001-r001",
+        {"schema_version": "grid-model-request-input/1.0", "messages": []},
+    )
+    response = registry.write_json(
+        "model-response",
+        "analysis-native-artifacts-t001-r001",
+        {"schema_version": "grid-model-response/1.0", "message": {"role": "assistant"}},
+    )
+    answer = registry.write_json(
+        "answer",
+        "answer-1",
+        {"schema_version": "grid-answer/1.0", "answer_output": "verified"},
+    )
+    context = registry.write_json(
+        "context-view",
+        "revision-1",
+        {
+            "analysis_id": "analysis-native-artifacts",
+            "revision": 1,
+            "state_hash": "sha256:" + "1" * 64,
+        },
+    )
+    tool = registry.write_json(
+        "tool-result",
+        "analysis-native-artifacts-t001:call-1",
+        {
+            "schema_version": "grid-tool-invocation/1.0",
+            "turn_id": "analysis-native-artifacts-t001",
+            "request_id": "analysis-native-artifacts-t001-r001",
+            "tool_call_id": "call-1",
+            "tool_name": "grid_analysis_powerflow_ac",
+            "arguments": {},
+        },
+    )
+
+    evidence_document = {
+        "evidence_type": "network_fact",
+        "capability_id": "topology.branch.endpoints.get",
+        "context_ref": "context:sha256:" + "2" * 64,
+        "revision_ref": "revision:sha256:" + "3" * 64,
+    }
+    evidence_digest = _sha256_canonical_json(evidence_document)
+    evidence_ref = f"evidence:sha256:{evidence_digest}"
+    evidence_path = run_root / "evidence/network-facts" / f"network-fact-{evidence_digest}.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(json.dumps(evidence_document, separators=(",", ":")) + "\n", encoding="utf-8")
+    registry.register_existing("evidence", evidence_ref, evidence_path)
+
+    result_body = {
+        "schema_version": "grid-result/1.0",
+        "result_type": "powerflow",
+        "context_ref": "context:sha256:" + "2" * 64,
+        "revision_ref": "revision:sha256:" + "3" * 64,
+        "evidence_refs": [evidence_ref],
+        "payload": {"converged": True},
+    }
+    result_digest = _sha256_canonical_json(result_body)
+    result_ref = f"result:sha256:{result_digest}"
+    result_path = run_root / "evidence/results" / f"powerflow-{result_digest}.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps({**result_body, "result_ref": result_ref}, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    registry.register_existing("result", result_ref, result_path)
+
+    recorder.append(EventDraft(event_type="analysis.started", payload={}))
+    recorder.append(
+        EventDraft(
+            event_type="turn.started",
+            scope=RunScope(turn_id="analysis-native-artifacts-t001"),
+            payload={"ordinal": 1, "instruction_sha256": "4" * 64},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="context.injected",
+            scope=scope,
+            refs=EventRefs(produced=(context.ref,)),
+            payload={"revision": 1, "state_hash": "sha256:" + "1" * 64, "artifact_ref": context.ref},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="model.request.started",
+            scope=scope,
+            refs=EventRefs(produced=(request.ref,)),
+            payload={"artifact_ref": request.ref, "request_index": 1},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="tool.started",
+            scope=scope,
+            refs=EventRefs(produced=(tool.ref,)),
+            payload={"capability": "analysis.powerflow.ac.run", "artifact_ref": tool.ref},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="tool.completed",
+            scope=scope,
+            refs=EventRefs(consumed=(tool.ref,), produced=(result_ref,), evidence=(evidence_ref,)),
+            payload={"capability": "analysis.powerflow.ac.run", "artifact_ref": tool.ref, "ok": True},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="model.response.completed",
+            scope=scope,
+            refs=EventRefs(produced=(response.ref,)),
+            payload={"artifact_ref": response.ref, "stop_reason": "stop"},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="answer.submitted",
+            scope=RunScope(turn_id="analysis-native-artifacts-t001"),
+            refs=EventRefs(produced=(answer.ref,), consumed=(result_ref,), evidence=(evidence_ref,)),
+            payload={"submission_id": "answer-1", "artifact_ref": answer.ref, "result_refs": (result_ref,), "evidence_refs": (evidence_ref,)},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="business.claim.declared",
+            scope=scope,
+            source=EventSource(kind="agent-declared", producer="test"),
+            refs=EventRefs(consumed=(result_ref,), evidence=(evidence_ref,)),
+            payload={
+                "submission_id": "answer-1",
+                "statement": "The power flow result is verified.",
+                "category": "numerical_result",
+                "result_refs": (result_ref,),
+                "evidence_refs": (evidence_ref,),
+            },
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="business.claim.declared",
+            scope=scope,
+            source=EventSource(kind="agent-declared", producer="test"),
+            refs=EventRefs(consumed=("result:sha256:" + "f" * 64,)),
+            payload={
+                "submission_id": "answer-1",
+                "statement": "This missing result remains unavailable.",
+                "category": "numerical_result",
+                "result_refs": ("result:sha256:" + "f" * 64,),
+                "evidence_refs": (),
+            },
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="analysis.completed",
+            payload={"completed_turns": 1, "total_turns": 1},
+        )
+    )
+    recorder.close()
+    (run_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "grid-agent-analysis-manifest/1.0",
+                "analysis_id": "analysis-native-artifacts",
+                "status": "completed",
+                "completed_turns": 1,
+                "total_turns": 1,
+                "events_path": "events/run-events.jsonl",
+                "trajectory_schema_version": "grid-run-event/1.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return run_root, {
+        "request_ref": request.ref,
+        "response_ref": response.ref,
+        "answer_ref": answer.ref,
+        "context_ref": context.ref,
+        "tool_ref": tool.ref,
+        "result_ref": result_ref,
+        "evidence_ref": evidence_ref,
+        "missing_ref": "result:sha256:" + "f" * 64,
+    }
+
+
+def create_native_catalog_app(tmp_path: Path) -> tuple[FastAPI, dict[str, str]]:
+    runs_root = tmp_path / "runs"
+    _run_root, refs = write_native_run_with_simulator_artifacts(runs_root)
+    cache_root = tmp_path / ".grid-agent/trajectory-cache"
+    catalog = TrajectoryRunCatalog(runs_root, cache_root, ProjectionService(cache_root))
+    from grid_agent.trajectory.api.app import create_trajectory_app
+
+    return create_trajectory_app(catalog, CursorCodec.load_or_create(cache_root / "cursor.key"), static_root=write_static_fixture(tmp_path)), refs
+
+
 def test_spa_is_served_with_self_only_csp(tmp_path: Path) -> None:
     app, _, _ = create_test_app(tmp_path)
 
@@ -360,6 +578,55 @@ def test_api_returns_only_the_typed_artifact_projection_for_evidence(tmp_path: P
 
     assert response.status_code == 200
     assert response.json() == catalog.projected.artifacts.model_dump(mode="json")
+
+
+def test_native_api_verifies_simulator_artifacts_and_downloads_exact_bytes(tmp_path: Path) -> None:
+    app, refs = create_native_catalog_app(tmp_path)
+    client = TestClient(app)
+
+    runs = client.get("/api/runs")
+    business = client.get("/api/runs/analysis-native-artifacts/business")
+    evidence = client.get("/api/runs/analysis-native-artifacts/evidence")
+
+    assert runs.status_code == 200
+    assert runs.json()["items"][0]["status"] == "completed"
+    assert business.status_code == 200
+    assert any(
+        node["kind"] == "verified-result"
+        for problem in business.json()["items"]
+        for node in problem["nodes"]
+    )
+    assert evidence.status_code == 200
+    records = evidence.json()["records"]
+    for reference, kind, path_prefix in (
+        (refs["request_ref"], "request-input", "requests/"),
+        (refs["response_ref"], "model-response", "requests/"),
+        (refs["answer_ref"], "answer", "turns/"),
+        (refs["context_ref"], "context-view", "context/views/"),
+        (refs["tool_ref"], "tool-result", "tool-results/"),
+        (refs["result_ref"], "result", "evidence/results/"),
+        (refs["evidence_ref"], "evidence", "evidence/network-facts/"),
+    ):
+        record = records[reference]
+        assert record["verification_status"] == "verified"
+        assert record["kind"] == kind
+        assert record["relative_path"].startswith(path_prefix)
+        assert ".." not in Path(record["relative_path"]).parts
+        artifact = client.get(f"/api/runs/analysis-native-artifacts/artifacts/{reference}")
+        assert artifact.status_code == 200
+        assert sha256(artifact.content).hexdigest() == record["sha256"]
+
+
+def test_native_api_keeps_unsupported_refs_explicitly_unavailable(tmp_path: Path) -> None:
+    app, refs = create_native_catalog_app(tmp_path)
+
+    response = TestClient(app).get("/api/runs/analysis-native-artifacts/evidence")
+
+    assert response.status_code == 200
+    record = response.json()["records"][refs["missing_ref"]]
+    assert record["verification_status"] == "unavailable"
+    assert record["status"] == "unavailable"
+    assert record["relative_path"] == "unavailable"
 
 
 def test_execution_slice_returns_only_agent_records_causally_bound_to_sequence(tmp_path: Path) -> None:
