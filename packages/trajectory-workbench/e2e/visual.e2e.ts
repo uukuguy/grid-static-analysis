@@ -73,11 +73,15 @@ test('agent retry, context delta, and evidence tree preserve drill-down density'
   await expect(page.getByText('Retry 1 of 2')).toBeVisible();
   await expect(page).toHaveScreenshot('agent-retry.png', { animations: 'disabled', fullPage: true });
   await viewTabs.getByRole('tab', { name: 'Context', exact: true }).click();
+  await page.getByRole('button', { name: /Sequence 100000.*model-request/i }).click();
   await expect(page.getByText('scenario')).toBeVisible();
   await expect(page).toHaveScreenshot('context-delta.png', { animations: 'disabled', fullPage: true });
   await viewTabs.getByRole('tab', { name: 'Evidence' }).click();
   await expect(page.getByRole('treegrid', { name: 'Evidence artifacts' })).toBeVisible();
   await expect(page).toHaveScreenshot('evidence-tree.png', { animations: 'disabled', fullPage: true });
+  await page.getByRole('button', { name: 'Preview evidence:line-17' }).click();
+  await expect(page.getByRole('complementary', { name: 'Artifact preview' })).toContainText('truncated at 131072 bytes');
+  await expect(page).toHaveScreenshot('evidence-preview.png', { animations: 'disabled', fullPage: true });
 });
 
 for (const state of ['loading', 'empty', 'partial', 'corrupt', 'unsupported'] as const) {

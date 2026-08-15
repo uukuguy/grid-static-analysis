@@ -100,6 +100,11 @@ export function App({ client = api }: { client?: AppClient }) {
         .map((record) => [record.reference, record])),
     };
   }, [evidencePageState, legacyEvidenceIndex, selectedEvidence, state.selectedRunId]);
+  const evidenceRows = useMemo(() => evidencePageState.page?.analysis_id === state.selectedRunId
+    ? evidencePageState.items
+    : legacyEvidenceIndex?.analysis_id === state.selectedRunId
+      ? Object.values(legacyEvidenceIndex.records)
+      : [], [evidencePageState, legacyEvidenceIndex, state.selectedRunId]);
   const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessCausalRow>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const [olderState, setOlderState] = useState<'idle' | 'loading' | 'failed'>('idle');
   const [olderError, setOlderError] = useState<string | null>(null);
@@ -722,19 +727,6 @@ export function App({ client = api }: { client?: AppClient }) {
     context: state.pageError.context,
     execution: executionSliceDiagnostic,
   };
-  const activeOperationalPageState = state.activeView === 'evidence' ? evidencePageState : null;
-  const operationalPaging = activeOperationalPageState ? <div className="operational-paging" aria-live="polite">
-    {activeOperationalPageState.olderState === 'failed' ? <>
-      <p role="alert">{activeOperationalPageState.olderError}</p>
-      <button type="button" onClick={() => {
-        if (activeOperationalPageState.failedCursor) loadOlderOperational(state.activeView as 'agent' | 'context' | 'evidence', activeOperationalPageState.failedCursor);
-      }}>Retry older {state.activeView} history</button>
-    </> : activeOperationalPageState.page?.has_older && activeOperationalPageState.page.older_cursor ? <button
-      type="button"
-      disabled={activeOperationalPageState.olderState === 'loading'}
-      onClick={() => loadOlderOperational(state.activeView as 'agent' | 'context' | 'evidence', activeOperationalPageState.page!.older_cursor!)}
-    >{activeOperationalPageState.olderState === 'loading' ? `Loading older ${state.activeView} history` : `Load older ${state.activeView} history`}</button> : null}
-  </div> : null;
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
     {selectedRun?.status === 'partial' ? <AsyncState state="partial" diagnostic={selectedRun.diagnostic} /> : null}
     <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]} onRetry={retryActivePage}>
@@ -794,8 +786,26 @@ export function App({ client = api }: { client?: AppClient }) {
           artifactUrl={artifactUrl}
           comparisonIdentity={pageRequestKey(state.selectedRunId ?? '', 'context', { filters: { ...state.pageFilters.context } })}
         />
-          : <EvidenceView index={evidenceIndex} selectedRefs={auditSelection?.artifactRefs ?? (state.selectedNodeId ? [state.selectedNodeId] : [])} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
-    {operationalPaging}
+          : <EvidenceView
+            rows={evidenceRows}
+            filters={state.pageFilters.evidence}
+            onFiltersChange={(filters) => dispatch({ type: 'page/filtersChanged', view: 'evidence', filters })}
+            hasOlder={evidencePageState.page?.has_older ?? false}
+            olderState={evidencePageState.olderState}
+            olderError={evidencePageState.olderError}
+            onLoadOlder={() => {
+              const cursor = evidencePageState.page?.older_cursor;
+              if (cursor) loadOlderOperational('evidence', cursor);
+            }}
+            onRetryOlder={() => {
+              if (evidencePageState.failedCursor) loadOlderOperational('evidence', evidencePageState.failedCursor);
+            }}
+            selectedRefs={auditSelection?.artifactRefs ?? (state.selectedNodeId ? [state.selectedNodeId] : [])}
+            onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })}
+            artifactUrl={artifactUrl}
+            onSelectSequence={selectSequence}
+            previewIdentity={pageRequestKey(state.selectedRunId ?? '', 'evidence', { filters: { ...state.pageFilters.evidence } })}
+          />}
     </>
     </AsyncState>
   </section>;

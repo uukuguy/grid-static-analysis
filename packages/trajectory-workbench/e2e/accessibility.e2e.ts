@@ -85,3 +85,46 @@ test('context comparison pins two exact recorded frames without accessibility vi
   const results = await new AxeBuilder({ page }).include('[aria-label="Pinned frame comparison"]').analyze();
   expect(results.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([]);
 });
+
+test('evidence investigation filters, previews, navigates, and retries bounded rows accessibly', async ({ page }) => {
+  const evidenceRequests: URL[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/evidence')) evidenceRequests.push(url);
+  });
+  await mockWorkbenchApi(page, 'ready', 10);
+  await page.goto('/');
+  await page.getByLabel('Trajectory views').getByRole('tab', { name: 'Evidence' }).click();
+
+  const grid = page.getByRole('treegrid', { name: 'Evidence artifacts' });
+  await expect(grid).toBeVisible();
+  expect(await grid.getByRole('row').count()).toBeLessThanOrEqual(40);
+  const unavailable = grid.getByRole('row', { name: /evidence:legacy-unverified/i });
+  await expect(unavailable).toContainText('legacy source did not record a verified artifact');
+  await expect(unavailable.getByRole('link')).toHaveCount(0);
+  await expect(unavailable.getByRole('button', { name: /preview/i })).toHaveCount(0);
+
+  const verified = grid.getByRole('row', { name: /evidence:line-17/i });
+  await verified.getByRole('button', { name: 'Preview evidence:line-17' }).click();
+  const preview = page.getByRole('complementary', { name: 'Artifact preview' });
+  await expect(preview).toContainText('truncated at 131072 bytes');
+  await expect(verified.getByRole('link', { name: 'Download' })).toHaveAttribute('href', /artifacts\/evidence%3Aline-17$/);
+
+  await verified.getByRole('button', { name: 'Producer sequence 99997' }).click();
+  await expect(page.getByTestId('audit-inspector')).toContainText('N-1 conclusion for line 17');
+
+  await page.getByLabel('Evidence verification').selectOption('verified');
+  await expect.poll(() => evidenceRequests.filter((url) => url.searchParams.get('verification_status') === 'verified').length).toBe(1);
+  await page.getByRole('button', { name: 'Load older evidence history' }).click();
+  await expect(page.getByText('older evidence cursor unavailable')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry older evidence history' }).click();
+  await expect(page.getByText(/999 loaded evidence records/i)).toBeVisible();
+  const cursorRequests = evidenceRequests.filter((url) => url.searchParams.has('cursor'));
+  expect(cursorRequests).toHaveLength(2);
+  expect(cursorRequests[0].searchParams.get('cursor')).toBe(cursorRequests[1].searchParams.get('cursor'));
+  expect(cursorRequests.every((url) => url.searchParams.get('verification_status') === 'verified')).toBeTruthy();
+  expect(await grid.getByRole('row').count()).toBeLessThanOrEqual(40);
+
+  const results = await new AxeBuilder({ page }).include('[aria-label="Evidence view"]').analyze();
+  expect(results.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([]);
+});

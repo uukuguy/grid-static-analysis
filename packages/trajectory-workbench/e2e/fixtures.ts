@@ -13,6 +13,7 @@ const claimSequence = 99_997;
 const newestBusinessCursor = 'b3BhcXVlLWJ1c2luZXNzLWJlZm9yZS05OTUwMQ';
 const olderBusinessCursor = 'b3BhcXVlLWJ1c2luZXNzLWJlZm9yZS05OTAwMQ';
 const newestAgentCursor = 'b3BhcXVlLWFnZW50LWJlZm9yZS05OTUwMQ';
+const newestEvidenceCursor = 'b3BhcXVlLWV2aWRlbmNlLWJlZm9yZS05OTUwMQ';
 
 function node(sequence: number): BusinessNode {
   const isClaim = sequence === claimSequence;
@@ -152,14 +153,25 @@ function contextFrameAt(sequence: number) {
   return { ...contextFrame, id: `context:${sequence}`, source_sequences: [sequence], source_sequence: sequence };
 }
 
-const evidenceIndex = { analysis_id: 'analysis-test', records: {
-  'evidence:line-17': {
-    id: 'evidence:line-17', source: 'observed', source_sequences: [claimSequence], rule_id: null, status: 'completed', unavailable_reason: null,
-    reference: 'evidence:line-17', kind: 'gridctl result', relative_path: 'evidence/line-17.json', sha256: 'a'.repeat(64), verification_status: 'verified',
-    producing_sequence: claimSequence, consuming_sequences: [100_000], turn_id: 'analysis-test-t007', step_id: null, request_id: null,
-    tool_call_id: 'call:17', result_id: 'result:17', evidence_id: 'evidence:line-17', claim_id: 'claim:17',
-  },
-} };
+function evidenceRecord(reference: string, sequence: number) {
+  return {
+    id: `artifact:${reference}`, source: 'observed' as const, source_sequences: [sequence], rule_id: null, status: 'completed' as const, unavailable_reason: null,
+    reference, kind: 'gridctl result', relative_path: `evidence/${reference.replaceAll(':', '-')}.json`, sha256: 'a'.repeat(64), verification_status: 'verified',
+    producing_sequence: sequence, consuming_sequences: sequence === claimSequence ? [100_000] : [], turn_id: 'analysis-test-t007', step_id: null, request_id: null,
+    tool_call_id: sequence === claimSequence ? 'call:17' : null, result_id: sequence === claimSequence ? 'result:17' : null, evidence_id: reference, claim_id: sequence === claimSequence ? 'claim:17' : null,
+  };
+}
+
+const lineEvidence = { ...evidenceRecord('evidence:line-17', claimSequence), id: 'evidence:line-17', relative_path: 'evidence/line-17.json' };
+const unavailableEvidence = {
+  ...evidenceRecord('evidence:legacy-unverified', 99_996),
+  source: 'derived' as const,
+  relative_path: '',
+  sha256: '',
+  verification_status: 'unavailable',
+  unavailable_reason: 'legacy source did not record a verified artifact',
+};
+const evidenceIndex = { analysis_id: 'analysis-test', records: { 'evidence:line-17': lineEvidence } };
 
 const contextPage = {
   analysis_id: 'analysis-test',
@@ -178,13 +190,29 @@ const contextPage = {
   has_older: false, encoded_bytes: 100,
 };
 
-const evidencePage = {
-  analysis_id: 'analysis-test',
-  items: Object.values(evidenceIndex.records),
-  older_cursor: null, newer_cursor: null,
-  first_sequence: claimSequence, last_sequence: claimSequence,
-  has_older: false, encoded_bytes: 100,
-};
+function currentEvidencePage(verificationStatus: string | null = null) {
+  const items = [
+    lineEvidence,
+    unavailableEvidence,
+    ...Array.from({ length: 498 }, (_, index) => evidenceRecord(`evidence:current:${index}`, 99_501 + index)),
+  ].filter((record) => !verificationStatus || record.verification_status === verificationStatus);
+  return {
+    analysis_id: 'analysis-test', items,
+    older_cursor: newestEvidenceCursor, newer_cursor: null,
+    first_sequence: 99_501, last_sequence: 100_000,
+    has_older: true, encoded_bytes: encodedBytes(items),
+  };
+}
+
+function olderEvidencePage() {
+  const items = Array.from({ length: 500 }, (_, index) => evidenceRecord(`evidence:older:${index}`, 99_001 + index));
+  return {
+    analysis_id: 'analysis-test', items,
+    older_cursor: null, newer_cursor: null,
+    first_sequence: 99_001, last_sequence: 99_500,
+    has_older: false, encoded_bytes: encodedBytes(items),
+  };
+}
 
 function executionSliceAt(sequence: number) {
   return {
@@ -216,6 +244,7 @@ function executionSliceAt(sequence: number) {
 export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready', count = 1) {
   let olderBusinessAttempts = 0;
   let olderAgentAttempts = 0;
+  let olderEvidenceAttempts = 0;
   // Match the API root, not source modules such as `/src/api/client.ts`.
   await page.route((url) => url.pathname.startsWith('/api/runs'), async (route) => {
     const url = new URL(route.request().url());
@@ -250,7 +279,38 @@ export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready',
       ? contextFrameAt(Number(url.searchParams.get('at_sequence')))
       : contextPage });
     if (path.endsWith('/execution')) return route.fulfill({ json: executionSliceAt(Number(url.searchParams.get('at_sequence') ?? run.last_sequence)) });
-    if (path.endsWith('/evidence')) return route.fulfill({ json: evidencePage });
+    if (path.includes('/artifacts/')) {
+      const reference = decodeURIComponent(path.split('/').at(-1) ?? '');
+      const content = JSON.stringify({ reference, result: 'x'.repeat(140_000) });
+      const range = route.request().headers().range;
+      if (range) {
+        const match = range.match(/^bytes=0-(\d+)$/);
+        const end = Math.min(Number(match?.[1] ?? content.length - 1), content.length - 1);
+        return route.fulfill({
+          status: 206,
+          body: content.slice(0, end + 1),
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Range': `bytes 0-${end}/${content.length}`,
+            'Content-Disposition': `attachment; filename="${reference.replaceAll(':', '-')}.json"`,
+          },
+        });
+      }
+      return route.fulfill({ body: content, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="evidence.json"' } });
+    }
+    if (path.endsWith('/evidence')) {
+      const relevantRef = url.searchParams.get('relevant_ref');
+      if (relevantRef) {
+        const item = relevantRef === lineEvidence.reference ? lineEvidence : evidenceRecord(relevantRef, claimSequence);
+        return route.fulfill({ json: { ...currentEvidencePage(), items: [item], older_cursor: null, has_older: false, first_sequence: item.producing_sequence, last_sequence: item.producing_sequence } });
+      }
+      if (url.searchParams.has('cursor')) {
+        olderEvidenceAttempts += 1;
+        if (olderEvidenceAttempts === 1) return route.fulfill({ status: 503, json: { code: 'cursor_failed', message: 'older evidence cursor unavailable' } });
+        return route.fulfill({ json: olderEvidencePage() });
+      }
+      return route.fulfill({ json: currentEvidencePage(url.searchParams.get('verification_status')) });
+    }
     return route.fulfill({ status: 404, json: { code: 'not_found', message: 'not found' } });
   });
 }

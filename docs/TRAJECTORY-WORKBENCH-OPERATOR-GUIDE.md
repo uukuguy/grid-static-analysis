@@ -109,15 +109,23 @@ runs/analysis-20260814T081822Z
 
 ### Agent：智能体执行轨迹
 
-展示 turn、模型请求、重试、工具调用与响应关系。树控件支持方向键导航；选中项会同步 Inspector。
+展示扁平分页后的 turn、step、模型请求、重试、工具调用与响应关系。可按 **Turn、Kind、Status、Capability、Query** 筛选；筛选条件会绑定分页游标，改变筛选会开启一组新的结果，不能混用旧游标。树控件支持方向键导航；选中工具、请求或响应时，只跳转到该记录明确保存的业务序列并同步 Inspector。父项在尚未加载的更早页中时会显示截断标记，不会猜测父项。
+
+**Load older agent history** 请求更早的一页并保留已加载行。失败后使用 **Retry older agent history** 会重试失败时保存的同一不透明游标；筛选或切换 run 后，迟到的旧响应不会覆盖当前视图。
 
 ### Context：全过程上下文
 
-展示选中业务节点对应的上下文 revision、前后状态与 delta。通过时间线或节点选择可切换序列；工作台不会伪造缺失的请求输入或上下文。
+摘要时间线可按起止序列、起止 revision、是否变化、是否有请求输入筛选，并用 **Load older context history** / **Retry older context history** 分页。选择摘要后才按精确 `at_sequence` 获取权威 frame；Previous/Next 只在已经加载的摘要间移动。
+
+详情以结构化节点展示 Before、Delta、After；**Raw recorded JSON** 是次要折叠视图。可将两个已经获取的权威 frame 分别固定为 A/B，比较 Added、Removed、Changed 键。比较不会生成合成上下文。模型请求输入只有在 frame 保存了已验证引用时才提供下载；工作台不会用最近序列替代缺失输入。
 
 ### Evidence：证据与工件
 
-展示投影索引中已登记的工件。选择节点上的引用后会定位相应 evidence；工件链接仅允许已登记、仍在 run 内、摘要校验通过的 JSON、Markdown 或纯文本内容。
+Evidence 是虚拟化的分页调查表，可按 **Kind、Source、Verification、起止序列、Relevant reference、Sort** 筛选。表头状态显示当前已加载记录数和序列范围；**Load older evidence history** 与 **Retry older evidence history** 的游标语义和 Agent 相同。每条记录可以复制引用；Producer 和 Consumer 按钮只导航到记录中明确保存的序列，不按数字巧合或最近节点推断关系。
+
+只有 `verification_status=verified` 的记录会显示 **Preview** 和 **Download**。预览仍通过同源的已登记工件网关请求，发送 `Range: bytes=0-131071`，客户端最多保留 131,072 bytes，并明确标记截断；仅接受 JSON、Markdown 和纯文本响应。预览是显示用途，不执行内容。未验证记录显示持久化的不可用原因，且不会生成预览按钮、下载链接或工件 URL。
+
+原生 `native` run 通常包含可重新校验的登记工件和精确请求输入。`legacy-v0.2` run 的摘要、分页和已能投影的 lineage 仍可浏览；没有登记文件、摘要或精确请求输入的项目保持 `unavailable` 并说明原因。两类 run 都不会用附近序列、父 turn 或任意文件路径补齐缺失事实。
 
 ### Inspector 与移动设备
 
@@ -165,6 +173,8 @@ make validate
 npm run check --prefix packages/trajectory-workbench
 npm test --prefix packages/trajectory-workbench
 npm run test:e2e --prefix packages/trajectory-workbench
+npm run test:visual --prefix packages/trajectory-workbench
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/api packages/grid-agent/tests/trajectory/projections -q
 ```
 
 浏览视觉基线时额外执行：
