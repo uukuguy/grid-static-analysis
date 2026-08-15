@@ -55,6 +55,7 @@ class ScriptedAnalysis:
                 **os.environ,
                 "GRID_AGENT_PI_COMMAND": str(self.pi_path),
                 "GRID_AGENT_LLM_PROVIDER": "openai",
+                "GRID_AGENT_LLM_MODEL": "gpt-5.5",
                 "OPENAI_API_KEY": "test-only-secret",
             },
             text=True,
