@@ -128,6 +128,21 @@ class AgentTrajectory(StrictFrozenModel):
     turns: tuple[AgentTurn, ...] = ()
 
 
+class ExecutionSlice(StrictFrozenModel):
+    analysis_id: str = Field(min_length=1)
+    source_sequence: int = Field(ge=1)
+    turn: AgentTurn | None = None
+    unavailable_reason: str | None = None
+
+    @model_validator(mode="after")
+    def require_unavailable_reason_for_missing_turn(self) -> "ExecutionSlice":
+        if self.turn is None and not self.unavailable_reason:
+            raise ValueError("unavailable_reason is required when turn is null")
+        if self.turn is not None and self.unavailable_reason is not None:
+            raise ValueError("unavailable_reason must be null when turn is present")
+        return self
+
+
 class BusinessNode(ProjectionNode):
     kind: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -269,6 +284,7 @@ __all__ = [
     "ContextCheckpoint",
     "ContextFrame",
     "ContextTimeline",
+    "ExecutionSlice",
     "LifecycleStatus",
     "ModelRequest",
     "NodeSource",

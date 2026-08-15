@@ -12,6 +12,7 @@ from grid_agent.trajectory.api.catalog import RunNotFoundError, TrajectoryRunCat
 from grid_agent.trajectory.api.cursor import CursorCodec, CursorState
 from grid_agent.trajectory.api.models import RunSummary
 from grid_agent.trajectory.projection_models import (
+    AgentStep,
     AgentTrajectory,
     AgentTurn,
     ArtifactIndex,
@@ -20,7 +21,9 @@ from grid_agent.trajectory.projection_models import (
     BusinessTrajectory,
     ContextFrame,
     ContextTimeline,
+    ModelRequest,
     ProjectedRun,
+    ToolCall,
 )
 
 
@@ -62,6 +65,44 @@ class StubCatalog:
             turn_id="analysis-test-t001",
             ordinal=1,
         )
+        execution_turn = AgentTurn(
+            id="agent:analysis-test:turn-7",
+            source="observed",
+            source_sequences=(45,),
+            status="completed",
+            turn_id="analysis-test-t007",
+            ordinal=7,
+            steps=(
+                AgentStep(
+                    id="agent:analysis-test:step-7",
+                    source="observed",
+                    source_sequences=(46,),
+                    status="completed",
+                    step_id="step-7",
+                    request=ModelRequest(
+                        id="agent:analysis-test:request-7",
+                        source="observed",
+                        source_sequences=(47,),
+                        status="completed",
+                        request_id="request-7",
+                        artifact_ref="artifact:sha256:" + "b" * 64,
+                        tools=(
+                            ToolCall(
+                                id="agent:analysis-test:tool-7",
+                                source="observed",
+                                source_sequences=(48, 49),
+                                status="completed",
+                                tool_call_id="tool-7",
+                                capability="grid.analyze",
+                                start_sequence=48,
+                                end_sequence=49,
+                                ok=True,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
         frame = ContextFrame(
             id="context:analysis-test:900",
             source_sequences=(900,),
@@ -79,7 +120,7 @@ class StubCatalog:
         self.projected = ProjectedRun(
             analysis_id="analysis-test",
             source_fingerprint="sha256:source",
-            agent=AgentTrajectory(analysis_id="analysis-test", turns=(turn,)),
+            agent=AgentTrajectory(analysis_id="analysis-test", turns=(execution_turn, turn)),
             business=BusinessTrajectory(analysis_id="analysis-test", problems=(problem,)),
             context=ContextTimeline(analysis_id="analysis-test", frames=(frame,)),
             artifacts=ArtifactIndex(analysis_id="analysis-test", records={artifact_ref: artifact}),
@@ -268,12 +309,38 @@ def test_api_returns_only_the_typed_artifact_projection_for_evidence(tmp_path: P
     assert response.json() == catalog.projected.artifacts.model_dump(mode="json")
 
 
+def test_execution_slice_returns_only_agent_records_causally_bound_to_sequence(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/runs/analysis-test/execution?at_sequence=48")
+
+    assert response.status_code == 200
+    assert response.json()["turn"]["turn_id"] == "analysis-test-t007"
+    assert response.json()["source_sequence"] == 48
+    assert response.json()["unavailable_reason"] is None
+    assert "provider_payload" not in response.text
+    assert "/turns/" not in response.text
+
+
+def test_execution_slice_is_explicitly_unavailable_without_durable_linkage(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get("/api/runs/analysis-test/execution?at_sequence=777")
+
+    assert response.status_code == 200
+    assert response.json()["turn"] is None
+    assert response.json()["source_sequence"] == 777
+    assert response.json()["unavailable_reason"] == "no durable execution linkage is recorded"
+
+
 def test_api_has_no_mutation_routes(tmp_path: Path) -> None:
     app, _, _ = create_test_app(tmp_path)
     client = TestClient(app)
 
     for method in (client.post, client.put, client.patch, client.delete):
         assert method("/api/runs/analysis-test").status_code == 405
+        assert method("/api/runs/analysis-test/execution?at_sequence=48").status_code == 405
 
 
 def test_every_response_has_browser_security_headers_without_cors(tmp_path: Path) -> None:

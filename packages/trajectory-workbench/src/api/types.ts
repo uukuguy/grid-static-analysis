@@ -76,6 +76,13 @@ export interface AgentTurn extends ProjectionNode {
   steps: AgentStep[];
 }
 
+export interface ExecutionSlice {
+  analysis_id: string;
+  source_sequence: number;
+  turn: AgentTurn | null;
+  unavailable_reason: string | null;
+}
+
 export interface BusinessNode extends ProjectionNode {
   source_sequence: number;
   kind: string;

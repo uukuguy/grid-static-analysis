@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ProjectionPage, RunSummary } from '../api/types';
-import { Inspector } from '../components/layout/Inspector';
+import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunSummary } from '../api/types';
+import { AuditInspector } from '../components/audit/AuditInspector';
 import { OverviewTimeline } from '../components/layout/OverviewTimeline';
 import { RunExplorer } from '../components/layout/RunExplorer';
 import { RunHeader } from '../components/layout/RunHeader';
@@ -20,7 +20,7 @@ import { readThemePreference, saveThemePreference, systemTheme, type ResolvedThe
 const api = new TrajectoryApiClient();
 
 /** Data ownership begins here; the Task 2 shell supplies the visual regions. */
-type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Partial<Pick<TrajectoryApiClient, 'getAgentPage' | 'getContextFrame' | 'getEvidenceIndex' | 'artifactUrl'>>;
+type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Partial<Pick<TrajectoryApiClient, 'getAgentPage' | 'getContextFrame' | 'getExecutionSlice' | 'getEvidenceIndex' | 'artifactUrl'>>;
 
 export function App({ client = api }: { client?: AppClient }) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
@@ -36,6 +36,10 @@ export function App({ client = api }: { client?: AppClient }) {
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [contextFrame, setContextFrame] = useState<ContextFrame | null>(null);
   const [contextSequence, setContextSequence] = useState<number | null>(null);
+  const [executionSlice, setExecutionSlice] = useState<ExecutionSlice | null>(null);
+  const [executionSliceState, setExecutionSliceState] = useState<AsyncStateName>('idle');
+  const [executionSliceDiagnostic, setExecutionSliceDiagnostic] = useState<string | null>(null);
+  const [executionSliceAttempt, setExecutionSliceAttempt] = useState(0);
   const [evidenceIndex, setEvidenceIndex] = useState<EvidenceIndex | null>(null);
   const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const [olderState, setOlderState] = useState<'idle' | 'loading' | 'failed'>('idle');
@@ -132,7 +136,7 @@ export function App({ client = api }: { client?: AppClient }) {
   }, [client, pageAttempts.business, state.selectedRunId]);
 
   useEffect(() => {
-    const needsAgent = state.activeView === 'agent' || Boolean(state.selectedNodeId);
+    const needsAgent = state.activeView === 'agent';
     if (!needsAgent || !state.selectedRunId || !client.getAgentPage) return;
     const controller = new AbortController();
     setPageErrors((errors) => ({ ...errors, agent: null }));
@@ -149,6 +153,7 @@ export function App({ client = api }: { client?: AppClient }) {
   }, [client, pageAttempts.agent, state.activeView, state.selectedNodeId, state.selectedRunId]);
 
   const auditSelection = resolveAuditSelection(problems, agentTurns, state.selectedNodeId);
+  const auditSequence = auditSelection?.sequence ?? null;
   const focusedProblem = problems.find((problem) => problem.id === state.focusedProblemId) ?? null;
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;
   const auditInspectorModel = auditSelection ? buildAuditInspectorModel({
@@ -158,6 +163,30 @@ export function App({ client = api }: { client?: AppClient }) {
   }) : null;
   const hasAuditSelection = Boolean(auditSelection);
   const auditArtifactKey = auditSelection?.artifactRefs.join('\0') ?? '';
+
+  useEffect(() => {
+    if (!auditSequence || !state.selectedRunId || !client.getExecutionSlice) {
+      setExecutionSlice(null);
+      setExecutionSliceState('idle');
+      setExecutionSliceDiagnostic(null);
+      return;
+    }
+    const controller = new AbortController();
+    setExecutionSlice(null);
+    setExecutionSliceState('loading');
+    setExecutionSliceDiagnostic(null);
+    void client.getExecutionSlice(state.selectedRunId, auditSequence, controller.signal).then((slice) => {
+      if (controller.signal.aborted || slice.source_sequence !== auditSequence) return;
+      setExecutionSlice(slice);
+      setExecutionSliceState('ready');
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setExecutionSlice(null);
+      setExecutionSliceState(error instanceof ApiError && error.status === 501 ? 'unsupported' : 'network-error');
+      setExecutionSliceDiagnostic(pageErrorMessage(error, 'Unable to load execution linkage.'));
+    });
+    return () => controller.abort();
+  }, [auditSequence, client, executionSliceAttempt, state.selectedRunId]);
 
   useEffect(() => {
     if (!auditSelection && state.activeView !== 'context') return;
@@ -271,19 +300,23 @@ export function App({ client = api }: { client?: AppClient }) {
     setPageAttempts((attempts) => ({ ...attempts, [state.activeView]: attempts[state.activeView] + 1 }));
   };
   const retryInspectorPanel = (panel: AuditPanel) => {
-    const view = panel === 'execution' ? 'agent' : panel === 'context' ? 'context' : panel === 'evidence' ? 'evidence' : null;
+    if (panel === 'execution') {
+      setExecutionSliceAttempt((attempt) => attempt + 1);
+      return;
+    }
+    const view = panel === 'context' ? 'context' : panel === 'evidence' ? 'evidence' : null;
     if (!view) return;
     setPageAttempts((attempts) => ({ ...attempts, [view]: attempts[view] + 1 }));
   };
   const inspectorPanelStates: Partial<Record<AuditPanel, AsyncStateName>> = {
     evidence: projectionPanelState('evidence', state, pageErrors),
     context: projectionPanelState('context', state, pageErrors),
-    execution: projectionPanelState('agent', state, pageErrors),
+    execution: executionSliceState,
   };
   const inspectorPanelDiagnostics: Partial<Record<AuditPanel, string | null>> = {
     evidence: state.pageError.evidence,
     context: state.pageError.context,
-    execution: state.pageError.agent,
+    execution: executionSliceDiagnostic,
   };
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
     {selectedRun?.status === 'partial' ? <AsyncState state="partial" diagnostic={selectedRun.diagnostic} /> : null}
@@ -315,8 +348,9 @@ export function App({ client = api }: { client?: AppClient }) {
       </AsyncState>}
       timeline={<OverviewTimeline problems={problems} selectedTurnId={auditSelection?.turnId ?? focusedProblem?.turn_id ?? state.selectedNodeId} onSelectTurn={selectTurn} onFocusRange={(range) => dispatch({ type: 'timeline/focused', range })} />}
       content={content}
-      inspector={<Inspector
+      inspector={<AuditInspector
         model={auditInspectorModel}
+        executionSlice={executionSlice}
         artifactUrl={artifactUrl}
         onSelectSequence={selectSequence}
         panelStates={inspectorPanelStates}

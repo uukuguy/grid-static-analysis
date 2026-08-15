@@ -12,8 +12,10 @@ from grid_agent.trajectory.projection_models import (
     AgentTrajectory,
     AgentTurn,
     AssistantResponse,
+    ExecutionSlice,
     LifecycleStatus,
     ModelRequest,
+    ProjectedRun,
     ToolCall,
 )
 from grid_agent.trajectory.replay import ReplayEventLike
@@ -353,3 +355,46 @@ def project_agent(events: Sequence[ReplayEventLike]) -> AgentTrajectory:
         state.consume(event)
     state.close_at_boundary(events[-1] if events else None)
     return state.freeze()
+
+
+def execution_slice(projected: ProjectedRun, sequence: int) -> ExecutionSlice:
+    """Return the owning turn only when a typed agent node records the sequence."""
+    for turn in projected.agent.turns:
+        if _turn_contains_sequence(turn, sequence):
+            return ExecutionSlice(
+                analysis_id=projected.analysis_id,
+                source_sequence=sequence,
+                turn=turn,
+                unavailable_reason=None,
+            )
+    return ExecutionSlice(
+        analysis_id=projected.analysis_id,
+        source_sequence=sequence,
+        turn=None,
+        unavailable_reason="no durable execution linkage is recorded",
+    )
+
+
+def _turn_contains_sequence(turn: AgentTurn, sequence: int) -> bool:
+    if sequence in turn.source_sequences:
+        return True
+    for step in turn.steps:
+        if _step_contains_sequence(step, sequence):
+            return True
+    return False
+
+
+def _step_contains_sequence(step: AgentStep, sequence: int) -> bool:
+    if sequence in step.source_sequences:
+        return True
+    return step.request is not None and _request_contains_sequence(step.request, sequence)
+
+
+def _request_contains_sequence(request: ModelRequest, sequence: int) -> bool:
+    if sequence in request.source_sequences:
+        return True
+    if any(sequence in retry.source_sequences for retry in request.retries):
+        return True
+    if request.response is not None and sequence in request.response.source_sequences:
+        return True
+    return any(sequence in tool.source_sequences for tool in request.tools)

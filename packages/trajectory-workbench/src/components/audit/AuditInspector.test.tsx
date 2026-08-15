@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentTurn, BusinessProblem, ContextFrame } from '../../api/types';
+import type { AgentTurn, BusinessProblem, ContextFrame, ExecutionSlice } from '../../api/types';
 import type { AuditInspectorModel } from '../../audit/inspector-model';
 import type { AuditSelection } from '../../audit/selection';
 import { AuditInspector } from './AuditInspector';
@@ -217,5 +217,27 @@ describe('AuditInspector', () => {
     expect(screen.getByText(/raw request input is unavailable/i)).toBeVisible();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(artifactUrl).not.toHaveBeenCalledWith(expect.stringMatching(/^raw:/));
+  });
+
+  it('renders explicit execution slice unavailability without falling back to the selected turn', () => {
+    const model: AuditInspectorModel = {
+      selection,
+      evidence: [],
+      context: null,
+      execution: turn,
+      unavailable: {},
+    };
+    const executionSlice: ExecutionSlice = {
+      analysis_id: 'analysis-test',
+      source_sequence: 61,
+      turn: null,
+      unavailable_reason: 'no durable execution linkage is recorded',
+    };
+
+    render(<AuditInspector model={model} executionSlice={executionSlice} artifactUrl={() => '#'} onSelectSequence={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Execution' }));
+
+    expect(screen.getByText('no durable execution linkage is recorded')).toBeVisible();
+    expect(screen.queryByText('turn-7')).not.toBeInTheDocument();
   });
 });

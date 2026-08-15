@@ -36,4 +36,26 @@ describe('TrajectoryApiClient', () => {
       status: 404, code: 'run_not_found', message: 'trajectory run not found',
     });
   });
+
+  it('requests exact execution slices by encoded run id and sequence with abort support', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      analysis_id: 'analysis/test',
+      source_sequence: 48,
+      turn: null,
+      unavailable_reason: 'no durable execution linkage is recorded',
+    }), { status: 200 }));
+    const client = new TrajectoryApiClient(fetcher);
+
+    await client.getExecutionSlice('analysis/test', 48, controller.signal);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/runs/analysis%2Ftest/execution?at_sequence=48',
+      expect.objectContaining({
+        method: 'GET',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      }),
+    );
+  });
 });

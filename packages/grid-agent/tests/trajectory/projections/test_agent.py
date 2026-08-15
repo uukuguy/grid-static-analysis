@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from grid_agent.trajectory.agent_projection import project_agent
+from grid_agent.trajectory.agent_projection import execution_slice, project_agent
 from grid_agent.trajectory.events import (
     Causation,
     ContextBoundary,
@@ -11,6 +11,7 @@ from grid_agent.trajectory.events import (
     EventSource,
     RunScope,
 )
+from grid_agent.trajectory.projection_models import ArtifactIndex, BusinessTrajectory, ContextTimeline, ProjectedRun
 
 
 @dataclass(frozen=True)
@@ -177,3 +178,54 @@ def test_agent_projection_interrupts_every_open_descendant_when_analysis_closes(
     assert turn.steps[0].request is not None
     assert turn.steps[0].request.status == "interrupted"
     assert turn.steps[0].request.tools[0].status == "interrupted"
+
+
+def test_execution_slice_uses_nested_source_sequences_without_nearest_fallback() -> None:
+    events = (
+        Event(10, "turn.started", RunScope(turn_id="turn-1"), {"ordinal": 1}),
+        Event(11, "step.started", RunScope(turn_id="turn-1", step_id="step-1")),
+        Event(
+            12,
+            "model.request.started",
+            RunScope(turn_id="turn-1", step_id="step-1", request_id="request-1"),
+        ),
+        Event(20, "turn.started", RunScope(turn_id="turn-2"), {"ordinal": 2}),
+        Event(
+            21,
+            "tool.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-1",
+                request_id="request-1",
+                tool_call_id="tool-1",
+            ),
+            {"capability": "grid.analyze"},
+        ),
+        Event(
+            22,
+            "tool.completed",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-1",
+                request_id="request-1",
+                tool_call_id="tool-1",
+            ),
+            {"capability": "grid.analyze", "ok": True},
+        ),
+    )
+    projected = ProjectedRun(
+        analysis_id="analysis-1",
+        source_fingerprint="sha256:source",
+        agent=project_agent(events),
+        business=BusinessTrajectory(analysis_id="analysis-1"),
+        context=ContextTimeline(analysis_id="analysis-1"),
+        artifacts=ArtifactIndex(analysis_id="analysis-1"),
+    )
+
+    linked = execution_slice(projected, 22)
+    missing = execution_slice(projected, 19)
+
+    assert linked.turn is not None
+    assert linked.turn.turn_id == "turn-1"
+    assert missing.turn is None
+    assert missing.unavailable_reason == "no durable execution linkage is recorded"

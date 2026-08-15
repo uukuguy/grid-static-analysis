@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from 'react';
 import { useState } from 'react';
-import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, JsonValue, ModelRequest, ToolCall } from '../../api/types';
+import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, ExecutionSlice, JsonValue, ModelRequest, ToolCall } from '../../api/types';
 import type { AuditInspectorModel, AuditPanel } from '../../audit/inspector-model';
 import { AsyncState, type AsyncStateName } from '../common/AsyncState';
 import { SourceBadge } from '../common/SourceBadge';
@@ -14,6 +14,7 @@ const tabs: { id: AuditPanel; label: string }[] = [
 
 interface AuditInspectorProps {
   model: AuditInspectorModel | null;
+  executionSlice?: ExecutionSlice | null;
   artifactUrl: (ref: string) => string;
   onSelectSequence?: (sequence: number) => void;
   panelStates?: Partial<Record<AuditPanel, AsyncStateName>>;
@@ -25,6 +26,7 @@ interface AuditInspectorProps {
 
 export function AuditInspector({
   model,
+  executionSlice,
   artifactUrl,
   onSelectSequence = () => undefined,
   panelStates = {},
@@ -67,6 +69,7 @@ export function AuditInspector({
         : <PanelContent
           active={active}
           model={model}
+          executionSlice={executionSlice}
           artifactUrl={artifactUrl}
           onSelectSequence={onSelectSequence}
           state={panelStates[active] ?? 'ready'}
@@ -89,6 +92,7 @@ function InspectorRunNotice({ kind, diagnostic }: { kind: 'partial' | 'corrupt';
 function PanelContent({
   active,
   model,
+  executionSlice,
   artifactUrl,
   onSelectSequence,
   state,
@@ -97,6 +101,7 @@ function PanelContent({
 }: {
   active: AuditPanel;
   model: AuditInspectorModel | null;
+  executionSlice?: ExecutionSlice | null;
   artifactUrl: (ref: string) => string;
   onSelectSequence: (sequence: number) => void;
   state: AsyncStateName;
@@ -110,7 +115,7 @@ function PanelContent({
   if (active === 'overview') return <OverviewPanel model={model} onSelectSequence={onSelectSequence} />;
   if (active === 'evidence') return <EvidencePanel model={model} artifactUrl={artifactUrl} onSelectSequence={onSelectSequence} />;
   if (active === 'context') return <ContextPanel model={model} artifactUrl={artifactUrl} onSelectSequence={onSelectSequence} />;
-  return <ExecutionPanel model={model} />;
+  return <ExecutionPanel model={model} executionSlice={executionSlice} />;
 }
 
 function OverviewPanel({ model, onSelectSequence }: { model: AuditInspectorModel; onSelectSequence: (sequence: number) => void }) {
@@ -182,19 +187,29 @@ function StateBlock({ title, value }: { title: string; value: JsonValue }) {
   </section>;
 }
 
-function ExecutionPanel({ model }: { model: AuditInspectorModel }) {
-  const turn = model.execution;
-  if (!turn) return <p className="unavailable">{model.unavailable.execution ?? 'Execution linkage is unavailable for this event.'}</p>;
+function ExecutionPanel({ model, executionSlice }: { model: AuditInspectorModel; executionSlice?: ExecutionSlice | null }) {
+  const staleSlice = executionSlice !== undefined && executionSlice !== null && executionSlice.source_sequence !== model.selection.sequence;
+  const turn = executionSlice === undefined ? model.execution : staleSlice ? null : executionSlice?.turn ?? null;
+  const unavailable = executionSlice === undefined
+    ? model.unavailable.execution
+    : staleSlice
+      ? `Execution slice sequence ${executionSlice.source_sequence} does not match selected sequence ${model.selection.sequence}.`
+      : executionSlice?.unavailable_reason ?? `Execution slice is not loaded for sequence ${model.selection.sequence}.`;
+  if (!turn) return <p className="unavailable">{unavailable ?? 'Execution linkage is unavailable for this event.'}</p>;
   return <div className="audit-panel-stack">
     <dl>
       <dt>Turn ID</dt><dd>{turn.turn_id}</dd>
       <dt>Ordinal</dt><dd>{turn.ordinal ?? 'Unavailable'}</dd>
-      <dt>Sequence</dt><dd>{turn.source_sequence}</dd>
+      <dt>Sequence</dt><dd>{sourceSequence(turn)}</dd>
       <dt>Source</dt><dd><SourceBadge source={turn.source} /></dd>
       <dt>Status</dt><dd>{turn.status}{turn.unavailable_reason ? ` · ${turn.unavailable_reason}` : ''}</dd>
     </dl>
     {turn.steps.length ? turn.steps.map((step) => <StepCard key={step.id} step={step} />) : <p className="unavailable">No public request/tool entries are recorded for this selected turn.</p>}
   </div>;
+}
+
+function sourceSequence(turn: AgentTurn) {
+  return turn.source_sequence ?? Math.max(...turn.source_sequences);
 }
 
 function StepCard({ step }: { step: AgentStep }) {

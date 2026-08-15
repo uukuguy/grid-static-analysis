@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, RunListResponse } from '../api/types';
+import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ExecutionSlice, RunListResponse } from '../api/types';
 import { App } from './App';
 
 const run: RunListResponse = {
@@ -400,6 +400,103 @@ describe('App shell', () => {
     fireEvent.click(within(inspector).getByRole('button', { name: /go to sequence 47/i }));
 
     expect(screen.getByTestId('causal-node-tool:17')).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('aborts stale execution slice requests and displays only the new selected sequence', async () => {
+    const auditedProblem: BusinessProblem = {
+      ...problems[0],
+      nodes: [
+        {
+          id: 'tool:17',
+          source: 'observed',
+          source_sequences: [48],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          source_sequence: 48,
+          kind: 'tool',
+          title: 'Power flow tool result',
+          detail: null,
+          refs: [],
+        },
+        {
+          id: 'claim:7',
+          source: 'agent-declared',
+          source_sequences: [61],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          source_sequence: 61,
+          kind: 'claim',
+          title: 'Line 17 overload conclusion',
+          detail: null,
+          refs: [],
+        },
+      ],
+    };
+    const pending: {
+      sequence: number;
+      signal: AbortSignal;
+      resolve: (slice: ExecutionSlice) => void;
+    }[] = [];
+    const getExecutionSlice = vi.fn((_id: string, sequence: number, signal?: AbortSignal) => new Promise<ExecutionSlice>((resolve) => {
+      pending.push({ sequence, signal: signal ?? new AbortController().signal, resolve });
+    }));
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => ({ items: [auditedProblem], older_cursor: null, newer_cursor: null, first_sequence: 48, last_sequence: 61, has_older: false, encoded_bytes: 100 }),
+      getExecutionSlice,
+    }} />);
+
+    fireEvent.click(await screen.findByTestId('causal-node-tool:17'));
+    await waitFor(() => expect(getExecutionSlice).toHaveBeenLastCalledWith('analysis-test', 48, expect.any(AbortSignal)));
+    fireEvent.click(screen.getByTestId('causal-node-claim:7'));
+    await waitFor(() => expect(getExecutionSlice).toHaveBeenLastCalledWith('analysis-test', 61, expect.any(AbortSignal)));
+
+    expect(pending[0].signal.aborted).toBe(true);
+
+    await act(async () => {
+      pending[0].resolve({
+        analysis_id: 'analysis-test',
+        source_sequence: 48,
+        turn: {
+          id: 'agent-turn:stale',
+          source: 'observed',
+          source_sequences: [48],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          source_sequence: 48,
+          turn_id: 'stale-turn-48',
+          ordinal: 6,
+          steps: [],
+        },
+        unavailable_reason: null,
+      });
+      pending[1].resolve({
+        analysis_id: 'analysis-test',
+        source_sequence: 61,
+        turn: {
+          id: 'agent-turn:fresh',
+          source: 'observed',
+          source_sequences: [61],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          source_sequence: 61,
+          turn_id: 'fresh-turn-61',
+          ordinal: 7,
+          steps: [],
+        },
+        unavailable_reason: null,
+      });
+    });
+
+    const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
+    fireEvent.click(within(inspector).getByRole('tab', { name: 'Execution' }));
+
+    expect(await within(inspector).findByText('fresh-turn-61')).toBeVisible();
+    expect(within(inspector).queryByText('stale-turn-48')).not.toBeInTheDocument();
   });
 
   it('rehydrates a persisted context deep link and fetches its exact sequence', async () => {

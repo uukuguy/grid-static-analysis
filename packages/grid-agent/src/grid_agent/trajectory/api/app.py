@@ -18,7 +18,8 @@ from grid_agent.trajectory.api.catalog import RunNotFoundError, TrajectoryRunCat
 from grid_agent.trajectory.api.cursor import CursorCodec, CursorError, CursorExpectation, CursorState
 from grid_agent.trajectory.api.models import ApiError, RunListResponse, RunSummary
 from grid_agent.trajectory.api.paging import ProjectionPager, ProjectionRecordTooLarge
-from grid_agent.trajectory.projection_models import ProjectedRun
+from grid_agent.trajectory.agent_projection import execution_slice
+from grid_agent.trajectory.projection_models import ExecutionSlice, ProjectedRun
 
 
 SECURITY_HEADERS = {
@@ -193,6 +194,12 @@ def create_trajectory_app(
             (item.source_sequence for item in projected.context.frames), default=0
         )
         return value
+
+    @app.get("/api/runs/{analysis_id}/execution", response_model=ExecutionSlice)
+    def execution_frame(
+        analysis_id: str, at_sequence: int = Query(ge=1)
+    ) -> ExecutionSlice:
+        return execution_slice(catalog.open(analysis_id), at_sequence)
 
     @app.get("/api/runs/{analysis_id}/evidence")
     def evidence_index(analysis_id: str) -> dict[str, Any]:
