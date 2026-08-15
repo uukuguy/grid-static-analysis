@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessNode, BusinessProblem, ContextFrame, EvidenceIndex, ProjectionPage, RunSummary } from '../api/types';
+import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ProjectionPage, RunSummary } from '../api/types';
 import { Inspector } from '../components/layout/Inspector';
 import { OverviewTimeline } from '../components/layout/OverviewTimeline';
 import { RunExplorer } from '../components/layout/RunExplorer';
@@ -13,6 +13,7 @@ import { ContextView } from '../views/ContextView';
 import { EvidenceView } from '../views/EvidenceView';
 import { ApiError } from '../api/client';
 import { resolveAuditSelection } from '../audit/selection';
+import { buildAuditInspectorModel, type AuditPanel } from '../audit/inspector-model';
 import { AsyncState, type AsyncStateName } from '../components/common/AsyncState';
 import { readThemePreference, saveThemePreference, systemTheme, type ResolvedTheme } from '../design/theme';
 
@@ -20,7 +21,6 @@ const api = new TrajectoryApiClient();
 
 /** Data ownership begins here; the Task 2 shell supplies the visual regions. */
 type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Partial<Pick<TrajectoryApiClient, 'getAgentPage' | 'getContextFrame' | 'getEvidenceIndex' | 'artifactUrl'>>;
-type SelectedBusinessEntity = { problem: BusinessProblem; node: BusinessNode | null };
 
 export function App({ client = api }: { client?: AppClient }) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
@@ -132,7 +132,8 @@ export function App({ client = api }: { client?: AppClient }) {
   }, [client, pageAttempts.business, state.selectedRunId]);
 
   useEffect(() => {
-    if (state.activeView !== 'agent' || !state.selectedRunId || !client.getAgentPage) return;
+    const needsAgent = state.activeView === 'agent' || Boolean(state.selectedNodeId);
+    if (!needsAgent || !state.selectedRunId || !client.getAgentPage) return;
     const controller = new AbortController();
     setPageErrors((errors) => ({ ...errors, agent: null }));
     dispatch({ type: 'page/requested', view: 'agent' });
@@ -145,26 +146,31 @@ export function App({ client = api }: { client?: AppClient }) {
       dispatch({ type: 'page/failed', view: 'agent', message: pageErrorMessage(error, 'Unable to load agent trajectory.') });
     });
     return () => controller.abort();
-  }, [client, pageAttempts.agent, state.activeView, state.selectedRunId]);
+  }, [client, pageAttempts.agent, state.activeView, state.selectedNodeId, state.selectedRunId]);
 
   const auditSelection = resolveAuditSelection(problems, agentTurns, state.selectedNodeId);
   const focusedProblem = problems.find((problem) => problem.id === state.focusedProblemId) ?? null;
-  const selectedEntity: SelectedBusinessEntity | null = auditSelection
-    ? { problem: auditSelection.problem, node: auditSelection.node }
-    : null;
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;
+  const auditInspectorModel = auditSelection ? buildAuditInspectorModel({
+    selection: auditSelection,
+    evidenceIndex,
+    context: contextFrame,
+  }) : null;
+  const hasAuditSelection = Boolean(auditSelection);
+  const auditArtifactKey = auditSelection?.artifactRefs.join('\0') ?? '';
 
   useEffect(() => {
-    if (state.activeView !== 'context') return;
+    if (!auditSelection && state.activeView !== 'context') return;
     // A scrubber selection owns its sequence. Only an external trajectory
     // selection should derive a new context sequence from the business page.
     if (state.selectedNodeId?.startsWith('context:')) return;
-    const sequence = auditSelection?.sequence ?? selectedRun?.last_sequence ?? null;
+    const sequence = auditSelection?.sequence ?? (state.activeView === 'context' ? selectedRun?.last_sequence ?? null : null);
     setContextSequence(sequence && sequence >= 1 ? sequence : null);
   }, [auditSelection?.sequence, state.activeView, state.selectedNodeId, state.selectedRunId, selectedRun?.last_sequence]);
 
   useEffect(() => {
-    if (state.activeView !== 'context' || !state.selectedRunId || !client.getContextFrame) return;
+    const needsContext = state.activeView === 'context' || hasAuditSelection;
+    if (!needsContext || !state.selectedRunId || !client.getContextFrame) return;
     const sequence = contextSequence;
     if (!sequence || sequence < 1) return;
     const controller = new AbortController();
@@ -180,10 +186,11 @@ export function App({ client = api }: { client?: AppClient }) {
       dispatch({ type: 'page/failed', view: 'context', message: pageErrorMessage(error, 'Unable to load context frame.') });
     });
     return () => controller.abort();
-  }, [client, contextSequence, pageAttempts.context, state.activeView, state.selectedRunId]);
+  }, [client, contextSequence, hasAuditSelection, pageAttempts.context, state.activeView, state.selectedRunId]);
 
   useEffect(() => {
-    if (state.activeView !== 'evidence' || !state.selectedRunId || !client.getEvidenceIndex) return;
+    const needsEvidence = state.activeView === 'evidence' || auditArtifactKey.length > 0;
+    if (!needsEvidence || !state.selectedRunId || !client.getEvidenceIndex) return;
     const controller = new AbortController();
     setPageErrors((errors) => ({ ...errors, evidence: null }));
     dispatch({ type: 'page/requested', view: 'evidence' });
@@ -197,9 +204,23 @@ export function App({ client = api }: { client?: AppClient }) {
       dispatch({ type: 'page/failed', view: 'evidence', message: pageErrorMessage(error, 'Unable to load evidence projection.') });
     });
     return () => controller.abort();
-  }, [client, pageAttempts.evidence, state.activeView, state.selectedRunId]);
+  }, [auditArtifactKey, client, pageAttempts.evidence, state.activeView, state.selectedRunId]);
 
   const selectTurn = (turnId: string) => dispatch({ type: 'node/selected', nodeId: turnId });
+  const selectSequence = (sequence: number) => {
+    const matchingNode = problems.flatMap((problem) => problem.nodes).find((node) => node.source_sequence === sequence);
+    if (matchingNode) {
+      dispatch({ type: 'node/selected', nodeId: matchingNode.id });
+      return;
+    }
+    const matchingProblem = problems.find((problem) => problem.source_sequence === sequence);
+    if (matchingProblem) {
+      dispatch({ type: 'node/selected', nodeId: matchingProblem.id });
+      return;
+    }
+    setContextSequence(sequence);
+    dispatch({ type: 'node/selected', nodeId: `context:${sequence}` });
+  };
   const loadOlder = (cursor: string) => {
     const runId = state.selectedRunId;
     const page = businessPageRef.current;
@@ -249,6 +270,21 @@ export function App({ client = api }: { client?: AppClient }) {
     }
     setPageAttempts((attempts) => ({ ...attempts, [state.activeView]: attempts[state.activeView] + 1 }));
   };
+  const retryInspectorPanel = (panel: AuditPanel) => {
+    const view = panel === 'execution' ? 'agent' : panel === 'context' ? 'context' : panel === 'evidence' ? 'evidence' : null;
+    if (!view) return;
+    setPageAttempts((attempts) => ({ ...attempts, [view]: attempts[view] + 1 }));
+  };
+  const inspectorPanelStates: Partial<Record<AuditPanel, AsyncStateName>> = {
+    evidence: projectionPanelState('evidence', state, pageErrors),
+    context: projectionPanelState('context', state, pageErrors),
+    execution: projectionPanelState('agent', state, pageErrors),
+  };
+  const inspectorPanelDiagnostics: Partial<Record<AuditPanel, string | null>> = {
+    evidence: state.pageError.evidence,
+    context: state.pageError.context,
+    execution: state.pageError.agent,
+  };
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
     {selectedRun?.status === 'partial' ? <AsyncState state="partial" diagnostic={selectedRun.diagnostic} /> : null}
     <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]} onRetry={retryActivePage}>
@@ -279,7 +315,16 @@ export function App({ client = api }: { client?: AppClient }) {
       </AsyncState>}
       timeline={<OverviewTimeline problems={problems} selectedTurnId={auditSelection?.turnId ?? focusedProblem?.turn_id ?? state.selectedNodeId} onSelectTurn={selectTurn} onFocusRange={(range) => dispatch({ type: 'timeline/focused', range })} />}
       content={content}
-      inspector={<Inspector entity={selectedEntity} artifactUrl={artifactUrl} />}
+      inspector={<Inspector
+        model={auditInspectorModel}
+        artifactUrl={artifactUrl}
+        onSelectSequence={selectSequence}
+        panelStates={inspectorPanelStates}
+        panelDiagnostics={inspectorPanelDiagnostics}
+        onRetryPanel={retryInspectorPanel}
+        runStatus={selectedRun?.status}
+        runDiagnostic={selectedRun?.diagnostic}
+      />}
       focusedTurnId={auditSelection?.turnId ?? focusedProblem?.turn_id ?? state.selectedNodeId}
     />
   </div>;
@@ -309,4 +354,16 @@ function contextSequenceFromNodeId(nodeId: string): number | null {
 
 function pageErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function projectionPanelState(
+  view: WorkbenchView,
+  state: { pageStatus: Record<WorkbenchView, string> },
+  pageErrors: Partial<Record<WorkbenchView, unknown>>,
+): AsyncStateName {
+  if (state.pageStatus[view] === 'loading') return 'loading';
+  const error = pageErrors[view];
+  if (error instanceof ApiError && error.status === 501) return 'unsupported';
+  if (state.pageStatus[view] === 'failed') return 'network-error';
+  return 'ready';
 }

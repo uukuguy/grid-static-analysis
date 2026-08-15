@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type TrajectoryApiClient } from '../api/client';
-import type { BusinessProblem, ContextFrame, EvidenceIndex, RunListResponse } from '../api/types';
+import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, RunListResponse } from '../api/types';
 import { App } from './App';
 
 const run: RunListResponse = {
@@ -47,6 +47,10 @@ function fixtureClient(): Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPag
   };
 }
 
+function viewTab(name: 'Business' | 'Agent' | 'Context' | 'Evidence') {
+  return within(screen.getByRole('tablist', { name: 'Trajectory views' })).getByRole('tab', { name });
+}
+
 describe('App shell', () => {
   afterEach(() => {
     cleanup();
@@ -79,7 +83,7 @@ describe('App shell', () => {
 
     expect(await screen.findByRole('navigation', { name: 'Runs' })).toBeVisible();
     expect(screen.getByRole('region', { name: 'Run overview timeline' })).toBeVisible();
-    expect(screen.getByRole('tab', { name: 'Business' })).toHaveAttribute('aria-selected', 'true');
+    expect(viewTab('Business')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toBeVisible();
   });
 
@@ -209,12 +213,13 @@ describe('App shell', () => {
 
   it('keyboard tabs move without a pointer', async () => {
     render(<App client={fixtureClient()} />);
-    const business = await screen.findByRole('tab', { name: 'Business' });
+    await screen.findByRole('navigation', { name: 'Runs' });
+    const business = viewTab('Business');
 
     business.focus();
     fireEvent.keyDown(business, { key: 'ArrowRight' });
 
-    expect(screen.getByRole('tab', { name: 'Agent' })).toHaveFocus();
+    expect(viewTab('Agent')).toHaveFocus();
   });
 
   it('activates the Q7 overview segment with Enter and Space', async () => {
@@ -288,15 +293,113 @@ describe('App shell', () => {
     }} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /nested conclusion/i }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Context' }));
+    fireEvent.click(viewTab('Context'));
     await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 61, expect.any(AbortSignal)));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }));
+    fireEvent.click(viewTab('Evidence'));
     expect(await screen.findByRole('row', { selected: true })).toHaveTextContent('evidence:nested');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Business' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'References' }));
-    expect(screen.getByRole('link', { name: 'evidence:nested' })).toHaveAttribute('href', '/artifact/evidence:nested');
+    fireEvent.click(viewTab('Business'));
+    const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
+    fireEvent.click(within(inspector).getByRole('tab', { name: 'Evidence' }));
+    expect(await within(inspector).findByRole('link', { name: 'evidence:nested' })).toHaveAttribute('href', '/artifact/evidence:nested');
+  });
+
+  it('shows selected claim evidence with verified digest and jumps to the producing sequence', async () => {
+    const auditedProblem: BusinessProblem = {
+      ...problems[0],
+      nodes: [
+        {
+          id: 'tool:17',
+          source: 'observed',
+          source_sequences: [47],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          source_sequence: 47,
+          kind: 'tool',
+          title: 'Power flow tool result',
+          detail: null,
+          refs: ['evidence:line-17'],
+        },
+        {
+          id: 'claim:7',
+          source: 'agent-declared',
+          source_sequences: [61],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          source_sequence: 61,
+          kind: 'claim',
+          title: 'Line 17 overload conclusion',
+          detail: 'Line 17 overloads after the contingency.',
+          refs: ['evidence:line-17'],
+        },
+      ],
+    };
+    const agentTurn: AgentTurn = {
+      id: 'agent-turn:7',
+      source: 'observed',
+      source_sequences: [45, 61],
+      rule_id: null,
+      status: 'completed',
+      unavailable_reason: null,
+      source_sequence: 45,
+      turn_id: auditedProblem.turn_id,
+      ordinal: 7,
+      steps: [],
+    };
+    const getAgentPage = vi.fn(async () => ({
+      items: [agentTurn],
+      older_cursor: null,
+      newer_cursor: null,
+      first_sequence: 45,
+      last_sequence: 61,
+      has_older: false,
+      encoded_bytes: 100,
+    }));
+    const getEvidenceIndex = vi.fn(async (): Promise<EvidenceIndex> => ({ analysis_id: 'analysis-test', records: {
+      'evidence:line-17': {
+        id: 'record:line-17',
+        source: 'observed',
+        source_sequences: [47],
+        rule_id: null,
+        status: 'completed',
+        unavailable_reason: null,
+        reference: 'evidence:line-17',
+        kind: 'tool-result',
+        relative_path: 'artifacts/line-17.json',
+        sha256: 'a'.repeat(64),
+        verification_status: 'verified',
+        producing_sequence: 47,
+        consuming_sequences: [61],
+        turn_id: auditedProblem.turn_id,
+        step_id: 'step-2',
+        request_id: 'request-2',
+        tool_call_id: 'tool-17',
+        result_id: 'result-17',
+        evidence_id: null,
+        claim_id: 'claim:7',
+      },
+    } }));
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => ({ items: [auditedProblem], older_cursor: null, newer_cursor: null, first_sequence: 47, last_sequence: 61, has_older: false, encoded_bytes: 100 }),
+      getAgentPage,
+      getEvidenceIndex,
+      artifactUrl: (_runId, ref) => `/artifact/${ref}`,
+    }} />);
+
+    fireEvent.click(await screen.findByTestId('causal-node-claim:7'));
+    const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
+    fireEvent.click(within(inspector).getByRole('tab', { name: 'Evidence' }));
+
+    expect(await within(inspector).findByText(/verified/i)).toBeVisible();
+    expect(within(inspector).getByText(/aaaaaaaaaaaa/i)).toBeVisible();
+
+    fireEvent.click(within(inspector).getByRole('button', { name: /go to sequence 47/i }));
+
+    expect(screen.getByTestId('causal-node-tool:17')).toHaveAttribute('aria-current', 'true');
   });
 
   it('rehydrates a persisted context deep link and fetches its exact sequence', async () => {
@@ -310,7 +413,7 @@ describe('App shell', () => {
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
 
     await waitFor(() => expect(getContextFrame).toHaveBeenCalledWith('analysis-test', 42, expect.any(AbortSignal)));
-    expect(screen.getByRole('tab', { name: 'Context' })).toHaveAttribute('aria-selected', 'true');
+    expect(viewTab('Context')).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByText(/state at sequence 42/i)).toBeVisible();
   });
 
@@ -321,7 +424,7 @@ describe('App shell', () => {
 
     await screen.findByRole('navigation', { name: 'Runs' });
     expect(getContextFrame).not.toHaveBeenCalled();
-    expect(screen.getByRole('tab', { name: 'Business' })).toHaveAttribute('aria-selected', 'true');
+    expect(viewTab('Business')).toHaveAttribute('aria-selected', 'true');
   });
 
   it('fetches the older cursor once and prepends its problems before the current page', async () => {
@@ -385,7 +488,9 @@ describe('App shell', () => {
 
   it('keeps inspector controls in the keyboard focus order', async () => {
     render(<App client={fixtureClient()} />);
-    const inspectorTab = await screen.findByRole('tab', { name: 'Identity' });
+    await screen.findByRole('navigation', { name: 'Runs' });
+    const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
+    const inspectorTab = within(inspector).getByRole('tab', { name: 'Overview' });
 
     inspectorTab.focus();
     expect(inspectorTab).toHaveFocus();
@@ -400,7 +505,8 @@ describe('App shell', () => {
     }));
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: 'Context' }));
+    await screen.findByRole('navigation', { name: 'Runs' });
+    fireEvent.click(viewTab('Context'));
     await screen.findByText(/state at sequence 78/i);
     fireEvent.change(screen.getByLabelText('Event sequence'), { target: { value: '42' } });
 
@@ -418,7 +524,7 @@ describe('App shell', () => {
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /Q7.*overview segment/i }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Context' }));
+    fireEvent.click(viewTab('Context'));
     await screen.findByText(/state at sequence 59/i);
     fireEvent.change(screen.getByLabelText('Event sequence'), { target: { value: '42' } });
 
@@ -436,7 +542,8 @@ describe('App shell', () => {
     }));
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: 'Context' }));
+    await screen.findByRole('navigation', { name: 'Runs' });
+    fireEvent.click(viewTab('Context'));
     await screen.findByText(/state at sequence 78/i);
     fireEvent.click(screen.getByRole('button', { name: /Q7.*overview segment/i }));
 

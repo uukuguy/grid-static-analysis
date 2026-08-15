@@ -7,7 +7,7 @@ import { WorkbenchShell } from './WorkbenchShell';
 const mobileQuery = '(max-width: 799px)';
 const mediumQuery = '(min-width: 800px) and (max-width: 1199px)';
 
-function renderShell(mediaQuery: string, inspector: ReactNode = <Inspector entity={null} artifactUrl={() => '#'} />) {
+function renderShell(mediaQuery: string, inspector: ReactNode = <Inspector model={null} artifactUrl={() => '#'} />) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
     matches: query === mediaQuery,
     media: query,
@@ -46,7 +46,7 @@ describe('WorkbenchShell mobile inspector', () => {
     fireEvent.click(trigger);
 
     const close = await screen.findByRole('button', { name: 'Close inspector' });
-    const identity = screen.getByRole('tab', { name: 'Identity' });
+    const identity = screen.getByRole('tab', { name: 'Overview' });
 
     fireEvent.keyDown(close, { key: 'Tab' });
     identity.focus();
