@@ -45,8 +45,8 @@ test('100k trajectory remains cursor-paginated and mounts a bounded row window',
 
   await page.getByRole('button', { name: 'Retry older history' }).click();
 
-  await expect(page.getByText('Q6 · Earlier cursor page')).toBeVisible();
-  expect(requests.filter((url) => new URL(url).searchParams.get('cursor') === 'before:99501')).toHaveLength(2);
+  await expect(page.getByText('1001 matching events')).toBeVisible();
+  expect(requests.filter((url) => new URL(url).searchParams.get('cursor') === 'b3BhcXVlLWJ1c2luZXNzLWJlZm9yZS05OTUwMQ')).toHaveLength(2);
   expect(await page.getByRole('listitem').count()).toBeLessThanOrEqual(120);
 });
 

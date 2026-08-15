@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import type { BusinessNode, BusinessProblemSummary } from '../src/api/types';
 
 export type Scenario = 'ready' | 'loading' | 'empty' | 'partial' | 'corrupt' | 'unsupported' | 'network-error';
 
@@ -9,8 +10,10 @@ const run = {
 };
 
 const claimSequence = 99_997;
+const newestBusinessCursor = 'b3BhcXVlLWJ1c2luZXNzLWJlZm9yZS05OTUwMQ';
+const olderBusinessCursor = 'b3BhcXVlLWJ1c2luZXNzLWJlZm9yZS05OTAwMQ';
 
-function node(sequence: number) {
+function node(sequence: number): BusinessNode {
   const isClaim = sequence === claimSequence;
   return {
     id: isClaim ? 'claim:7' : `business:${sequence}`, source: sequence % 3 === 0 ? 'agent-declared' : 'observed', source_sequences: [sequence], rule_id: null,
@@ -22,33 +25,62 @@ function node(sequence: number) {
 
 export function businessPage(count = 1) {
   const nodes = Array.from({ length: count }, (_, offset) => node(100_000 - count + offset + 1));
+  const hasOlder = count === 500;
+  const problem: BusinessProblemSummary = {
+    id: 'business:7', source: 'derived', rule_id: 'business/v1',
+    status: 'completed', unavailable_reason: null,
+    turn_id: 'analysis-test-t007', title: 'Q7 · Line 17 N-1',
+    first_sequence: hasOlder ? 1 : nodes[0]?.source_sequence ?? 1,
+    last_sequence: nodes.at(-1)?.source_sequence ?? 1,
+    node_count: hasOlder ? 100_000 : nodes.length,
+  };
+  const items = nodes.map((item) => causalRow(problem, item));
   return {
-    items: [{
-      id: 'business:7', source: 'derived', source_sequences: nodes.map((item) => item.source_sequence), rule_id: 'business/v1',
-      status: 'completed', unavailable_reason: null, source_sequence: nodes[0]?.source_sequence ?? 100_000,
-      turn_id: 'analysis-test-t007', title: 'Q7 · Line 17 N-1', nodes,
-    }],
-    older_cursor: count >= 500 ? 'before:99501' : null, newer_cursor: null,
+    analysis_id: 'analysis-test',
+    items,
+    older_cursor: hasOlder ? newestBusinessCursor : null, newer_cursor: null,
     first_sequence: nodes[0]?.source_sequence ?? null, last_sequence: nodes.at(-1)?.source_sequence ?? null,
-    has_older: count >= 500, encoded_bytes: JSON.stringify(nodes).length,
+    has_older: hasOlder, encoded_bytes: encodedBytes(items),
   };
 }
 
 function olderBusinessPage() {
-  const page = businessPage(12);
+  const nodes = Array.from({ length: 500 }, (_, offset) => node(99_001 + offset));
+  const problem: BusinessProblemSummary = {
+    id: 'business:7', source: 'derived', rule_id: 'business/v1',
+    status: 'completed', unavailable_reason: null,
+    turn_id: 'analysis-test-t007', title: 'Q7 · Line 17 N-1',
+    first_sequence: 1, last_sequence: 100_000, node_count: 100_000,
+  };
+  const items = nodes.map((item) => causalRow(problem, item));
   return {
-    ...page,
-    items: page.items.map((problem) => ({
-      ...problem,
-      id: 'business:older',
-      title: 'Q6 · Earlier cursor page',
-    })),
-    older_cursor: null,
-    has_older: false,
+    analysis_id: 'analysis-test',
+    items,
+    newer_cursor: null,
+    first_sequence: 99_001,
+    last_sequence: 99_500,
+    encoded_bytes: encodedBytes(items),
+    older_cursor: olderBusinessCursor,
+    has_older: true,
   };
 }
 
+function causalRow(problem: BusinessProblemSummary, item: BusinessNode) {
+  const { source_sequence, ...causalNode } = item;
+  return {
+    id: `${problem.id}:sequence:${source_sequence}`,
+    source_sequence,
+    problem,
+    nodes: [causalNode],
+  };
+}
+
+function encodedBytes(items: unknown[]) {
+  return items.reduce((total, item) => total + new TextEncoder().encode(JSON.stringify(item)).length + 1, 0);
+}
+
 const agentPage = {
+  analysis_id: 'analysis-test',
   items: [{
     id: 'turn:7', source: 'observed', source_sequences: [99_700, 100_000], rule_id: null, status: 'completed', unavailable_reason: null,
     source_sequence: 99_700, turn_id: 'analysis-test-t007', ordinal: 7, steps: [{
@@ -87,6 +119,13 @@ const evidenceIndex = { analysis_id: 'analysis-test', records: {
 function executionSliceAt(sequence: number) {
   return {
     analysis_id: 'analysis-test', source_sequence: sequence, unavailable_reason: null,
+    lineage: {
+      business_node_ids: sequence === claimSequence ? ['claim:7'] : [`business:${sequence}`],
+      artifact_refs: sequence === claimSequence ? ['evidence:line-17'] : [],
+      agent_node_ids: ['turn:7', 'step:7:claim', 'request:7:claim', 'tool:line-17'],
+      turn_ids: ['analysis-test-t007'], step_ids: ['analysis-test-t007-s002'],
+      request_ids: ['request:7:claim'], tool_call_ids: ['call:17'], result_ids: ['result:17'],
+    },
     turn: {
       id: 'turn:7', source: 'observed', source_sequences: [sequence], rule_id: null, status: 'completed', unavailable_reason: null,
       turn_id: 'analysis-test-t007', ordinal: 7, steps: [{

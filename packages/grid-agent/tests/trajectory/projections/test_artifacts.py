@@ -23,7 +23,7 @@ class Event:
 
 
 def test_artifact_index_is_bidirectional() -> None:
-    pointer = ArtifactPointer("artifact:sha256:" + "a" * 64, "result", "evidence/results/powerflow-" + "a" * 64 + ".json", "a" * 64, 1)
+    pointer = ArtifactPointer("result:sha256:" + "a" * 64, "result", "evidence/results/powerflow-" + "a" * 64 + ".json", "a" * 64, 1)
     events = (
         Event(3, "tool.completed", refs=EventRefs(produced=(pointer.ref,)), scope=RunScope(turn_id="turn", step_id="step", request_id="request", tool_call_id="tool")),
         Event(5, "business.claim.declared", refs=EventRefs(consumed=(pointer.ref,))),
@@ -32,6 +32,8 @@ def test_artifact_index_is_bidirectional() -> None:
     assert record.producing_sequence == 3
     assert record.consuming_sequences == (5,)
     assert record.tool_call_id == "tool"
+    assert record.result_id == pointer.ref
+    assert record.claim_id == "business:analysis-1:5:claim"
 
 
 def test_artifact_index_marks_unverifiable_references_unavailable() -> None:

@@ -231,6 +231,7 @@ describe('AuditInspector', () => {
       analysis_id: 'analysis-test',
       source_sequence: 61,
       turn: null,
+      lineage: null,
       unavailable_reason: 'no durable execution linkage is recorded',
     };
 
@@ -241,7 +242,7 @@ describe('AuditInspector', () => {
     expect(screen.queryByText('turn-7')).not.toBeInTheDocument();
   });
 
-  it('renders only execution-slice descendants linked to the selected sequence', () => {
+  it('renders only descendants linked to an artifact-backed claim by exact stable IDs', () => {
     const model: AuditInspectorModel = {
       selection,
       evidence: [],
@@ -253,10 +254,20 @@ describe('AuditInspector', () => {
       analysis_id: 'analysis-test',
       source_sequence: 61,
       unavailable_reason: null,
+      lineage: {
+        business_node_ids: ['claim:7'],
+        artifact_refs: ['evidence:line-17'],
+        agent_node_ids: ['agent-turn:7', 'step:related', 'request:related', 'tool:related'],
+        turn_ids: ['turn-7'],
+        step_ids: ['step-related'],
+        request_ids: ['request-related'],
+        tool_call_ids: ['tool-related'],
+        result_ids: ['result-17'],
+      },
       turn: {
         id: 'agent-turn:7',
         source: 'observed',
-        source_sequences: [45, 61],
+        source_sequences: [45],
         rule_id: null,
         status: 'completed',
         unavailable_reason: null,
@@ -266,7 +277,7 @@ describe('AuditInspector', () => {
           {
             id: 'step:related',
             source: 'observed',
-            source_sequences: [60],
+            source_sequences: [46],
             rule_id: null,
             status: 'completed',
             unavailable_reason: null,
@@ -274,7 +285,7 @@ describe('AuditInspector', () => {
             request: {
               id: 'request:related',
               source: 'observed',
-              source_sequences: [60],
+              source_sequences: [47],
               rule_id: null,
               status: 'completed',
               unavailable_reason: null,
@@ -284,7 +295,7 @@ describe('AuditInspector', () => {
               response: {
                 id: 'response:related',
                 source: 'observed',
-                source_sequences: [61],
+                source_sequences: [50],
                 rule_id: null,
                 status: 'completed',
                 unavailable_reason: null,
@@ -299,15 +310,17 @@ describe('AuditInspector', () => {
                 {
                   id: 'tool:related',
                   source: 'observed',
-                  source_sequences: [61],
+                  source_sequences: [48, 49],
                   rule_id: null,
                   status: 'completed',
                   unavailable_reason: null,
                   tool_call_id: 'tool-related',
                   capability: 'grid.analyze',
-                  start_sequence: 61,
-                  end_sequence: null,
+                  start_sequence: 48,
+                  end_sequence: 49,
                   artifact_ref: 'artifact:tool',
+                  result_refs: ['result-17'],
+                  evidence_refs: ['evidence:line-17'],
                   ok: true,
                   duration_seconds: 1.25,
                 },

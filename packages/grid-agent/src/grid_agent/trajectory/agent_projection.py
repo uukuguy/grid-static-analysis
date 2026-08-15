@@ -11,7 +11,9 @@ from grid_agent.trajectory.projection_models import (
     AgentStep,
     AgentTrajectory,
     AgentTurn,
+    ArtifactIndexRecord,
     AssistantResponse,
+    ExecutionLineage,
     ExecutionSlice,
     LifecycleStatus,
     ModelRequest,
@@ -329,6 +331,8 @@ def _freeze_tool(state: _ToolState) -> ToolCall:
         artifact_ref=end_payload.get("artifact_ref", payload.get("artifact_ref")),
         ok=end_payload.get("ok"),
         duration_seconds=end_payload.get("duration_seconds"),
+        result_refs=tuple(state.end.refs.produced) if state.end is not None else (),
+        evidence_refs=tuple(state.end.refs.evidence) if state.end is not None else (),
     )
 
 
@@ -359,16 +363,22 @@ def project_agent(events: Sequence[ReplayEventLike]) -> AgentTrajectory:
 
 
 def execution_slice(projected: ProjectedRun, sequence: int) -> ExecutionSlice:
-    """Return the owning turn only when a typed agent node records the sequence."""
-    for turn in projected.agent.turns:
-        scoped = _scope_turn(turn, sequence)
-        if scoped is not None:
-            return ExecutionSlice(
-                analysis_id=projected.analysis_id,
-                source_sequence=sequence,
-                turn=scoped,
-                unavailable_reason=None,
-            )
+    """Resolve exact sequence or verified business-artifact execution lineage."""
+    proof = _execution_proof(projected, sequence)
+    scoped_turns = tuple(
+        scoped
+        for turn in projected.agent.turns
+        if (scoped := _scope_turn(turn, proof)) is not None
+    )
+    if len(scoped_turns) == 1:
+        scoped = scoped_turns[0]
+        return ExecutionSlice(
+            analysis_id=projected.analysis_id,
+            source_sequence=sequence,
+            turn=scoped,
+            unavailable_reason=None,
+            lineage=_execution_lineage(scoped, proof),
+        )
     return ExecutionSlice(
         analysis_id=projected.analysis_id,
         source_sequence=sequence,
@@ -377,34 +387,118 @@ def execution_slice(projected: ProjectedRun, sequence: int) -> ExecutionSlice:
     )
 
 
-def _scope_turn(turn: AgentTurn, sequence: int) -> AgentTurn | None:
-    steps = tuple(
-        scoped for step in turn.steps if (scoped := _scope_step(step, sequence)) is not None
+@dataclass
+class _ExecutionProof:
+    sequence: int
+    requires_artifact_lineage: bool = False
+    business_node_ids: set[str] = field(default_factory=set)
+    artifact_refs: set[str] = field(default_factory=set)
+    turn_ids: set[str] = field(default_factory=set)
+    step_ids: set[str] = field(default_factory=set)
+    request_ids: set[str] = field(default_factory=set)
+    tool_call_ids: set[str] = field(default_factory=set)
+    result_ids: set[str] = field(default_factory=set)
+
+
+def _execution_proof(projected: ProjectedRun, sequence: int) -> _ExecutionProof:
+    proof = _ExecutionProof(sequence=sequence)
+    for problem in projected.business.problems:
+        for node in problem.nodes:
+            if node.source_sequences[0] != sequence:
+                continue
+            proof.business_node_ids.add(node.id)
+            if node.refs or node.kind in {"claim", "verified-result"}:
+                proof.requires_artifact_lineage = True
+            for reference in node.refs:
+                record = projected.artifacts.records.get(reference)
+                if (
+                    record is None
+                    or record.verification_status != "verified"
+                    or not _artifact_binds_sequence(record, sequence)
+                ):
+                    continue
+                proof.artifact_refs.add(reference)
+                _add_present(proof.turn_ids, record.turn_id)
+                _add_present(proof.step_ids, record.step_id)
+                _add_present(proof.request_ids, record.request_id)
+                _add_present(proof.tool_call_ids, record.tool_call_id)
+                _add_present(proof.result_ids, record.result_id)
+    return proof
+
+
+def _artifact_binds_sequence(record: ArtifactIndexRecord, sequence: int) -> bool:
+    return (
+        record.producing_sequence == sequence
+        or sequence in record.consuming_sequences
+        or sequence in record.source_sequences
     )
-    if not _node_matches_sequence(turn, sequence) and not steps:
+
+
+def _add_present(values: set[str], value: str | None) -> None:
+    if value:
+        values.add(value)
+
+
+def _scope_turn(turn: AgentTurn, proof: _ExecutionProof) -> AgentTurn | None:
+    steps = tuple(
+        scoped for step in turn.steps if (scoped := _scope_step(step, proof)) is not None
+    )
+    if proof.requires_artifact_lineage:
+        if turn.turn_id not in proof.turn_ids or not steps:
+            return None
+        return turn.model_copy(update={"steps": steps})
+    if (
+        not _node_matches_sequence(turn, proof.sequence)
+        and turn.turn_id not in proof.turn_ids
+        and not steps
+    ):
         return None
     return turn.model_copy(update={"steps": steps})
 
 
-def _scope_step(step: AgentStep, sequence: int) -> AgentStep | None:
-    request = _scope_request(step.request, sequence) if step.request is not None else None
-    if not _node_matches_sequence(step, sequence) and request is None:
+def _scope_step(step: AgentStep, proof: _ExecutionProof) -> AgentStep | None:
+    request = _scope_request(step.request, proof) if step.request is not None else None
+    if proof.requires_artifact_lineage:
+        if step.step_id not in proof.step_ids or request is None:
+            return None
+        return step.model_copy(update={"request": request})
+    if (
+        not _node_matches_sequence(step, proof.sequence)
+        and step.step_id not in proof.step_ids
+        and request is None
+    ):
         return None
     return step.model_copy(update={"request": request})
 
 
-def _scope_request(request: ModelRequest, sequence: int) -> ModelRequest | None:
-    retries = tuple(
-        retry for retry in request.retries if _node_matches_sequence(retry, sequence)
+def _scope_request(request: ModelRequest, proof: _ExecutionProof) -> ModelRequest | None:
+    retries = (
+        ()
+        if proof.requires_artifact_lineage
+        else tuple(
+            retry
+            for retry in request.retries
+            if _node_matches_sequence(retry, proof.sequence)
+        )
     )
     response = (
         request.response
-        if request.response is not None and _node_matches_sequence(request.response, sequence)
+        if request.response is not None and _response_matches(request.response, proof)
         else None
     )
-    tools = tuple(tool for tool in request.tools if _node_matches_sequence(tool, sequence))
+    tools = tuple(tool for tool in request.tools if _tool_matches(tool, proof))
+    if proof.requires_artifact_lineage:
+        if (
+            request.request_id not in proof.request_ids
+            or (response is None and not tools)
+        ):
+            return None
+        return request.model_copy(
+            update={"retries": retries, "response": response, "tools": tools}
+        )
     if (
-        not _node_matches_sequence(request, sequence)
+        not _node_matches_sequence(request, proof.sequence)
+        and request.request_id not in proof.request_ids
         and not retries
         and response is None
         and not tools
@@ -412,6 +506,51 @@ def _scope_request(request: ModelRequest, sequence: int) -> ModelRequest | None:
         return None
     return request.model_copy(
         update={"retries": retries, "response": response, "tools": tools}
+    )
+
+
+def _tool_matches(tool: ToolCall, proof: _ExecutionProof) -> bool:
+    exact_artifact_match = (
+        tool.tool_call_id in proof.tool_call_ids
+        or bool(set(tool.result_refs) & (proof.artifact_refs | proof.result_ids))
+        or bool(set(tool.evidence_refs) & (proof.artifact_refs | proof.result_ids))
+    )
+    return exact_artifact_match or (
+        not proof.requires_artifact_lineage
+        and _node_matches_sequence(tool, proof.sequence)
+    )
+
+
+def _response_matches(response: AssistantResponse, proof: _ExecutionProof) -> bool:
+    exact_artifact_match = (
+        response.id in proof.result_ids
+        or response.artifact_ref in proof.artifact_refs
+    )
+    return exact_artifact_match or (
+        not proof.requires_artifact_lineage
+        and _node_matches_sequence(response, proof.sequence)
+    )
+
+
+def _execution_lineage(turn: AgentTurn, proof: _ExecutionProof) -> ExecutionLineage:
+    steps = turn.steps
+    requests = tuple(step.request for step in steps if step.request is not None)
+    agent_nodes: list[ProjectionNode] = [turn, *steps]
+    for request in requests:
+        agent_nodes.extend((request, *request.retries, *request.tools))
+        if request.response is not None:
+            agent_nodes.append(request.response)
+    return ExecutionLineage(
+        business_node_ids=tuple(sorted(proof.business_node_ids)),
+        artifact_refs=tuple(sorted(proof.artifact_refs)),
+        agent_node_ids=tuple(node.id for node in agent_nodes),
+        turn_ids=(turn.turn_id,),
+        step_ids=tuple(step.step_id for step in steps),
+        request_ids=tuple(request.request_id for request in requests),
+        tool_call_ids=tuple(
+            tool.tool_call_id for request in requests for tool in request.tools
+        ),
+        result_ids=tuple(sorted(proof.result_ids)),
     )
 
 

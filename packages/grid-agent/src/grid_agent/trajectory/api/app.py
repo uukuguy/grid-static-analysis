@@ -19,6 +19,7 @@ from grid_agent.trajectory.api.cursor import CursorCodec, CursorError, CursorExp
 from grid_agent.trajectory.api.models import ApiError, RunListResponse, RunSummary
 from grid_agent.trajectory.api.paging import ProjectionPager, ProjectionRecordTooLarge
 from grid_agent.trajectory.agent_projection import execution_slice
+from grid_agent.trajectory.business_projection import business_causal_rows
 from grid_agent.trajectory.projection_models import ExecutionSlice, ProjectedRun
 
 
@@ -35,7 +36,7 @@ SECURITY_HEADERS = {
 }
 
 _PROJECTION_VERSIONS = {
-    "business": "business-trajectory/1.0",
+    "business": "business-trajectory/1.1",
     "agent": "agent-trajectory/1.0",
 }
 
@@ -45,6 +46,7 @@ class ProjectionPageResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    analysis_id: str = Field(min_length=1)
     items: tuple[dict[str, Any], ...] = ()
     older_cursor: str | None = None
     newer_cursor: None = None
@@ -257,16 +259,23 @@ def _page_view(
         projection_version=_PROJECTION_VERSIONS[view],
     )
     cursor_state = cursor_codec.decode(cursor, expectation) if cursor else None
-    items = (
-        projected.business.problems if view == "business" else projected.agent.turns
-    )
-    records = tuple(
-        _ProjectionRecord(
-            sequence=max(item.source_sequences),
-            item=item.model_dump(mode="json") | {"source_sequence": max(item.source_sequences)},
+    if view == "business":
+        records = tuple(
+            _ProjectionRecord(
+                sequence=row.source_sequence,
+                item=row.model_dump(mode="json"),
+            )
+            for row in business_causal_rows(projected.business)
         )
-        for item in items
-    )
+    else:
+        records = tuple(
+            _ProjectionRecord(
+                sequence=max(item.source_sequences),
+                item=item.model_dump(mode="json")
+                | {"source_sequence": max(item.source_sequences)},
+            )
+            for item in projected.agent.turns
+        )
     page = ProjectionPager().page(records, cursor_state=cursor_state)
     older_cursor = (
         cursor_codec.encode(
@@ -282,6 +291,7 @@ def _page_view(
         else None
     )
     return ProjectionPageResponse(
+        analysis_id=projected.analysis_id,
         items=tuple(record.item for record in page.items),
         older_cursor=older_cursor,
         newer_cursor=page.newer_cursor,

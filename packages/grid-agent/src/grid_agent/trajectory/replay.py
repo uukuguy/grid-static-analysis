@@ -56,16 +56,35 @@ class SourceCoordinate(StrictFrozenModel):
 class ReplayEventLike(Protocol):
     """The validated event fields consumed by pure projection reducers."""
 
-    analysis_id: str
-    sequence: int
-    timestamp: str | None
-    event_type: str
-    scope: RunScope
-    causation: Causation
-    source: EventSource
-    context: ContextBoundary
-    refs: EventRefs
-    payload: Mapping[str, Any]
+    @property
+    def analysis_id(self) -> str: ...
+
+    @property
+    def sequence(self) -> int: ...
+
+    @property
+    def timestamp(self) -> str | None: ...
+
+    @property
+    def event_type(self) -> str: ...
+
+    @property
+    def scope(self) -> RunScope: ...
+
+    @property
+    def causation(self) -> Causation: ...
+
+    @property
+    def source(self) -> EventSource: ...
+
+    @property
+    def context(self) -> ContextBoundary: ...
+
+    @property
+    def refs(self) -> EventRefs: ...
+
+    @property
+    def payload(self) -> Mapping[str, Any]: ...
 
 
 class ImportedRunEvent(StrictFrozenModel):

@@ -21,6 +21,7 @@ from grid_agent.trajectory.projection_models import (
     AgentTurn,
     ArtifactIndex,
     ArtifactIndexRecord,
+    BusinessNode,
     BusinessProblem,
     BusinessTrajectory,
     ContextFrame,
@@ -62,6 +63,16 @@ class StubCatalog:
             status="completed",
             turn_id="analysis-test-t001",
             title="analysis-test-t001",
+            nodes=(
+                BusinessNode(
+                    id="business:analysis-test:900:decision",
+                    source="agent-declared",
+                    source_sequences=(900,),
+                    status="completed",
+                    kind="decision",
+                    title="Recorded decision",
+                ),
+            ),
         )
         turn = AgentTurn(
             id="agent:analysis-test:turn-1",
@@ -535,6 +546,75 @@ def test_api_pages_fixed_business_and_agent_views_with_signed_cursor(tmp_path: P
     assert agent.json()["items"][-1]["source_sequence"] == 900
 
 
+def test_business_api_pages_causal_rows_inside_one_large_problem_with_exact_cursor(
+    tmp_path: Path,
+) -> None:
+    app, catalog, _ = create_test_app(tmp_path)
+    nodes = tuple(
+        BusinessNode(
+            id=f"business:analysis-test:{sequence}:decision",
+            source="agent-declared",
+            source_sequences=(sequence,),
+            status="completed",
+            kind="decision",
+            title=f"Decision {sequence}",
+            detail="x" * 5_000,
+        )
+        for sequence in range(1, 1_002)
+    )
+    problem = BusinessProblem(
+        id="business:analysis-test:large-turn",
+        source="derived",
+        source_sequences=tuple(range(1, 1_002)),
+        rule_id="problem-grouping/v1",
+        status="completed",
+        turn_id="analysis-test-large-turn",
+        title="One turn with more than two megabytes of causal nodes",
+        nodes=nodes,
+    )
+    catalog.projected = catalog.projected.model_copy(
+        update={
+            "business": BusinessTrajectory(
+                analysis_id="analysis-test", problems=(problem,)
+            )
+        }
+    )
+    client = TestClient(app)
+
+    newest = client.get("/api/runs/analysis-test/business")
+
+    assert newest.status_code == 200
+    newest_page = newest.json()
+    assert newest_page["analysis_id"] == "analysis-test"
+    assert 0 < len(newest_page["items"]) <= 500
+    assert newest_page["encoded_bytes"] <= 2 * 1024 * 1024
+    assert newest_page["has_older"] is True
+    assert newest_page["older_cursor"]
+    assert all(len(row["nodes"]) == 1 for row in newest_page["items"])
+    assert all("nodes" not in row["problem"] for row in newest_page["items"])
+    assert all("source_sequences" not in row["problem"] for row in newest_page["items"])
+    assert {
+        row["problem"]["id"] for row in newest_page["items"]
+    } == {"business:analysis-test:large-turn"}
+    assert {
+        row["problem"]["node_count"] for row in newest_page["items"]
+    } == {1_001}
+    assert newest_page["last_sequence"] == 1_001
+
+    older = client.get(
+        "/api/runs/analysis-test/business",
+        params={"cursor": newest_page["older_cursor"]},
+    )
+
+    assert older.status_code == 200
+    older_page = older.json()
+    assert older_page["analysis_id"] == "analysis-test"
+    assert older_page["last_sequence"] == newest_page["first_sequence"] - 1
+    newest_sequences = {row["source_sequence"] for row in newest_page["items"]}
+    older_sequences = {row["source_sequence"] for row in older_page["items"]}
+    assert newest_sequences.isdisjoint(older_sequences)
+
+
 def test_api_rejects_tampered_cursor_and_reports_stale_cursor(tmp_path: Path) -> None:
     app, catalog, codec = create_test_app(tmp_path)
     client = TestClient(app)
@@ -645,6 +725,82 @@ def test_execution_slice_returns_only_agent_records_causally_bound_to_sequence(t
     assert response.json()["unavailable_reason"] is None
     assert "provider_payload" not in response.text
     assert "/turns/" not in response.text
+
+
+def test_execution_slice_resolves_a_claim_only_through_verified_artifact_lineage(
+    tmp_path: Path,
+) -> None:
+    app, catalog, _ = create_test_app(tmp_path)
+    reference = "evidence:sha256:" + "c" * 64
+    claim = BusinessNode(
+        id="business:analysis-test:60:claim",
+        source="agent-declared",
+        source_sequences=(60,),
+        status="completed",
+        kind="claim",
+        title="Claim linked only through evidence",
+        refs=(reference,),
+    )
+    problem = BusinessProblem(
+        id="business:analysis-test:turn-7",
+        source="derived",
+        source_sequences=(60,),
+        rule_id="problem-grouping/v1",
+        status="completed",
+        turn_id="analysis-test-t007",
+        title="analysis-test-t007",
+        nodes=(claim,),
+    )
+    lineage = ArtifactIndexRecord(
+        id="artifact:analysis-test:lineage",
+        source_sequences=(49, 60),
+        reference=reference,
+        kind="evidence",
+        relative_path="evidence/lineage.json",
+        sha256="c" * 64,
+        verification_status="verified",
+        producing_sequence=49,
+        consuming_sequences=(60,),
+        turn_id="analysis-test-t007",
+        step_id="step-7",
+        request_id="request-7",
+        tool_call_id="tool-7",
+        result_id="result-7",
+        evidence_id=reference,
+        claim_id=claim.id,
+    )
+    catalog.projected = catalog.projected.model_copy(
+        update={
+            "business": BusinessTrajectory(
+                analysis_id="analysis-test", problems=(problem,)
+            ),
+            "artifacts": ArtifactIndex(
+                analysis_id="analysis-test", records={reference: lineage}
+            ),
+        }
+    )
+
+    response = TestClient(app).get(
+        "/api/runs/analysis-test/execution?at_sequence=60"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["turn"]["turn_id"] == "analysis-test-t007"
+    assert body["turn"]["steps"][0]["step_id"] == "step-7"
+    assert body["turn"]["steps"][0]["request"]["request_id"] == "request-7"
+    assert [
+        tool["tool_call_id"]
+        for tool in body["turn"]["steps"][0]["request"]["tools"]
+    ] == ["tool-7"]
+    assert body["lineage"]["business_node_ids"] == [claim.id]
+    assert body["lineage"]["artifact_refs"] == [reference]
+    assert body["lineage"]["request_ids"] == ["request-7"]
+    assert body["lineage"]["tool_call_ids"] == ["tool-7"]
+    assert body["lineage"]["result_ids"] == ["result-7"]
+    assert "unrelated" not in response.text
+    assert "numeric-id" not in response.text
+    assert "provider_payload" not in response.text
 
 
 def test_execution_slice_is_explicitly_unavailable_without_durable_linkage(tmp_path: Path) -> None:

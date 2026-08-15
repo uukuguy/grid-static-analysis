@@ -55,13 +55,16 @@ export function RunExplorer({ runs, selectedRunId, problems = [], focusedProblem
     </div>
     {selectedRunId && problems.length > 0 ? <section className="problem-index" aria-labelledby="problem-index-heading">
       <h2 id="problem-index-heading">Turn index</h2>
-      {problems.map((problem, index) => <button key={problem.id} type="button"
+      {problems.map((problem, index) => {
+        const nodeCount = problem.node_count ?? problem.nodes.length;
+        return <button key={problem.id} type="button"
         className={problem.id === focusedProblemId ? 'problem-index-item selected' : 'problem-index-item'}
-        aria-label={`${problem.title} · ${problem.nodes.length} ${problem.nodes.length === 1 ? 'decision' : 'decisions'}`}
+        aria-label={`${problem.title} · ${nodeCount} ${nodeCount === 1 ? 'decision' : 'decisions'}`}
         aria-pressed={problem.id === focusedProblemId}
         onClick={() => onFocusProblem(problem.id)}>
-        <span>Turn {index + 1}</span><small>{problem.nodes.length} {problem.nodes.length === 1 ? 'decision' : 'decisions'}</small>
-      </button>)}
+        <span>Turn {index + 1}</span><small>{nodeCount} {nodeCount === 1 ? 'decision' : 'decisions'}</small>
+      </button>;
+      })}
     </section> : null}
   </nav>;
 }

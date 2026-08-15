@@ -11,7 +11,15 @@ from grid_agent.trajectory.events import (
     EventSource,
     RunScope,
 )
-from grid_agent.trajectory.projection_models import ArtifactIndex, BusinessTrajectory, ContextTimeline, ProjectedRun
+from grid_agent.trajectory.projection_models import (
+    ArtifactIndex,
+    ArtifactIndexRecord,
+    BusinessNode,
+    BusinessProblem,
+    BusinessTrajectory,
+    ContextTimeline,
+    ProjectedRun,
+)
 
 
 @dataclass(frozen=True)
@@ -295,3 +303,158 @@ def test_execution_slice_uses_nested_source_sequences_without_nearest_fallback()
     assert numeric_id_only.unavailable_reason == "no durable execution linkage is recorded"
     assert missing.turn is None
     assert missing.unavailable_reason == "no durable execution linkage is recorded"
+
+
+def test_execution_slice_scopes_claim_execution_by_exact_artifact_lineage_ids() -> None:
+    reference = "evidence:sha256:" + "a" * 64
+    events = (
+        Event(10, "turn.started", RunScope(turn_id="turn-1"), {"ordinal": 1}),
+        Event(11, "step.started", RunScope(turn_id="turn-1", step_id="step-1")),
+        Event(
+            12,
+            "model.request.started",
+            RunScope(turn_id="turn-1", step_id="step-1", request_id="request-1"),
+        ),
+        Event(
+            20,
+            "tool.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-1",
+                request_id="request-1",
+                tool_call_id="tool-1",
+            ),
+            {"capability": "grid.analyze"},
+        ),
+        Event(
+            21,
+            "tool.completed",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-1",
+                request_id="request-1",
+                tool_call_id="tool-1",
+            ),
+            {"capability": "grid.analyze", "ok": True},
+        ),
+        Event(22, "step.started", RunScope(turn_id="turn-1", step_id="step-unrelated")),
+        Event(
+            23,
+            "model.request.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-unrelated",
+                request_id="request-unrelated",
+            ),
+        ),
+        Event(
+            24,
+            "tool.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-unrelated",
+                request_id="request-unrelated",
+                tool_call_id="60",
+            ),
+            {"capability": "provider_payload.numeric-id"},
+        ),
+        Event(
+            25,
+            "tool.completed",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-unrelated",
+                request_id="request-unrelated",
+                tool_call_id="60",
+            ),
+            {"capability": "provider_payload.numeric-id", "ok": True},
+        ),
+    )
+    claim = BusinessNode(
+        id="business:analysis-1:60:claim",
+        source="agent-declared",
+        source_sequences=(60,),
+        status="completed",
+        kind="claim",
+        title="Artifact-linked claim",
+        refs=(reference,),
+    )
+    projected = ProjectedRun(
+        analysis_id="analysis-1",
+        source_fingerprint="sha256:source",
+        agent=project_agent(events),
+        business=BusinessTrajectory(
+            analysis_id="analysis-1",
+            problems=(
+                BusinessProblem(
+                    id="business:analysis-1:turn-1",
+                    source="derived",
+                    source_sequences=(60,),
+                    rule_id="problem-grouping/v1",
+                    status="completed",
+                    turn_id="turn-1",
+                    title="turn-1",
+                    nodes=(claim,),
+                ),
+            ),
+        ),
+        context=ContextTimeline(analysis_id="analysis-1"),
+        artifacts=ArtifactIndex(
+            analysis_id="analysis-1",
+            records={
+                reference: ArtifactIndexRecord(
+                    id="artifact:analysis-1:lineage",
+                    source_sequences=(21, 60),
+                    reference=reference,
+                    kind="evidence",
+                    relative_path="evidence/lineage.json",
+                    sha256="a" * 64,
+                    verification_status="verified",
+                    producing_sequence=21,
+                    consuming_sequences=(60,),
+                    turn_id="turn-1",
+                    step_id="step-1",
+                    request_id="request-1",
+                    tool_call_id="tool-1",
+                    result_id="result-1",
+                    evidence_id=reference,
+                    claim_id=claim.id,
+                )
+            },
+        ),
+    )
+
+    linked = execution_slice(projected, 60)
+
+    assert linked.turn is not None
+    assert linked.turn.turn_id == "turn-1"
+    assert [step.step_id for step in linked.turn.steps] == ["step-1"]
+    request = linked.turn.steps[0].request
+    assert request is not None
+    assert request.request_id == "request-1"
+    assert [tool.tool_call_id for tool in request.tools] == ["tool-1"]
+    assert linked.lineage is not None
+    assert linked.lineage.business_node_ids == (claim.id,)
+    assert linked.lineage.artifact_refs == (reference,)
+    assert linked.lineage.request_ids == ("request-1",)
+    assert linked.lineage.tool_call_ids == ("tool-1",)
+    assert linked.lineage.result_ids == ("result-1",)
+    assert "unrelated" not in linked.model_dump_json()
+    assert "numeric-id" not in linked.model_dump_json()
+
+    mismatched_record = projected.artifacts.records[reference].model_copy(
+        update={"tool_call_id": "tool-missing"}
+    )
+    mismatched = projected.model_copy(
+        update={
+            "artifacts": ArtifactIndex(
+                analysis_id="analysis-1", records={reference: mismatched_record}
+            )
+        }
+    )
+
+    unavailable = execution_slice(mismatched, 60)
+
+    assert unavailable.turn is None
+    assert unavailable.lineage is None
+    assert unavailable.unavailable_reason == "no durable execution linkage is recorded"

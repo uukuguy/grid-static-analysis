@@ -1,6 +1,7 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunSummary } from '../api/types';
+import type { AgentTurn, BusinessCausalRow, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunSummary } from '../api/types';
+import { prependBusinessRows, problemsFromBusinessRows } from '../api/business';
 import { AuditInspector } from '../components/audit/AuditInspector';
 import { OverviewTimeline } from '../components/layout/OverviewTimeline';
 import { RunExplorer } from '../components/layout/RunExplorer';
@@ -32,7 +33,8 @@ export function App({ client = api }: { client?: AppClient }) {
   const [runListAttempt, setRunListAttempt] = useState(0);
   const [pageAttempts, setPageAttempts] = useState<Record<WorkbenchView, number>>({ business: 0, agent: 0, context: 0, evidence: 0 });
   const [pageErrors, setPageErrors] = useState<Partial<Record<WorkbenchView, unknown>>>({});
-  const [problems, setProblems] = useState<BusinessProblem[]>([]);
+  const [businessRows, setBusinessRows] = useState<BusinessCausalRow[]>([]);
+  const problems = useMemo(() => problemsFromBusinessRows(businessRows), [businessRows]);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [contextFrame, setContextFrame] = useState<ContextFrame | null>(null);
   const [contextSequence, setContextSequence] = useState<number | null>(null);
@@ -41,13 +43,19 @@ export function App({ client = api }: { client?: AppClient }) {
   const [executionSliceDiagnostic, setExecutionSliceDiagnostic] = useState<string | null>(null);
   const [executionSliceAttempt, setExecutionSliceAttempt] = useState(0);
   const [evidenceIndex, setEvidenceIndex] = useState<EvidenceIndex | null>(null);
-  const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
+  const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessCausalRow>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const [olderState, setOlderState] = useState<'idle' | 'loading' | 'failed'>('idle');
   const [olderError, setOlderError] = useState<string | null>(null);
   const loadingOlder = useRef(false);
   const failedOlderCursor = useRef<string | null>(null);
-  const businessPageRef = useRef<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
+  const businessPageRef = useRef<Pick<ProjectionPage<BusinessCausalRow>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
+  const olderRequestRef = useRef<{ controller: AbortController; runId: string; cursor: string } | null>(null);
+  const selectedRunIdRef = useRef<string | null>(state.selectedRunId);
+  const contextSequenceRef = useRef<number | null>(contextSequence);
   const deepLinkNode = useRef(new URLSearchParams(window.location.search).get('node'));
+
+  selectedRunIdRef.current = state.selectedRunId;
+  contextSequenceRef.current = contextSequence;
 
   useEffect(() => {
     document.documentElement.dataset.theme = activeTheme;
@@ -110,11 +118,20 @@ export function App({ client = api }: { client?: AppClient }) {
 
   useEffect(() => {
     if (!state.selectedRunId) return;
+    const requestedRunId = state.selectedRunId;
     const controller = new AbortController();
+    olderRequestRef.current?.controller.abort();
+    olderRequestRef.current = null;
+    loadingOlder.current = false;
+    setBusinessRows([]);
     setPageErrors((errors) => ({ ...errors, business: null }));
     dispatch({ type: 'page/requested', view: 'business' });
-    void client.getBusinessPage(state.selectedRunId, undefined, controller.signal).then((page) => {
-      setProblems(page.items);
+    void client.getBusinessPage(requestedRunId, undefined, controller.signal).then((page) => {
+      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
+      if (page.analysis_id !== requestedRunId) {
+        throw new Error('Business projection response identity does not match the requested run.');
+      }
+      setBusinessRows(page.items);
       failedOlderCursor.current = null;
       setOlderState('idle');
       setOlderError(null);
@@ -122,8 +139,8 @@ export function App({ client = api }: { client?: AppClient }) {
       setBusinessPage(page);
       dispatch({ type: 'page/loaded', view: 'business', page: pageMetadata(page) });
     }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      setProblems([]);
+      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
+      setBusinessRows([]);
       failedOlderCursor.current = null;
       setOlderState('idle');
       setOlderError(null);
@@ -138,14 +155,19 @@ export function App({ client = api }: { client?: AppClient }) {
   useEffect(() => {
     const needsAgent = state.activeView === 'agent';
     if (!needsAgent || !state.selectedRunId || !client.getAgentPage) return;
+    const requestedRunId = state.selectedRunId;
     const controller = new AbortController();
     setPageErrors((errors) => ({ ...errors, agent: null }));
     dispatch({ type: 'page/requested', view: 'agent' });
-    void client.getAgentPage(state.selectedRunId, undefined, controller.signal).then((page) => {
+    void client.getAgentPage(requestedRunId, undefined, controller.signal).then((page) => {
+      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
+      if (page.analysis_id !== requestedRunId) {
+        throw new Error('Agent projection response identity does not match the requested run.');
+      }
       setAgentTurns(page.items);
       dispatch({ type: 'page/loaded', view: 'agent', page: pageMetadata(page) });
     }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
       setPageErrors((errors) => ({ ...errors, agent: error }));
       dispatch({ type: 'page/failed', view: 'agent', message: pageErrorMessage(error, 'Unable to load agent trajectory.') });
     });
@@ -154,6 +176,8 @@ export function App({ client = api }: { client?: AppClient }) {
 
   const auditSelection = resolveAuditSelection(problems, agentTurns, state.selectedNodeId);
   const auditSequence = auditSelection?.sequence ?? null;
+  const auditSequenceRef = useRef<number | null>(auditSequence);
+  auditSequenceRef.current = auditSequence;
   const focusedProblem = problems.find((problem) => problem.id === state.focusedProblemId) ?? null;
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;
   const auditInspectorModel = auditSelection ? buildAuditInspectorModel({
@@ -171,16 +195,29 @@ export function App({ client = api }: { client?: AppClient }) {
       setExecutionSliceDiagnostic(null);
       return;
     }
+    const requestedRunId = state.selectedRunId;
+    const requestedSequence = auditSequence;
     const controller = new AbortController();
     setExecutionSlice(null);
     setExecutionSliceState('loading');
     setExecutionSliceDiagnostic(null);
-    void client.getExecutionSlice(state.selectedRunId, auditSequence, controller.signal).then((slice) => {
-      if (controller.signal.aborted || slice.source_sequence !== auditSequence) return;
+    void client.getExecutionSlice(requestedRunId, requestedSequence, controller.signal).then((slice) => {
+      if (
+        controller.signal.aborted
+        || selectedRunIdRef.current !== requestedRunId
+        || auditSequenceRef.current !== requestedSequence
+      ) return;
+      if (slice.analysis_id !== requestedRunId || slice.source_sequence !== requestedSequence) {
+        throw new Error('Execution slice response identity does not match the requested selection.');
+      }
       setExecutionSlice(slice);
       setExecutionSliceState('ready');
     }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
+      if (
+        controller.signal.aborted
+        || selectedRunIdRef.current !== requestedRunId
+        || auditSequenceRef.current !== requestedSequence
+      ) return;
       setExecutionSlice(null);
       setExecutionSliceState(error instanceof ApiError && error.status === 501 ? 'unsupported' : 'network-error');
       setExecutionSliceDiagnostic(pageErrorMessage(error, 'Unable to load execution linkage.'));
@@ -200,16 +237,31 @@ export function App({ client = api }: { client?: AppClient }) {
   useEffect(() => {
     const needsContext = state.activeView === 'context' || hasAuditSelection;
     if (!needsContext || !state.selectedRunId || !client.getContextFrame) return;
+    const requestedRunId = state.selectedRunId;
     const sequence = contextSequence;
     if (!sequence || sequence < 1) return;
+    const requestedSequence = sequence;
     const controller = new AbortController();
+    setContextFrame(null);
     setPageErrors((errors) => ({ ...errors, context: null }));
     dispatch({ type: 'page/requested', view: 'context' });
-    void client.getContextFrame(state.selectedRunId, sequence, controller.signal).then((frame) => {
+    void client.getContextFrame(requestedRunId, requestedSequence, controller.signal).then((frame) => {
+      if (
+        controller.signal.aborted
+        || selectedRunIdRef.current !== requestedRunId
+        || contextSequenceRef.current !== requestedSequence
+      ) return;
+      if (frame.source_sequence !== requestedSequence) {
+        throw new Error('Context projection response sequence does not match the requested sequence.');
+      }
       setContextFrame(frame);
       dispatch({ type: 'page/loaded', view: 'context', page: { firstSequence: frame.source_sequence, lastSequence: frame.source_sequence, hasOlder: false } });
     }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
+      if (
+        controller.signal.aborted
+        || selectedRunIdRef.current !== requestedRunId
+        || contextSequenceRef.current !== requestedSequence
+      ) return;
       setContextFrame(null);
       setPageErrors((errors) => ({ ...errors, context: error }));
       dispatch({ type: 'page/failed', view: 'context', message: pageErrorMessage(error, 'Unable to load context frame.') });
@@ -220,14 +272,20 @@ export function App({ client = api }: { client?: AppClient }) {
   useEffect(() => {
     const needsEvidence = state.activeView === 'evidence' || auditArtifactKey.length > 0;
     if (!needsEvidence || !state.selectedRunId || !client.getEvidenceIndex) return;
+    const requestedRunId = state.selectedRunId;
     const controller = new AbortController();
+    setEvidenceIndex(null);
     setPageErrors((errors) => ({ ...errors, evidence: null }));
     dispatch({ type: 'page/requested', view: 'evidence' });
-    void client.getEvidenceIndex(state.selectedRunId, controller.signal).then((index) => {
+    void client.getEvidenceIndex(requestedRunId, controller.signal).then((index) => {
+      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
+      if (index.analysis_id !== requestedRunId) {
+        throw new Error('Evidence projection response identity does not match the requested run.');
+      }
       setEvidenceIndex(index);
       dispatch({ type: 'page/loaded', view: 'evidence', page: { firstSequence: null, lastSequence: null, hasOlder: false } });
     }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
       setEvidenceIndex(null);
       setPageErrors((errors) => ({ ...errors, evidence: error }));
       dispatch({ type: 'page/failed', view: 'evidence', message: pageErrorMessage(error, 'Unable to load evidence projection.') });
@@ -254,12 +312,23 @@ export function App({ client = api }: { client?: AppClient }) {
     const runId = state.selectedRunId;
     const page = businessPageRef.current;
     if (!runId || !page.has_older || !cursor || loadingOlder.current) return;
+    const controller = new AbortController();
+    const request = { controller, runId, cursor };
+    olderRequestRef.current = request;
     loadingOlder.current = true;
     setOlderState('loading');
     setOlderError(null);
     setPageErrors((errors) => ({ ...errors, business: null }));
-    void client.getBusinessPage(runId, cursor).then((page) => {
-      setProblems((current) => prependProblems(page.items, current));
+    void client.getBusinessPage(runId, cursor, controller.signal).then((page) => {
+      if (
+        controller.signal.aborted
+        || olderRequestRef.current !== request
+        || selectedRunIdRef.current !== runId
+      ) return;
+      if (page.analysis_id !== runId) {
+        throw new Error('Business projection response identity does not match the requested run.');
+      }
+      setBusinessRows((current) => prependBusinessRows(page.items, current));
       failedOlderCursor.current = null;
       setOlderState('idle');
       setOlderError(null);
@@ -267,6 +336,11 @@ export function App({ client = api }: { client?: AppClient }) {
       setBusinessPage(page);
       dispatch({ type: 'page/prepended', view: 'business', page: pageMetadata(page) });
     }).catch((error: unknown) => {
+      if (
+        controller.signal.aborted
+        || olderRequestRef.current !== request
+        || selectedRunIdRef.current !== runId
+      ) return;
       failedOlderCursor.current = cursor;
       if (error instanceof ApiError && error.status === 501) {
         setOlderState('idle');
@@ -278,7 +352,11 @@ export function App({ client = api }: { client?: AppClient }) {
       setOlderState('failed');
       setOlderError(pageErrorMessage(error, 'Unable to load older business trajectory.'));
     })
-      .finally(() => { loadingOlder.current = false; });
+      .finally(() => {
+        if (olderRequestRef.current !== request) return;
+        olderRequestRef.current = null;
+        loadingOlder.current = false;
+      });
   };
   const requestOlder = () => {
     const cursor = businessPageRef.current.older_cursor;
@@ -371,12 +449,6 @@ function pageMetadata<T>(page: ProjectionPage<T>) {
     hasOlder: page.has_older,
     olderCursor: page.older_cursor,
   };
-}
-
-/** Older API pages always precede the loaded tail; de-duplicate retries by durable ID. */
-function prependProblems(older: BusinessProblem[], current: BusinessProblem[]) {
-  const seen = new Set<string>();
-  return [...older, ...current].filter((problem) => !seen.has(problem.id) && (seen.add(problem.id), true));
 }
 
 function contextSequenceFromNodeId(nodeId: string): number | null {

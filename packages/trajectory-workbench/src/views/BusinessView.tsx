@@ -67,7 +67,7 @@ export function BusinessView({
       ? <div className="problem-group-header" data-testid={`problem-header-${item.problem.id}`}>
         <h2 id={problemHeadingId(item.problem.id)} tabIndex={-1}>{item.problem.title}</h2>
         <button type="button" className="problem-fold" aria-expanded={!state.foldedNodeIds.includes(item.problem.id)} onClick={() => dispatch({ type: 'node/foldToggled', nodeId: item.problem.id })} aria-label={`${state.foldedNodeIds.includes(item.problem.id) ? 'Expand' : 'Fold'} ${item.problem.title}`}>
-          <span>{state.foldedNodeIds.includes(item.problem.id) ? '▸' : '▾'}</span><small>{item.problem.status} · {item.problem.nodes.length} events</small>
+          <span>{state.foldedNodeIds.includes(item.problem.id) ? '▸' : '▾'}</span><small>{item.problem.status} · {item.problem.node_count ?? item.problem.nodes.length} events</small>
         </button>
       </div>
       : <TrajectoryRow item={item} selected={state.selectedNodeId === item.id} onSelect={() => dispatch({ type: 'node/selected', nodeId: item.id })} />}

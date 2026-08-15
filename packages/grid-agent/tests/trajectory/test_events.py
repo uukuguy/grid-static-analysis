@@ -105,7 +105,9 @@ def test_canonical_json_sorts_keys_preserves_list_order_and_ends_with_newline() 
 
 def test_envelope_models_reject_invalid_source_context_and_refs() -> None:
     with pytest.raises(ValidationError):
-        EventSource(kind="derived", producer="projector", integrity="verified")
+        EventSource.model_validate(
+            {"kind": "derived", "producer": "projector", "integrity": "verified"}
+        )
     with pytest.raises(ValidationError):
         Causation(parent_sequence=0)
     with pytest.raises(ValidationError):

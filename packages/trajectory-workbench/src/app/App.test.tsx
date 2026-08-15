@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessProblem, ContextFrame, EvidenceIndex, ExecutionSlice, RunListResponse } from '../api/types';
+import type { AgentTurn, BusinessCausalRow, BusinessNode, BusinessProblem, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunListResponse } from '../api/types';
 import { App } from './App';
 
 const run: RunListResponse = {
@@ -24,7 +24,15 @@ const problems: BusinessProblem[] = [
   {
     id: 'business:7', source: 'derived', source_sequences: [59, 78], rule_id: 'business/v1',
     status: 'completed', unavailable_reason: null, source_sequence: 59, turn_id: 'analysis-test-t007',
-    title: 'Q7 · 线路 17 N-1', nodes: [],
+    title: 'Q7 · 线路 17 N-1', node_count: 2, nodes: [{
+      id: 'business:7:opened', source: 'observed', source_sequences: [59], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: 59, kind: 'decision',
+      title: 'Problem opened', detail: null, refs: [],
+    }, {
+      id: 'business:7:closed', source: 'observed', source_sequences: [78], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: 78, kind: 'decision',
+      title: 'Problem completed', detail: null, refs: [],
+    }],
   },
 ];
 
@@ -40,11 +48,53 @@ const nestedProblem: BusinessProblem = {
 function fixtureClient(): Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> {
   return {
     listRuns: async () => run,
-    getBusinessPage: async () => ({
-      items: problems, older_cursor: null, newer_cursor: null, first_sequence: 59,
-      last_sequence: 78, has_older: false, encoded_bytes: 100,
-    }),
+    getBusinessPage: async (analysisId) => businessProjectionPage(problems, { analysisId }),
   };
+}
+
+function businessProjectionPage(
+  groupedProblems: BusinessProblem[],
+  options: {
+    analysisId?: string;
+    olderCursor?: string | null;
+    hasOlder?: boolean;
+    firstSequence?: number | null;
+    lastSequence?: number | null;
+  } = {},
+): ProjectionPage<BusinessCausalRow> {
+  const items = groupedProblems.flatMap((problem) => problem.nodes.map((node) => ({
+    id: `${problem.id}:sequence:${node.source_sequence}`,
+    source_sequence: node.source_sequence,
+    problem: {
+      id: problem.id,
+      source: problem.source,
+      rule_id: problem.rule_id,
+      status: problem.status,
+      unavailable_reason: problem.unavailable_reason,
+      turn_id: problem.turn_id,
+      title: problem.title,
+      first_sequence: Math.min(...problem.source_sequences),
+      last_sequence: Math.max(...problem.source_sequences),
+      node_count: Math.max(problem.node_count ?? 0, problem.nodes.length),
+    },
+    nodes: [businessWireNode(node)],
+  })));
+  return {
+    analysis_id: options.analysisId ?? 'analysis-test',
+    items,
+    older_cursor: options.olderCursor ?? null,
+    newer_cursor: null,
+    first_sequence: options.firstSequence ?? items[0]?.source_sequence ?? null,
+    last_sequence: options.lastSequence ?? items.at(-1)?.source_sequence ?? null,
+    has_older: options.hasOlder ?? false,
+    encoded_bytes: 100,
+  };
+}
+
+function businessWireNode(node: BusinessNode): Omit<BusinessNode, 'source_sequence'> {
+  const { source_sequence, ...wireNode } = node;
+  void source_sequence;
+  return wireNode;
 }
 
 function viewTab(name: 'Business' | 'Agent' | 'Context' | 'Evidence') {
@@ -140,10 +190,7 @@ describe('App shell', () => {
   it('retries a failed business projection request', async () => {
     const getBusinessPage = vi.fn()
       .mockRejectedValueOnce(new Error('projection unavailable'))
-      .mockResolvedValueOnce({
-        items: problems, older_cursor: null, newer_cursor: null, first_sequence: 59,
-        last_sequence: 78, has_older: false, encoded_bytes: 100,
-      });
+      .mockResolvedValueOnce(businessProjectionPage(problems));
     render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
 
     expect(await screen.findByTestId('state-network-error')).toHaveTextContent('projection unavailable');
@@ -198,7 +245,7 @@ describe('App shell', () => {
     };
     render(<App client={{
       listRuns: async () => run,
-      getBusinessPage: async () => ({ items: [selectedProblem], older_cursor: null, newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: false, encoded_bytes: 100 }),
+      getBusinessPage: async () => businessProjectionPage([selectedProblem]),
     }} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /Nested conclusion/i }));
@@ -264,7 +311,7 @@ describe('App shell', () => {
     window.history.replaceState({}, '', '/?node=business:7:claim');
     render(<App client={{
       listRuns: async () => run,
-      getBusinessPage: async () => ({ items: [nestedProblem], older_cursor: null, newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: false, encoded_bytes: 100 }),
+      getBusinessPage: async () => businessProjectionPage([nestedProblem]),
     }} />);
 
     await screen.findByRole('button', { name: /nested conclusion/i });
@@ -286,7 +333,7 @@ describe('App shell', () => {
     } }));
     render(<App client={{
       listRuns: async () => run,
-      getBusinessPage: async () => ({ items: [{ ...nestedProblem, nodes: [node] }], older_cursor: null, newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: false, encoded_bytes: 100 }),
+      getBusinessPage: async () => businessProjectionPage([{ ...nestedProblem, nodes: [node] }]),
       getContextFrame,
       getEvidenceIndex,
       artifactUrl: (_runId, ref) => `/artifact/${ref}`,
@@ -350,6 +397,7 @@ describe('App shell', () => {
       steps: [],
     };
     const getAgentPage = vi.fn(async () => ({
+      analysis_id: 'analysis-test',
       items: [agentTurn],
       older_cursor: null,
       newer_cursor: null,
@@ -384,7 +432,7 @@ describe('App shell', () => {
     } }));
     render(<App client={{
       listRuns: async () => run,
-      getBusinessPage: async () => ({ items: [auditedProblem], older_cursor: null, newer_cursor: null, first_sequence: 47, last_sequence: 61, has_older: false, encoded_bytes: 100 }),
+      getBusinessPage: async () => businessProjectionPage([auditedProblem], { firstSequence: 47, lastSequence: 61 }),
       getAgentPage,
       getEvidenceIndex,
       artifactUrl: (_runId, ref) => `/artifact/${ref}`,
@@ -444,7 +492,7 @@ describe('App shell', () => {
     }));
     render(<App client={{
       listRuns: async () => run,
-      getBusinessPage: async () => ({ items: [auditedProblem], older_cursor: null, newer_cursor: null, first_sequence: 48, last_sequence: 61, has_older: false, encoded_bytes: 100 }),
+      getBusinessPage: async () => businessProjectionPage([auditedProblem], { firstSequence: 48, lastSequence: 61 }),
       getExecutionSlice,
     }} />);
 
@@ -459,6 +507,11 @@ describe('App shell', () => {
       pending[0].resolve({
         analysis_id: 'analysis-test',
         source_sequence: 48,
+        lineage: {
+          business_node_ids: ['tool:17'], artifact_refs: [],
+          agent_node_ids: ['agent-turn:stale'], turn_ids: ['stale-turn-48'],
+          step_ids: [], request_ids: [], tool_call_ids: [], result_ids: [],
+        },
         turn: {
           id: 'agent-turn:stale',
           source: 'observed',
@@ -476,6 +529,11 @@ describe('App shell', () => {
       pending[1].resolve({
         analysis_id: 'analysis-test',
         source_sequence: 61,
+        lineage: {
+          business_node_ids: ['claim:7'], artifact_refs: [],
+          agent_node_ids: ['agent-turn:fresh'], turn_ids: ['fresh-turn-61'],
+          step_ids: [], request_ids: [], tool_call_ids: [], result_ids: [],
+        },
         turn: {
           id: 'agent-turn:fresh',
           source: 'observed',
@@ -526,36 +584,36 @@ describe('App shell', () => {
 
   it('fetches the older cursor once and prepends its problems before the current page', async () => {
     const getBusinessPage = vi.fn()
-      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'older-page', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
-      .mockResolvedValueOnce({ items: [{ ...problems[0], id: 'business:6', title: 'Q6 · Earlier' }], older_cursor: null, newer_cursor: null, first_sequence: 1, last_sequence: 58, has_older: false, encoded_bytes: 100 });
+      .mockResolvedValueOnce(businessProjectionPage([problems[0]], { olderCursor: 'older-page', hasOlder: true }))
+      .mockResolvedValueOnce(businessProjectionPage([{ ...problems[0], id: 'business:6', title: 'Q6 · Earlier' }], { firstSequence: 1, lastSequence: 58 }));
     render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
 
     await screen.findByRole('button', { name: /fold q7/i });
     fireEvent.click(screen.getByRole('button', { name: 'Load older history' }));
 
-    await waitFor(() => expect(getBusinessPage).toHaveBeenLastCalledWith('analysis-test', 'older-page'));
+    await waitFor(() => expect(getBusinessPage).toHaveBeenLastCalledWith('analysis-test', 'older-page', expect.any(AbortSignal)));
     expect(await screen.findByText('Q6 · Earlier')).toBeVisible();
     expect(screen.getByText('Q6 · Earlier').compareDocumentPosition(screen.getByText('Q7 · 线路 17 N-1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('shows unsupported when loading an older business cursor returns HTTP 501', async () => {
     const getBusinessPage = vi.fn()
-      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'older-page', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
+      .mockResolvedValueOnce(businessProjectionPage([problems[0]], { olderCursor: 'older-page', hasOlder: true }))
       .mockRejectedValueOnce(new ApiError(501, 'unsupported', 'Older business history requires a newer workbench.'));
     render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Load older history' }));
 
     expect(await screen.findByTestId('state-unsupported')).toHaveTextContent('Older business history requires a newer workbench.');
-    expect(getBusinessPage).toHaveBeenLastCalledWith('analysis-test', 'older-page');
+    expect(getBusinessPage).toHaveBeenLastCalledWith('analysis-test', 'older-page', expect.any(AbortSignal));
   });
 
   it('retries a failed older business cursor instead of the initial page', async () => {
     const olderProblem = { ...problems[0], id: 'business:6', title: 'Q6 · Earlier' };
     const getBusinessPage = vi.fn()
-      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'cursor-before-48', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
+      .mockResolvedValueOnce(businessProjectionPage([problems[0]], { olderCursor: 'cursor-before-48', hasOlder: true }))
       .mockRejectedValueOnce(new Error('older history unavailable'))
-      .mockResolvedValueOnce({ items: [olderProblem], older_cursor: null, newer_cursor: null, first_sequence: 1, last_sequence: 58, has_older: false, encoded_bytes: 100 });
+      .mockResolvedValueOnce(businessProjectionPage([olderProblem], { firstSequence: 1, lastSequence: 58 }));
     render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Load older history' }));
@@ -565,7 +623,7 @@ describe('App shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry older history' }));
 
     expect(await screen.findByText('Q6 · Earlier')).toBeVisible();
-    expect(getBusinessPage).toHaveBeenNthCalledWith(3, 'analysis-test', 'cursor-before-48');
+    expect(getBusinessPage).toHaveBeenNthCalledWith(3, 'analysis-test', 'cursor-before-48', expect.any(AbortSignal));
   });
 
   it('filters by source kind and groups visible runs by status', async () => {
@@ -646,5 +704,111 @@ describe('App shell', () => {
 
     await waitFor(() => expect(getContextFrame).toHaveBeenLastCalledWith('analysis-test', 59, expect.any(AbortSignal)));
     expect(await screen.findByText(/state at sequence 59/i)).toBeVisible();
+  });
+
+  it('ignores an out-of-order business page after switching runs', async () => {
+    const pending: Array<{
+      runId: string;
+      signal: AbortSignal;
+      resolve: (page: ProjectionPage<BusinessCausalRow>) => void;
+    }> = [];
+    const getBusinessPage = vi.fn((runId: string, _cursor?: string, signal?: AbortSignal) => new Promise<ProjectionPage<BusinessCausalRow>>((resolve) => {
+      pending.push({ runId, signal: signal ?? new AbortController().signal, resolve });
+    }));
+    render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /analysis-partial/i }));
+    await waitFor(() => expect(pending.map(({ runId }) => runId)).toEqual(['analysis-test', 'analysis-partial']));
+    expect(pending[0].signal.aborted).toBe(true);
+
+    const page = (title: string): BusinessProblem => ({
+      ...nestedProblem,
+      id: `business:${title}`,
+      turn_id: `${title}-turn`,
+      title,
+      nodes: [{ ...nestedProblem.nodes[0], id: `node:${title}`, title: `${title} node` }],
+    });
+    await act(async () => {
+      pending[1].resolve(businessProjectionPage([page('fresh partial run')], { analysisId: 'analysis-partial' }));
+      pending[0].resolve(businessProjectionPage([page('stale completed run')]));
+    });
+
+    expect((await screen.findAllByText('fresh partial run')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('stale completed run')).not.toBeInTheDocument();
+  });
+
+  it('ignores an out-of-order context frame after switching selected sequences', async () => {
+    const twoNodes: BusinessProblem = {
+      ...nestedProblem,
+      nodes: [
+        { ...nestedProblem.nodes[0], id: 'node:48', source_sequences: [48], source_sequence: 48, title: 'Sequence 48' },
+        { ...nestedProblem.nodes[0], id: 'node:61', source_sequences: [61], source_sequence: 61, title: 'Sequence 61' },
+      ],
+    };
+    const pending: Array<{ sequence: number; signal: AbortSignal; resolve: (frame: ContextFrame) => void }> = [];
+    const getContextFrame = vi.fn((_runId: string, sequence: number, signal?: AbortSignal) => new Promise<ContextFrame>((resolve) => {
+      pending.push({ sequence, signal: signal ?? new AbortController().signal, resolve });
+    }));
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => businessProjectionPage([twoNodes], { firstSequence: 48, lastSequence: 61 }),
+      getContextFrame,
+    }} />);
+
+    fireEvent.click(await screen.findByTestId('causal-node-node:48'));
+    await waitFor(() => expect(pending.at(-1)?.sequence).toBe(48));
+    fireEvent.click(screen.getByTestId('causal-node-node:61'));
+    await waitFor(() => expect(pending.at(-1)?.sequence).toBe(61));
+    expect(pending[0].signal.aborted).toBe(true);
+    const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
+    fireEvent.click(within(inspector).getByRole('tab', { name: 'Context' }));
+
+    const frame = (sequence: number): ContextFrame => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+    });
+    await act(async () => {
+      pending[1].resolve(frame(61));
+      pending[0].resolve(frame(48));
+    });
+
+    expect(await within(inspector).findByText(/60 → 61/)).toBeVisible();
+    expect(within(inspector).queryByText(/47 → 48/)).not.toBeInTheDocument();
+  });
+
+  it('ignores an out-of-order evidence index after switching runs', async () => {
+    const pending: Array<{ runId: string; signal: AbortSignal; resolve: (index: EvidenceIndex) => void }> = [];
+    const getEvidenceIndex = vi.fn((runId: string, signal?: AbortSignal) => new Promise<EvidenceIndex>((resolve) => {
+      pending.push({ runId, signal: signal ?? new AbortController().signal, resolve });
+    }));
+    render(<App client={{ ...fixtureClient(), getEvidenceIndex }} />);
+
+    fireEvent.click(viewTab('Evidence'));
+    await waitFor(() => expect(pending.at(-1)?.runId).toBe('analysis-test'));
+    fireEvent.click(screen.getByRole('button', { name: /analysis-partial/i }));
+    await waitFor(() => expect(pending.at(-1)?.runId).toBe('analysis-partial'));
+    expect(pending[0].signal.aborted).toBe(true);
+
+    const index = (analysisId: string, reference: string): EvidenceIndex => ({
+      analysis_id: analysisId,
+      records: {
+        [reference]: {
+          id: `artifact:${reference}`, source: 'observed', source_sequences: [61], rule_id: null,
+          status: 'completed', unavailable_reason: null, reference, kind: 'evidence',
+          relative_path: `evidence/${reference}.json`, sha256: 'a'.repeat(64), verification_status: 'verified',
+          producing_sequence: 61, consuming_sequences: [], turn_id: null, step_id: null,
+          request_id: null, tool_call_id: null, result_id: null, evidence_id: reference, claim_id: null,
+        },
+      },
+    });
+    await act(async () => {
+      pending[1].resolve(index('analysis-partial', 'evidence:fresh'));
+      pending[0].resolve(index('analysis-test', 'evidence:stale'));
+    });
+
+    expect((await screen.findAllByText('evidence:fresh')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('evidence:stale')).not.toBeInTheDocument();
   });
 });

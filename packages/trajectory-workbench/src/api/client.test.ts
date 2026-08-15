@@ -44,6 +44,7 @@ describe('TrajectoryApiClient', () => {
       analysis_id: 'analysis/test',
       source_sequence: 48,
       turn: null,
+      lineage: null,
       unavailable_reason: 'no durable execution linkage is recorded',
     }), { status: 200 }));
     const client = new TrajectoryApiClient(fetcher);
@@ -65,6 +66,11 @@ describe('TrajectoryApiClient', () => {
       analysis_id: 'analysis-test',
       source_sequence: 48,
       unavailable_reason: null,
+      lineage: {
+        business_node_ids: [], artifact_refs: [],
+        agent_node_ids: ['agent:analysis-test:t007'], turn_ids: ['analysis-test-t007'],
+        step_ids: [], request_ids: [], tool_call_ids: [], result_ids: [],
+      },
       turn: {
         id: 'agent:analysis-test:t007',
         source: 'observed',

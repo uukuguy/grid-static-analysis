@@ -96,6 +96,8 @@ class ToolCall(ProjectionNode):
     artifact_ref: str | None = None
     ok: bool | None = None
     duration_seconds: float | None = Field(default=None, ge=0)
+    result_refs: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def require_ordered_lifecycle(self) -> "ToolCall":
@@ -128,11 +130,25 @@ class AgentTrajectory(StrictFrozenModel):
     turns: tuple[AgentTurn, ...] = ()
 
 
+class ExecutionLineage(StrictFrozenModel):
+    """Exact bounded identities that justify an execution slice."""
+
+    business_node_ids: tuple[str, ...] = ()
+    artifact_refs: tuple[str, ...] = ()
+    agent_node_ids: tuple[str, ...] = ()
+    turn_ids: tuple[str, ...] = ()
+    step_ids: tuple[str, ...] = ()
+    request_ids: tuple[str, ...] = ()
+    tool_call_ids: tuple[str, ...] = ()
+    result_ids: tuple[str, ...] = ()
+
+
 class ExecutionSlice(StrictFrozenModel):
     analysis_id: str = Field(min_length=1)
     source_sequence: int = Field(ge=1)
     turn: AgentTurn | None = None
     unavailable_reason: str | None = None
+    lineage: ExecutionLineage | None = None
 
     @model_validator(mode="after")
     def require_unavailable_reason_for_missing_turn(self) -> "ExecutionSlice":
@@ -140,6 +156,10 @@ class ExecutionSlice(StrictFrozenModel):
             raise ValueError("unavailable_reason is required when turn is null")
         if self.turn is not None and self.unavailable_reason is not None:
             raise ValueError("unavailable_reason must be null when turn is present")
+        if self.turn is None and self.lineage is not None:
+            raise ValueError("lineage must be null when turn is null")
+        if self.turn is not None and self.lineage is None:
+            raise ValueError("lineage is required when turn is present")
         return self
 
 
@@ -157,10 +177,51 @@ class BusinessNode(ProjectionNode):
                 raise ValueError("derived node requires source_sequences and rule_id")
         return value
 
+
 class BusinessProblem(ProjectionNode):
     turn_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     nodes: tuple[BusinessNode, ...] = ()
+
+
+class BusinessProblemSummary(StrictFrozenModel):
+    """Bounded metadata repeated on causal rows for stable page reconstruction."""
+
+    id: str = Field(min_length=1)
+    source: NodeSource
+    rule_id: str | None = Field(default=None, min_length=1)
+    status: LifecycleStatus
+    unavailable_reason: str | None = None
+    turn_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    first_sequence: int = Field(ge=1)
+    last_sequence: int = Field(ge=1)
+    node_count: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def require_ordered_range_and_provenance(self) -> "BusinessProblemSummary":
+        if self.last_sequence < self.first_sequence:
+            raise ValueError("last_sequence must not precede first_sequence")
+        if self.source == "derived" and self.rule_id is None:
+            raise ValueError("derived problem summary requires rule_id")
+        if self.source != "derived" and self.rule_id is not None:
+            raise ValueError("observed problem summary must not have rule_id")
+        return self
+
+
+class BusinessCausalRow(StrictFrozenModel):
+    """One cursor-addressable source sequence within a business problem."""
+
+    id: str = Field(min_length=1)
+    source_sequence: int = Field(ge=1)
+    problem: BusinessProblemSummary
+    nodes: tuple[BusinessNode, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_nodes_from_exact_sequence(self) -> "BusinessCausalRow":
+        if any(node.source_sequences[0] != self.source_sequence for node in self.nodes):
+            raise ValueError("causal row nodes must share their first source sequence")
+        return self
 
 
 class BusinessTrajectory(StrictFrozenModel):
@@ -278,12 +339,15 @@ __all__ = [
     "ArtifactIndex",
     "ArtifactIndexRecord",
     "AssistantResponse",
+    "BusinessCausalRow",
     "BusinessNode",
     "BusinessProblem",
+    "BusinessProblemSummary",
     "BusinessTrajectory",
     "ContextCheckpoint",
     "ContextFrame",
     "ContextTimeline",
+    "ExecutionLineage",
     "ExecutionSlice",
     "LifecycleStatus",
     "ModelRequest",

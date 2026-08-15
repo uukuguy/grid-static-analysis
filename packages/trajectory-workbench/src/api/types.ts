@@ -12,6 +12,7 @@ export type ContextState = JsonObject;
 export type ContextDelta = JsonObject;
 
 export interface ProjectionPage<T> {
+  analysis_id: string;
   items: T[];
   older_cursor: string | null;
   newer_cursor: null;
@@ -54,6 +55,8 @@ export interface ToolCall extends ProjectionNode {
   artifact_ref: string | null;
   ok: boolean | null;
   duration_seconds: number | null;
+  result_refs?: string[];
+  evidence_refs?: string[];
 }
 
 export interface ModelRequest extends ProjectionNode {
@@ -86,6 +89,18 @@ export interface ExecutionSlice {
   source_sequence: number;
   turn: ExecutionAgentTurn | null;
   unavailable_reason: string | null;
+  lineage: ExecutionLineage | null;
+}
+
+export interface ExecutionLineage {
+  business_node_ids: string[];
+  artifact_refs: string[];
+  agent_node_ids: string[];
+  turn_ids: string[];
+  step_ids: string[];
+  request_ids: string[];
+  tool_call_ids: string[];
+  result_ids: string[];
 }
 
 export interface BusinessNode extends ProjectionNode {
@@ -102,6 +117,27 @@ export interface BusinessProblem extends ProjectionNode {
   turn_id: string;
   title: string;
   nodes: BusinessNode[];
+  node_count?: number;
+}
+
+export interface BusinessProblemSummary {
+  id: string;
+  source: NodeSource;
+  rule_id: string | null;
+  status: LifecycleStatus;
+  unavailable_reason: string | null;
+  turn_id: string;
+  title: string;
+  first_sequence: number;
+  last_sequence: number;
+  node_count: number;
+}
+
+export interface BusinessCausalRow {
+  id: string;
+  source_sequence: number;
+  problem: BusinessProblemSummary;
+  nodes: Array<Omit<BusinessNode, 'source_sequence'>>;
 }
 
 interface ContextFrameBase extends ProjectionNode {

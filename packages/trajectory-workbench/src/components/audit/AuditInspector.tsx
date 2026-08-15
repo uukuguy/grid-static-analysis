@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from 'react';
 import { useState } from 'react';
-import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, ExecutionAgentTurn, ExecutionSlice, JsonValue, ModelRequest, ProjectionNode, ToolCall } from '../../api/types';
+import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, ExecutionAgentTurn, ExecutionLineage, ExecutionSlice, JsonValue, ModelRequest, ToolCall } from '../../api/types';
 import type { AuditInspectorModel, AuditPanel } from '../../audit/inspector-model';
 import { AsyncState, type AsyncStateName } from '../common/AsyncState';
 import { SourceBadge } from '../common/SourceBadge';
@@ -190,12 +190,19 @@ function StateBlock({ title, value }: { title: string; value: JsonValue }) {
 function ExecutionPanel({ model, executionSlice }: { model: AuditInspectorModel; executionSlice?: ExecutionSlice | null }) {
   const staleSlice = executionSlice !== undefined && executionSlice !== null && executionSlice.source_sequence !== model.selection.sequence;
   const rawTurn = executionSlice === undefined ? model.execution : staleSlice ? null : executionSlice?.turn ?? null;
-  const turn = executionSlice === undefined ? rawTurn : rawTurn ? scopeTurn(rawTurn, model.selection.sequence) : null;
+  const turn = executionSlice === undefined
+    ? rawTurn
+    : rawTurn && executionSlice?.lineage
+      ? scopeTurnByLineage(rawTurn, executionSlice.lineage)
+      : null;
   const unavailable = executionSlice === undefined
     ? model.unavailable.execution
     : staleSlice
       ? `Execution slice sequence ${executionSlice.source_sequence} does not match selected sequence ${model.selection.sequence}.`
-      : executionSlice?.unavailable_reason ?? `Execution slice is not loaded for sequence ${model.selection.sequence}.`;
+      : executionSlice?.unavailable_reason
+        ?? (executionSlice?.turn && !executionSlice.lineage
+          ? 'Execution lineage is unavailable for this event.'
+          : `Execution slice is not loaded for sequence ${model.selection.sequence}.`);
   if (!turn) return <p className="unavailable">{unavailable ?? 'Execution linkage is unavailable for this event.'}</p>;
   return <div className="audit-panel-stack">
     <dl>
@@ -213,30 +220,42 @@ function sourceSequence(turn: AgentTurn | ExecutionAgentTurn) {
   return turn.source_sequence ?? Math.max(...turn.source_sequences);
 }
 
-function scopeTurn(turn: ExecutionAgentTurn, sequence: number): ExecutionAgentTurn | null {
+function scopeTurnByLineage(turn: ExecutionAgentTurn, lineage: ExecutionLineage): ExecutionAgentTurn | null {
+  const agentNodeIds = new Set(lineage.agent_node_ids);
+  if (!agentNodeIds.has(turn.id) || !lineage.turn_ids.includes(turn.turn_id)) return null;
   const steps = turn.steps
-    .map((step) => scopeStepForSequence(step, sequence))
+    .map((step) => scopeStepByLineage(step, lineage, agentNodeIds))
     .filter((step): step is AgentStep => Boolean(step));
-  if (!nodeMatchesSequence(turn, sequence) && steps.length === 0) return null;
   return { ...turn, steps };
 }
 
-function scopeStepForSequence(step: AgentStep, sequence: number): AgentStep | null {
-  const request = step.request ? scopeRequestForSequence(step.request, sequence) : null;
-  if (!nodeMatchesSequence(step, sequence) && !request) return null;
+function scopeStepByLineage(
+  step: AgentStep,
+  lineage: ExecutionLineage,
+  agentNodeIds: Set<string>,
+): AgentStep | null {
+  if (!agentNodeIds.has(step.id) || !lineage.step_ids.includes(step.step_id)) return null;
+  const request = step.request
+    ? scopeRequestByLineage(step.request, lineage, agentNodeIds)
+    : null;
   return { ...step, request };
 }
 
-function scopeRequestForSequence(request: ModelRequest, sequence: number): ModelRequest | null {
-  const retries = request.retries.filter((retry) => nodeMatchesSequence(retry, sequence));
-  const response = request.response && nodeMatchesSequence(request.response, sequence) ? request.response : null;
-  const tools = request.tools.filter((tool) => nodeMatchesSequence(tool, sequence));
-  if (!nodeMatchesSequence(request, sequence) && retries.length === 0 && !response && tools.length === 0) return null;
+function scopeRequestByLineage(
+  request: ModelRequest,
+  lineage: ExecutionLineage,
+  agentNodeIds: Set<string>,
+): ModelRequest | null {
+  if (!agentNodeIds.has(request.id) || !lineage.request_ids.includes(request.request_id)) return null;
+  const relationRefs = new Set([...lineage.artifact_refs, ...lineage.result_ids]);
+  const retries = request.retries.filter((retry) => agentNodeIds.has(retry.id));
+  const response = request.response && agentNodeIds.has(request.response.id) ? request.response : null;
+  const tools = request.tools.filter((tool) => agentNodeIds.has(tool.id) && (
+    lineage.tool_call_ids.includes(tool.tool_call_id)
+    || tool.result_refs?.some((reference) => relationRefs.has(reference))
+    || tool.evidence_refs?.some((reference) => relationRefs.has(reference))
+  ));
   return { ...request, retries, response, tools };
-}
-
-function nodeMatchesSequence(node: ProjectionNode, sequence: number) {
-  return node.source_sequences.includes(sequence);
 }
 
 function StepCard({ step }: { step: AgentStep }) {

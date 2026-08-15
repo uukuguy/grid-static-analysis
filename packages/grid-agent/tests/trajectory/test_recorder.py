@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
-from grid_agent.trajectory.events import EventDraft, EventRefs, RunScope
+from grid_agent.trajectory.events import EventDraft, EventRefs, EventType, RunScope
 from grid_agent.trajectory.reader import RunEventReader
 from grid_agent.trajectory.recorder import RecorderIntegrityError, RunEventRecorder
 
@@ -198,7 +198,7 @@ def test_recorder_accepts_registered_digest_verified_artifact_pointer(
     ],
 )
 def test_recorder_rejects_unregistered_artifact_claim_and_answer_references(
-    tmp_path: Path, event_type: str, reference_field: str
+    tmp_path: Path, event_type: EventType, reference_field: str
 ) -> None:
     run_root = tmp_path / "run"
     registry = ImmutableArtifactRegistry(run_root)
@@ -264,7 +264,7 @@ def test_recorder_rejects_unregistered_artifact_claim_and_answer_references(
 )
 def test_recorder_accepts_registered_artifact_claim_and_answer_references(
     tmp_path: Path,
-    event_type: str,
+    event_type: EventType,
     reference_field: str,
     kind: str,
     identity: str,

@@ -7,8 +7,10 @@ from collections.abc import Sequence
 from typing import Any, Literal, Protocol
 
 from grid_agent.trajectory.projection_models import (
+    BusinessCausalRow,
     BusinessNode,
     BusinessProblem,
+    BusinessProblemSummary,
     BusinessTrajectory,
 )
 from grid_agent.trajectory.replay import ReplayEventLike
@@ -237,12 +239,47 @@ def project_business(
     )
 
 
+def business_causal_rows(trajectory: BusinessTrajectory) -> tuple[BusinessCausalRow, ...]:
+    """Flatten problem nodes into bounded, sequence-addressable API records."""
+    rows: list[BusinessCausalRow] = []
+    for problem in trajectory.problems:
+        by_sequence: OrderedDict[int, list[BusinessNode]] = OrderedDict()
+        for node in problem.nodes:
+            by_sequence.setdefault(node.source_sequences[0], []).append(node)
+        if not by_sequence:
+            continue
+        sequences = tuple(by_sequence)
+        summary = BusinessProblemSummary(
+            id=problem.id,
+            source=problem.source,
+            rule_id=problem.rule_id,
+            status=problem.status,
+            unavailable_reason=problem.unavailable_reason,
+            turn_id=problem.turn_id,
+            title=problem.title,
+            first_sequence=min(sequences),
+            last_sequence=max(sequences),
+            node_count=len(problem.nodes),
+        )
+        rows.extend(
+            BusinessCausalRow(
+                id=f"{problem.id}:sequence:{sequence}",
+                source_sequence=sequence,
+                problem=summary,
+                nodes=tuple(nodes),
+            )
+            for sequence, nodes in by_sequence.items()
+        )
+    return tuple(rows)
+
+
 __all__ = [
     "ArtifactResolver",
     "ProjectionIntegrityError",
     "RULE_CONTEXT_CHANGE",
     "RULE_TOOL_ACTION",
     "RULE_VERIFIED_RESULT",
+    "business_causal_rows",
     "project_business",
     "semantic_tool_title",
 ]

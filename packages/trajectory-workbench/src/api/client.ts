@@ -1,5 +1,5 @@
 import type {
-  AgentTurn, ApiErrorResponse, BusinessProblem, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunListResponse, RunSummary,
+  AgentTurn, ApiErrorResponse, BusinessCausalRow, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunListResponse, RunSummary,
 } from './types';
 
 export class ApiError extends Error {
@@ -43,7 +43,7 @@ export class TrajectoryApiClient {
     return this.get<RunSummary>(`/api/runs/${encodeURIComponent(id)}`, signal);
   }
   getBusinessPage(id: string, cursor?: string, signal?: AbortSignal) {
-    return this.get<ProjectionPage<BusinessProblem>>(this.pagePath(id, 'business', cursor), signal);
+    return this.get<ProjectionPage<BusinessCausalRow>>(this.pagePath(id, 'business', cursor), signal);
   }
   getAgentPage(id: string, cursor?: string, signal?: AbortSignal) {
     return this.get<ProjectionPage<AgentTurn>>(this.pagePath(id, 'agent', cursor), signal);

@@ -38,6 +38,10 @@ def project_artifacts(events: Sequence[ReplayEventLike], registry: object) -> Ar
         if not sequences:
             continue
         scope = producer.scope if producer else consumers[0].scope
+        claim = next(
+            (event for event in consumers if event.event_type == "business.claim.declared"),
+            None,
+        )
         records[reference] = ArtifactIndexRecord(
             id=f"artifact:{events[0].analysis_id}:{reference}", source_sequences=sequences,
             reference=reference, kind=pointer.kind if pointer else "unavailable",
@@ -50,6 +54,15 @@ def project_artifacts(events: Sequence[ReplayEventLike], registry: object) -> Ar
             consuming_sequences=tuple(sorted({event.sequence for event in consumers})),
             turn_id=scope.turn_id, step_id=scope.step_id, request_id=scope.request_id,
             tool_call_id=scope.tool_call_id,
+            result_id=reference
+            if reference.startswith("result:") or pointer is not None and pointer.kind == "result"
+            else None,
+            evidence_id=reference
+            if reference.startswith("evidence:") or pointer is not None and pointer.kind == "evidence"
+            else None,
+            claim_id=f"business:{claim.analysis_id}:{claim.sequence}:claim"
+            if claim is not None
+            else None,
         )
     return ArtifactIndex(analysis_id=events[0].analysis_id, records=records)
 
