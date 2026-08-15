@@ -17,6 +17,9 @@ from grid_agent.trajectory.canonical import canonical_json_bytes
 from grid_agent.trajectory.events import StrictFrozenModel
 
 
+_FILTER_BOUND_VIEWS = frozenset({"agent", "context", "evidence"})
+
+
 class CursorError(ValueError):
     """A cursor cannot be safely used for the requested projection page."""
 
@@ -35,7 +38,7 @@ class CursorState(StrictFrozenModel):
 
 
 class CursorExpectation(StrictFrozenModel):
-    """The immutable identity a supplied cursor must match."""
+    """The immutable source and filter identity a supplied cursor must match."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -112,11 +115,36 @@ def _validate_expected_cursor(state: CursorState, expected: CursorExpectation) -
     if state.view != expected.view:
         raise CursorError("wrong view cursor")
     if state.source_fingerprint != expected.source_fingerprint:
+        if state.view in _FILTER_BOUND_VIEWS:
+            state_source, state_filters = _split_filter_bound_fingerprint(
+                state.source_fingerprint
+            )
+            expected_source, expected_filters = _split_filter_bound_fingerprint(
+                expected.source_fingerprint
+            )
+            if (
+                state_filters is not None
+                and expected_filters is not None
+                and state_source == expected_source
+            ):
+                raise CursorError("filter-mismatched cursor")
         raise CursorError("stale source cursor")
     if state.projection_version != expected.projection_version:
         raise CursorError("stale projection cursor")
     if state.direction != expected.direction:
         raise CursorError("wrong cursor direction")
+
+
+def _split_filter_bound_fingerprint(value: str) -> tuple[str, str | None]:
+    """Separate the final filter digest without misreading plain SHA-256 refs."""
+    source, separator, filter_digest = value.rpartition(":")
+    if (
+        separator
+        and len(filter_digest) == 64
+        and all(character in "0123456789abcdef" for character in filter_digest)
+    ):
+        return source, filter_digest
+    return value, None
 
 
 def _read_private_key(key_path: Path) -> bytes:

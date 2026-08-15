@@ -11,16 +11,24 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
 
 from grid_agent.trajectory.api.artifacts import ArtifactAccessError, ArtifactGateway
 from grid_agent.trajectory.api.catalog import RunNotFoundError, TrajectoryRunCatalog
 from grid_agent.trajectory.api.cursor import CursorCodec, CursorError, CursorExpectation, CursorState
 from grid_agent.trajectory.api.models import ApiError, RunListResponse, RunSummary
 from grid_agent.trajectory.api.paging import ProjectionPager, ProjectionRecordTooLarge
+from grid_agent.trajectory.api.projection_pages import (
+    ProjectionPageResponse,
+    projection_page,
+)
 from grid_agent.trajectory.agent_projection import execution_slice
 from grid_agent.trajectory.business_projection import business_causal_rows
-from grid_agent.trajectory.projection_models import ExecutionSlice, ProjectedRun
+from grid_agent.trajectory.projection_models import (
+    ExecutionSlice,
+    LifecycleStatus,
+    NodeSource,
+    ProjectedRun,
+)
 
 
 SECURITY_HEADERS = {
@@ -35,25 +43,7 @@ SECURITY_HEADERS = {
     "Cache-Control": "no-store",
 }
 
-_PROJECTION_VERSIONS = {
-    "business": "business-trajectory/1.1",
-    "agent": "agent-trajectory/1.0",
-}
-
-
-class ProjectionPageResponse(BaseModel):
-    """The stable HTTP page envelope for either fixed projection view."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    analysis_id: str = Field(min_length=1)
-    items: tuple[dict[str, Any], ...] = ()
-    older_cursor: str | None = None
-    newer_cursor: None = None
-    first_sequence: int | None = Field(default=None, ge=1)
-    last_sequence: int | None = Field(default=None, ge=1)
-    has_older: bool
-    encoded_bytes: int = Field(ge=0)
+_BUSINESS_PROJECTION_VERSION = "business-trajectory/1.1"
 
 
 @dataclass(slots=True)
@@ -177,25 +167,80 @@ def create_trajectory_app(
     def business_page(
         analysis_id: str, cursor: str | None = Query(default=None)
     ) -> ProjectionPageResponse:
-        return _page_view(catalog.open(analysis_id), "business", cursor, cursor_codec)
+        return _business_page(catalog.open(analysis_id), cursor, cursor_codec)
 
     @app.get("/api/runs/{analysis_id}/agent", response_model=ProjectionPageResponse)
     def agent_page(
-        analysis_id: str, cursor: str | None = Query(default=None)
+        analysis_id: str,
+        request: Request,
+        cursor: str | None = Query(default=None, min_length=1, max_length=8_192),
+        turn_id: str | None = Query(default=None, min_length=1, max_length=500),
+        kind: Literal["turn", "step", "request", "retry", "response", "tool"]
+        | None = Query(default=None),
+        status: LifecycleStatus | None = Query(default=None),
+        capability: str | None = Query(default=None, min_length=1, max_length=500),
+        q: str | None = Query(default=None, min_length=1, max_length=200),
     ) -> ProjectionPageResponse:
-        return _page_view(catalog.open(analysis_id), "agent", cursor, cursor_codec)
+        _reject_unknown_or_repeated_query(
+            request,
+            {"cursor", "turn_id", "kind", "status", "capability", "q"},
+        )
+        return projection_page(
+            catalog.open(analysis_id),
+            "agent",
+            cursor,
+            {
+                "turn_id": turn_id,
+                "kind": kind,
+                "status": status,
+                "capability": capability,
+                "q": q,
+            },
+            cursor_codec,
+        )
 
     @app.get("/api/runs/{analysis_id}/context")
-    def context_frame(
-        analysis_id: str, at_sequence: int = Query(ge=1)
+    def context_view(
+        analysis_id: str,
+        request: Request,
+        at_sequence: int | None = Query(default=None, ge=1),
+        cursor: str | None = Query(default=None, min_length=1, max_length=8_192),
+        from_sequence: int | None = Query(default=None, ge=1),
+        to_sequence: int | None = Query(default=None, ge=1),
+        from_revision: int | None = Query(default=None, ge=0),
+        to_revision: int | None = Query(default=None, ge=0),
+        changed: bool | None = Query(default=None),
+        request_input: bool | None = Query(default=None),
     ) -> dict[str, Any]:
-        projected = catalog.open(analysis_id)
-        frame = projected.context.at_sequence(at_sequence)
-        value = frame.model_dump(mode="json")
-        value["max_sequence"] = max(
-            (item.source_sequence for item in projected.context.frames), default=0
+        _reject_unknown_or_repeated_query(
+            request,
+            {
+                "at_sequence",
+                "cursor",
+                "from_sequence",
+                "to_sequence",
+                "from_revision",
+                "to_revision",
+                "changed",
+                "request_input",
+            },
         )
-        return value
+        projected = catalog.open(analysis_id)
+        filters: dict[str, str | int | bool | None] = {
+            "from_sequence": from_sequence,
+            "to_sequence": to_sequence,
+            "from_revision": from_revision,
+            "to_revision": to_revision,
+            "changed": changed,
+            "request_input": request_input,
+        }
+        if at_sequence is not None:
+            if cursor is not None or any(value is not None for value in filters.values()):
+                raise _invalid_query("at_sequence")
+            return _context_detail(projected, at_sequence)
+        return projection_page(
+            projected, "context", cursor, filters, cursor_codec
+        ).model_dump(mode="json")
 
     @app.get("/api/runs/{analysis_id}/execution", response_model=ExecutionSlice)
     def execution_frame(
@@ -203,10 +248,51 @@ def create_trajectory_app(
     ) -> ExecutionSlice:
         return execution_slice(catalog.open(analysis_id), at_sequence)
 
-    @app.get("/api/runs/{analysis_id}/evidence")
-    def evidence_index(analysis_id: str) -> dict[str, Any]:
-        """Expose the immutable typed artifact projection without business inference."""
-        return catalog.open(analysis_id).artifacts.model_dump(mode="json")
+    @app.get("/api/runs/{analysis_id}/evidence", response_model=ProjectionPageResponse)
+    def evidence_page(
+        analysis_id: str,
+        request: Request,
+        cursor: str | None = Query(default=None, min_length=1, max_length=8_192),
+        kind: str | None = Query(default=None, min_length=1, max_length=100),
+        source: NodeSource | None = Query(default=None),
+        verification_status: Literal["verified", "unavailable"] | None = Query(
+            default=None
+        ),
+        from_sequence: int | None = Query(default=None, ge=1),
+        to_sequence: int | None = Query(default=None, ge=1),
+        relevant_ref: str | None = Query(default=None, min_length=1, max_length=1_000),
+        sort: Literal["producer_sequence", "verification_status"] | None = Query(
+            default=None
+        ),
+    ) -> ProjectionPageResponse:
+        _reject_unknown_or_repeated_query(
+            request,
+            {
+                "cursor",
+                "kind",
+                "source",
+                "verification_status",
+                "from_sequence",
+                "to_sequence",
+                "relevant_ref",
+                "sort",
+            },
+        )
+        return projection_page(
+            catalog.open(analysis_id),
+            "evidence",
+            cursor,
+            {
+                "kind": kind,
+                "source": source,
+                "verification_status": verification_status,
+                "from_sequence": from_sequence,
+                "to_sequence": to_sequence,
+                "relevant_ref": relevant_ref,
+                "sort": sort,
+            },
+            cursor_codec,
+        )
 
     @app.get("/api/runs/{analysis_id}/artifacts/{artifact_ref}")
     def artifact(analysis_id: str, artifact_ref: str) -> Response:
@@ -219,6 +305,36 @@ def create_trajectory_app(
 
     mount_workbench(app, static_root or _packaged_static_root())
     return app
+
+
+def _invalid_query(parameter: str) -> RequestValidationError:
+    return RequestValidationError(
+        [
+            {
+                "type": "value_error",
+                "loc": ("query", parameter),
+                "msg": "request parameter combination is invalid",
+                "input": None,
+            }
+        ]
+    )
+
+
+def _reject_unknown_or_repeated_query(
+    request: Request, allowed: set[str]
+) -> None:
+    for parameter in request.query_params:
+        if parameter not in allowed or len(request.query_params.getlist(parameter)) != 1:
+            raise _invalid_query(parameter)
+
+
+def _context_detail(projected: ProjectedRun, at_sequence: int) -> dict[str, Any]:
+    frame = projected.context.at_sequence(at_sequence)
+    value = frame.model_dump(mode="json")
+    value["max_sequence"] = max(
+        (item.source_sequence for item in projected.context.frames), default=0
+    )
+    return value
 
 
 def _packaged_static_root() -> Path:
@@ -246,44 +362,33 @@ def mount_workbench(app: FastAPI, static_root: Path) -> None:
         return FileResponse(index, media_type="text/html; charset=utf-8")
 
 
-def _page_view(
+def _business_page(
     projected: ProjectedRun,
-    view: Literal["business", "agent"],
     cursor: str | None,
     cursor_codec: CursorCodec,
 ) -> ProjectionPageResponse:
     expectation = CursorExpectation(
         analysis_id=projected.analysis_id,
-        view=view,
+        view="business",
         source_fingerprint=projected.source_fingerprint,
-        projection_version=_PROJECTION_VERSIONS[view],
+        projection_version=_BUSINESS_PROJECTION_VERSION,
     )
     cursor_state = cursor_codec.decode(cursor, expectation) if cursor else None
-    if view == "business":
-        records = tuple(
-            _ProjectionRecord(
-                sequence=row.source_sequence,
-                item=row.model_dump(mode="json"),
-            )
-            for row in business_causal_rows(projected.business)
+    records = tuple(
+        _ProjectionRecord(
+            sequence=row.source_sequence,
+            item=row.model_dump(mode="json"),
         )
-    else:
-        records = tuple(
-            _ProjectionRecord(
-                sequence=max(item.source_sequences),
-                item=item.model_dump(mode="json")
-                | {"source_sequence": max(item.source_sequences)},
-            )
-            for item in projected.agent.turns
-        )
+        for row in business_causal_rows(projected.business)
+    )
     page = ProjectionPager().page(records, cursor_state=cursor_state)
     older_cursor = (
         cursor_codec.encode(
             CursorState(
                 analysis_id=projected.analysis_id,
-                view=view,
+                view="business",
                 source_fingerprint=projected.source_fingerprint,
-                projection_version=_PROJECTION_VERSIONS[view],
+                projection_version=_BUSINESS_PROJECTION_VERSION,
                 before_sequence=page.older_cursor,
             )
         )

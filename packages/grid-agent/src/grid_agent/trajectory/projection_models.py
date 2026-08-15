@@ -130,6 +130,21 @@ class AgentTrajectory(StrictFrozenModel):
     turns: tuple[AgentTurn, ...] = ()
 
 
+class AgentEventRow(StrictFrozenModel):
+    """One bounded public row from the nested agent trajectory."""
+
+    id: str = Field(min_length=1)
+    parent_id: str | None = Field(default=None, min_length=1)
+    turn_id: str = Field(min_length=1)
+    kind: str = Field(min_length=1, max_length=50)
+    level: int = Field(ge=1)
+    source_sequence: int = Field(ge=1)
+    source: NodeSource
+    status: LifecycleStatus
+    title: str = Field(min_length=1, max_length=500)
+    detail: str | None = Field(default=None, max_length=1_000)
+
+
 class ExecutionLineage(StrictFrozenModel):
     """Exact bounded identities that justify an execution slice."""
 
@@ -284,6 +299,18 @@ class ContextTimeline(StrictFrozenModel):
         raise KeyError(f"no context frame for sequence {sequence}")
 
 
+class ContextFrameSummary(StrictFrozenModel):
+    """Public context metadata that never embeds recorded state documents."""
+
+    id: str = Field(min_length=1)
+    source_sequence: int = Field(ge=1)
+    before_revision: int = Field(ge=0)
+    after_revision: int = Field(ge=0)
+    changed: bool
+    request_input_available: bool
+    event_kind: str = Field(min_length=1, max_length=100)
+
+
 class ArtifactIndexRecord(ProjectionNode):
     source: NodeSource = "observed"
     status: LifecycleStatus = "completed"
@@ -332,6 +359,7 @@ class ProjectedRun(StrictFrozenModel):
 
 
 __all__ = [
+    "AgentEventRow",
     "AgentRetry",
     "AgentStep",
     "AgentTrajectory",
@@ -346,6 +374,7 @@ __all__ = [
     "BusinessTrajectory",
     "ContextCheckpoint",
     "ContextFrame",
+    "ContextFrameSummary",
     "ContextTimeline",
     "ExecutionLineage",
     "ExecutionSlice",

@@ -651,13 +651,22 @@ def test_api_returns_context_frame_and_non_executable_artifact(tmp_path: Path) -
     assert "text/html" not in artifact.headers["content-type"]
 
 
-def test_api_returns_only_the_typed_artifact_projection_for_evidence(tmp_path: Path) -> None:
+def test_api_pages_only_typed_artifact_projection_records_for_evidence(
+    tmp_path: Path,
+) -> None:
     app, catalog, _ = create_test_app(tmp_path)
 
     response = TestClient(app).get("/api/runs/analysis-test/evidence")
 
     assert response.status_code == 200
-    assert response.json() == catalog.projected.artifacts.model_dump(mode="json")
+    page = response.json()
+    assert page["analysis_id"] == catalog.projected.analysis_id
+    assert page["items"] == [
+        record.model_dump(mode="json")
+        for record in catalog.projected.artifacts.records.values()
+    ]
+    assert page["has_older"] is False
+    assert page["older_cursor"] is None
 
 
 def test_native_api_verifies_simulator_artifacts_and_downloads_exact_bytes(tmp_path: Path) -> None:
@@ -677,7 +686,7 @@ def test_native_api_verifies_simulator_artifacts_and_downloads_exact_bytes(tmp_p
         for node in problem["nodes"]
     )
     assert evidence.status_code == 200
-    records = evidence.json()["records"]
+    records = {record["reference"]: record for record in evidence.json()["items"]}
     for reference, kind, path_prefix in (
         (refs["request_ref"], "request-input", "requests/"),
         (refs["response_ref"], "model-response", "requests/"),
@@ -703,7 +712,8 @@ def test_native_api_keeps_unsupported_refs_explicitly_unavailable(tmp_path: Path
     response = TestClient(app).get("/api/runs/analysis-native-artifacts/evidence")
 
     assert response.status_code == 200
-    record = response.json()["records"][refs["missing_ref"]]
+    records = {record["reference"]: record for record in response.json()["items"]}
+    record = records[refs["missing_ref"]]
     assert record["verification_status"] == "unavailable"
     assert record["status"] == "unavailable"
     assert record["relative_path"] == "unavailable"
