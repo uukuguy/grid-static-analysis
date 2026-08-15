@@ -16,7 +16,15 @@ test('100k trajectory remains cursor-paginated and mounts a bounded row window',
   expect(requests.filter((url) => new URL(url).pathname.endsWith('/business'))).toHaveLength(1);
   expect(requests.some((url) => new URL(url).pathname.includes('run-events'))).toBeFalsy();
   expect(await page.getByRole('listitem').count()).toBeLessThanOrEqual(120);
-  await expect(page.getByRole('button', { name: 'Load older history' })).toBeVisible();
+  await page.getByRole('button', { name: 'Load older history' }).click();
+  await expect(page.getByText('older cursor unavailable')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry older history' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Retry older history' }).click();
+
+  await expect(page.getByText('Q6 · Earlier cursor page')).toBeVisible();
+  expect(requests.filter((url) => new URL(url).searchParams.get('cursor') === 'before:99501')).toHaveLength(2);
+  expect(await page.getByRole('listitem').count()).toBeLessThanOrEqual(120);
 });
 
 test('API-only e2e never requests a mutating endpoint', async ({ page }) => {

@@ -38,6 +38,8 @@ export function App({ client = api }: { client?: AppClient }) {
   const [contextSequence, setContextSequence] = useState<number | null>(null);
   const [evidenceIndex, setEvidenceIndex] = useState<EvidenceIndex | null>(null);
   const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
+  const [olderState, setOlderState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const [olderError, setOlderError] = useState<string | null>(null);
   const loadingOlder = useRef(false);
   const failedOlderCursor = useRef<string | null>(null);
   const businessPageRef = useRef<Pick<ProjectionPage<BusinessProblem>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
@@ -110,6 +112,8 @@ export function App({ client = api }: { client?: AppClient }) {
     void client.getBusinessPage(state.selectedRunId, undefined, controller.signal).then((page) => {
       setProblems(page.items);
       failedOlderCursor.current = null;
+      setOlderState('idle');
+      setOlderError(null);
       businessPageRef.current = page;
       setBusinessPage(page);
       dispatch({ type: 'page/loaded', view: 'business', page: pageMetadata(page) });
@@ -117,6 +121,8 @@ export function App({ client = api }: { client?: AppClient }) {
       if (controller.signal.aborted) return;
       setProblems([]);
       failedOlderCursor.current = null;
+      setOlderState('idle');
+      setOlderError(null);
       businessPageRef.current = { older_cursor: null, has_older: false };
       setBusinessPage({ older_cursor: null, has_older: false });
       setPageErrors((errors) => ({ ...errors, business: error }));
@@ -199,18 +205,28 @@ export function App({ client = api }: { client?: AppClient }) {
     const page = businessPageRef.current;
     if (!runId || !page.has_older || !cursor || loadingOlder.current) return;
     loadingOlder.current = true;
+    setOlderState('loading');
+    setOlderError(null);
     setPageErrors((errors) => ({ ...errors, business: null }));
-    dispatch({ type: 'page/requested', view: 'business' });
     void client.getBusinessPage(runId, cursor).then((page) => {
       setProblems((current) => prependProblems(page.items, current));
       failedOlderCursor.current = null;
+      setOlderState('idle');
+      setOlderError(null);
       businessPageRef.current = page;
       setBusinessPage(page);
       dispatch({ type: 'page/prepended', view: 'business', page: pageMetadata(page) });
     }).catch((error: unknown) => {
       failedOlderCursor.current = cursor;
-      setPageErrors((errors) => ({ ...errors, business: error }));
-      dispatch({ type: 'page/failed', view: 'business', message: pageErrorMessage(error, 'Unable to load older business trajectory.') });
+      if (error instanceof ApiError && error.status === 501) {
+        setOlderState('idle');
+        setOlderError(null);
+        setPageErrors((errors) => ({ ...errors, business: error }));
+        dispatch({ type: 'page/failed', view: 'business', message: pageErrorMessage(error, 'Unable to load older business trajectory.') });
+        return;
+      }
+      setOlderState('failed');
+      setOlderError(pageErrorMessage(error, 'Unable to load older business trajectory.'));
     })
       .finally(() => { loadingOlder.current = false; });
   };
@@ -236,7 +252,19 @@ export function App({ client = api }: { client?: AppClient }) {
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
     {selectedRun?.status === 'partial' ? <AsyncState state="partial" diagnostic={selectedRun.diagnostic} /> : null}
     <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]} onRetry={retryActivePage}>
-    {state.activeView === 'business' ? <BusinessView problems={problems} state={state} dispatch={dispatch} hasOlder={businessPage.has_older} onRequestOlder={requestOlder} />
+    {state.activeView === 'business' ? <BusinessView
+      problems={problems}
+      state={state}
+      dispatch={dispatch}
+      hasOlder={businessPage.has_older}
+      onRequestOlder={requestOlder}
+      olderState={olderState}
+      olderError={olderError}
+      onRetryOlder={() => {
+        const cursor = failedOlderCursor.current;
+        if (cursor) loadOlder(cursor);
+      }}
+    />
       : state.activeView === 'agent' ? <AgentView trajectory={agentTurns} selectedNodeId={state.selectedNodeId} onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })} artifactUrl={artifactUrl} />
         : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
           : <EvidenceView index={evidenceIndex} selectedRefs={auditSelection?.artifactRefs ?? (state.selectedNodeId ? [state.selectedNodeId] : [])} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}

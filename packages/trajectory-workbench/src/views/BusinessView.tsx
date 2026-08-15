@@ -9,6 +9,9 @@ interface BusinessViewProps {
   dispatch: React.Dispatch<WorkbenchAction>;
   hasOlder?: boolean;
   onRequestOlder?: (anchor: PrependAnchor) => void;
+  olderState?: 'idle' | 'loading' | 'failed';
+  olderError?: string | null;
+  onRetryOlder?: () => void;
 }
 
 type BusinessViewItem = ({ type: 'node' } & BusinessTrajectoryRow) | { id: string; source_sequence: number; type: 'problem'; problem: BusinessProblem };
@@ -26,7 +29,16 @@ function filteredRows(problems: BusinessProblem[], state: WorkbenchState): Busin
   ]);
 }
 
-export function BusinessView({ problems, state, dispatch, hasOlder = false, onRequestOlder = () => undefined }: BusinessViewProps) {
+export function BusinessView({
+  problems,
+  state,
+  dispatch,
+  hasOlder = false,
+  onRequestOlder = () => undefined,
+  olderState = 'idle',
+  olderError = null,
+  onRetryOlder = () => undefined,
+}: BusinessViewProps) {
   const rows = filteredRows(problems, state);
   const sources: NodeSource[] = ['observed', 'derived', 'agent-declared'];
   const statuses: LifecycleStatus[] = ['running', 'completed', 'failed', 'interrupted', 'unavailable'];
@@ -40,8 +52,19 @@ export function BusinessView({ problems, state, dispatch, hasOlder = false, onRe
       <label>Status filter<select aria-label="Status filter" value={state.statusFilter} onChange={(event) => dispatch({ type: 'statusFilter/changed', status: event.target.value as LifecycleStatus | 'all' })}><option value="all">All states</option>{statuses.map((status) => <option value={status} key={status}>{status}</option>)}</select></label></div>
     </header>
     <div className="business-filter-summary" aria-label="Business trajectory filters">{sources.length + statuses.length} available filters · {rows.length} matching events</div>
-    <VirtualTrajectory items={rows} label="Business trajectory" hasOlder={hasOlder} onRequestOlder={onRequestOlder} estimateSize={(item) => item.type === 'problem' ? 52 : 84} focusItemId={focusedProblemRowId} focusElementId={focusedProblemHeadingId} renderRow={(item) => item.type === 'problem'
-      ? <div className="problem-group-header">
+    <VirtualTrajectory
+      items={rows}
+      label="Business trajectory"
+      hasOlder={hasOlder}
+      onRequestOlder={onRequestOlder}
+      olderState={olderState}
+      olderError={olderError}
+      onRetryOlder={onRetryOlder}
+      estimateSize={(item) => item.type === 'problem' ? 52 : 44}
+      focusItemId={focusedProblemRowId}
+      focusElementId={focusedProblemHeadingId}
+      renderRow={(item) => item.type === 'problem'
+      ? <div className="problem-group-header" data-testid={`problem-header-${item.problem.id}`}>
         <h2 id={problemHeadingId(item.problem.id)} tabIndex={-1}>{item.problem.title}</h2>
         <button type="button" className="problem-fold" aria-expanded={!state.foldedNodeIds.includes(item.problem.id)} onClick={() => dispatch({ type: 'node/foldToggled', nodeId: item.problem.id })} aria-label={`${state.foldedNodeIds.includes(item.problem.id) ? 'Expand' : 'Fold'} ${item.problem.title}`}>
           <span>{state.foldedNodeIds.includes(item.problem.id) ? '▸' : '▾'}</span><small>{item.problem.status} · {item.problem.nodes.length} events</small>

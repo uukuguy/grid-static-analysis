@@ -82,6 +82,7 @@ export interface BusinessNode extends ProjectionNode {
   title: string;
   detail: string | null;
   refs: string[];
+  contextRevision?: number | null;
 }
 
 export interface BusinessProblem extends ProjectionNode {

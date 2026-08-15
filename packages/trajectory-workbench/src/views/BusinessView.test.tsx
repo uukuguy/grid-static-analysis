@@ -11,8 +11,9 @@ const problem: BusinessProblem = {
     id: 'business:q7:claim', source: 'agent-declared', source_sequences: [60], rule_id: null,
     status: 'completed', unavailable_reason: null, source_sequence: 60, kind: 'claim',
     title: 'Contingency conclusion', detail: 'Line 17 overloads after outage.', refs: ['evidence:q7'],
+    contextRevision: 12,
   }],
-};
+} as BusinessProblem;
 
 describe('BusinessView', () => {
   afterEach(cleanup);
@@ -47,6 +48,46 @@ describe('BusinessView', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'statusFilter/changed', status: 'completed' });
   });
 
+  it('renders a causal row with sequence, kind, source, status, revision, and ref count', async () => {
+    const dispatch = vi.fn();
+    render(<BusinessView problems={[problem]} state={{ ...initialWorkbenchState, selectedNodeId: 'business:q7:claim' }} dispatch={dispatch} />);
+
+    const row = await screen.findByTestId('causal-node-business:q7:claim');
+    expect(row).toHaveAttribute('aria-current', 'true');
+    expect(row).toHaveAttribute('data-causal-kind', 'claim');
+    expect(screen.getByText('#60')).toBeVisible();
+    expect(screen.getByText(/claim.*completed/i)).toBeVisible();
+    expect(screen.getByText(/agent-declared.*context r12.*1 refs/i)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: /details for #60/i }));
+
+    expect(screen.getByText('Line 17 overloads after outage.')).toBeVisible();
+    expect(screen.getByText('evidence:q7')).toBeVisible();
+  });
+
+  it('renders context unavailable when a causal row has no explicit context revision', async () => {
+    render(<BusinessView
+      problems={[{ ...problem, nodes: [{ ...problem.nodes[0], id: 'business:q7:unavailable', contextRevision: undefined }] as BusinessProblem['nodes'] }]}
+      state={initialWorkbenchState}
+      dispatch={vi.fn()}
+    />);
+
+    expect(await screen.findByText(/context unavailable/i)).toBeVisible();
+  });
+
+  it('shows a retryable failed older cursor without replacing the business trajectory', async () => {
+    const retryOlder = vi.fn();
+    const pagination = { olderState: 'failed' as const, olderError: 'cursor-before-48 unavailable', onRetryOlder: retryOlder };
+    render(<BusinessView problems={[problem]} state={initialWorkbenchState} dispatch={vi.fn()} hasOlder {...pagination} />);
+
+    expect(await screen.findByText('Contingency conclusion')).toBeVisible();
+    expect(screen.getByText('cursor-before-48 unavailable')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry older history' }));
+
+    expect(retryOlder).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps problem headers in the bounded virtual window at 100000 problems', async () => {
     const manyProblems = Array.from({ length: 100_000 }, (_, index) => ({
       ...problem, id: `business:${index}`, title: `Problem ${index}`, nodes: [],
@@ -55,6 +96,25 @@ describe('BusinessView', () => {
 
     expect(await screen.findByRole('button', { name: /fold problem 0/i })).toBeVisible();
     expect(screen.getAllByRole('button', { name: /fold|expand problem/i }).length).toBeLessThanOrEqual(120);
+  });
+
+  it('keeps problem headers and causal nodes inside the <=120-row virtual window for 100k events', async () => {
+    const denseProblem: BusinessProblem = {
+      ...problem,
+      nodes: Array.from({ length: 100_000 }, (_, index) => ({
+        ...problem.nodes[0],
+        id: `business:q7:claim:${index}`,
+        source_sequence: index + 1,
+        source_sequences: [index + 1],
+        title: `Causal event ${index + 1}`,
+      })),
+    };
+
+    render(<BusinessView problems={[denseProblem]} state={initialWorkbenchState} dispatch={vi.fn()} />);
+
+    expect(await screen.findByTestId('problem-header-business:q7')).toBeVisible();
+    expect(await screen.findByTestId('causal-node-business:q7:claim:0')).toBeVisible();
+    expect(screen.getAllByTestId(/causal-node|problem-header/).length).toBeLessThanOrEqual(120);
   });
 
   it('focuses a problem header that starts outside the mounted virtual window', async () => {

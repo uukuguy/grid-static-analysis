@@ -18,6 +18,9 @@ interface VirtualTrajectoryProps<T extends TrajectoryItem> {
   renderRow: (item: T) => React.ReactNode;
   onRequestOlder: (anchor: PrependAnchor) => void;
   hasOlder?: boolean;
+  olderState?: 'idle' | 'loading' | 'failed';
+  olderError?: string | null;
+  onRetryOlder?: () => void;
   estimateSize?: (item: T) => number;
   focusItemId?: string | null;
   focusElementId?: string | null;
@@ -25,7 +28,8 @@ interface VirtualTrajectoryProps<T extends TrajectoryItem> {
 
 /** A bounded, semantic-ID keyed list shared by the trajectory projections. */
 export function VirtualTrajectory<T extends TrajectoryItem>({
-  items, label, renderRow, onRequestOlder, hasOlder = false, estimateSize = () => 84, focusItemId = null, focusElementId = null,
+  items, label, renderRow, onRequestOlder, hasOlder = false, olderState = 'idle', olderError = null, onRetryOlder = () => undefined,
+  estimateSize = () => 84, focusItemId = null, focusElementId = null,
 }: VirtualTrajectoryProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
@@ -69,6 +73,7 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
   }, [items, virtualizer]);
 
   const requestOlder = () => {
+    if (olderState !== 'idle') return;
     const first = virtualizer.getVirtualItems()[0];
     const index = first?.index ?? 0;
     const item = items[index];
@@ -102,10 +107,15 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
 
   return (
     <div ref={(node) => { parentRef.current = node; setScrollElement(node); }} className="virtual-scroll" onScroll={() => {
-      if (hasOlder && (virtualizer.scrollOffset ?? 0) < 32) requestOlder();
+      if (hasOlder && olderState === 'idle' && (virtualizer.scrollOffset ?? 0) < 32) requestOlder();
     }}>
-      {hasOlder && <button type="button" className="load-older" onClick={requestOlder}>Load older history</button>}
-      <div role="list" aria-label={label} aria-busy="false" style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+      {hasOlder || olderState !== 'idle' ? <PaginationControl
+        state={olderState}
+        error={olderError}
+        onLoad={requestOlder}
+        onRetry={onRetryOlder}
+      /> : null}
+      <div role="list" aria-label={label} aria-busy={olderState === 'loading' ? 'true' : 'false'} style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {renderedItems.map((row) => {
           const item = items[row.index];
           return <div
@@ -124,6 +134,26 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
       </div>
     </div>
   );
+}
+
+function PaginationControl({
+  state, error, onLoad, onRetry,
+}: {
+  state: 'idle' | 'loading' | 'failed';
+  error: string | null;
+  onLoad: () => void;
+  onRetry: () => void;
+}) {
+  if (state === 'loading') {
+    return <button type="button" className="load-older" disabled>Loading older history</button>;
+  }
+  if (state === 'failed') {
+    return <div className="load-older older-history-error" role="status">
+      {error ? <span>{error}</span> : null}
+      <button type="button" onClick={onRetry}>Retry older history</button>
+    </div>;
+  }
+  return <button type="button" className="load-older" onClick={onLoad}>Load older history</button>;
 }
 
 function estimatedOffset<T extends TrajectoryItem>(items: T[], index: number, estimateSize: (item: T) => number) {

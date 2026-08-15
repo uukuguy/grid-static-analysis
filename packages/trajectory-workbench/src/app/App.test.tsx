@@ -353,18 +353,19 @@ describe('App shell', () => {
   it('retries a failed older business cursor instead of the initial page', async () => {
     const olderProblem = { ...problems[0], id: 'business:6', title: 'Q6 · Earlier' };
     const getBusinessPage = vi.fn()
-      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'older-page', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
+      .mockResolvedValueOnce({ items: [problems[0]], older_cursor: 'cursor-before-48', newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: true, encoded_bytes: 100 })
       .mockRejectedValueOnce(new Error('older history unavailable'))
       .mockResolvedValueOnce({ items: [olderProblem], older_cursor: null, newer_cursor: null, first_sequence: 1, last_sequence: 58, has_older: false, encoded_bytes: 100 });
     render(<App client={{ listRuns: async () => run, getBusinessPage }} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Load older history' }));
-    expect(await screen.findByTestId('state-network-error')).toHaveTextContent('older history unavailable');
+    expect(await screen.findByText('older history unavailable')).toBeVisible();
+    expect(screen.getByText('Q7 · 线路 17 N-1')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry older history' }));
 
     expect(await screen.findByText('Q6 · Earlier')).toBeVisible();
-    expect(getBusinessPage).toHaveBeenNthCalledWith(3, 'analysis-test', 'older-page');
+    expect(getBusinessPage).toHaveBeenNthCalledWith(3, 'analysis-test', 'cursor-before-48');
   });
 
   it('filters by source kind and groups visible runs by status', async () => {

@@ -31,6 +31,20 @@ export function businessPage(count = 1) {
   };
 }
 
+function olderBusinessPage() {
+  const page = businessPage(12);
+  return {
+    ...page,
+    items: page.items.map((problem) => ({
+      ...problem,
+      id: 'business:older',
+      title: 'Q6 · Earlier cursor page',
+    })),
+    older_cursor: null,
+    has_older: false,
+  };
+}
+
 const agentPage = {
   items: [{
     id: 'turn:7', source: 'observed', source_sequences: [99_700, 100_000], rule_id: null, status: 'completed', unavailable_reason: null,
@@ -64,9 +78,11 @@ const evidenceIndex = { analysis_id: 'analysis-test', records: {
 } };
 
 export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready', count = 1) {
+  let olderBusinessAttempts = 0;
   // Match the API root, not source modules such as `/src/api/client.ts`.
   await page.route((url) => url.pathname.startsWith('/api/runs'), async (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const url = new URL(route.request().url());
+    const path = url.pathname;
     if (scenario === 'network-error') return route.abort('failed');
     if (path === '/api/runs') {
       if (scenario === 'loading') {
@@ -77,7 +93,14 @@ export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready',
       const status = scenario === 'partial' || scenario === 'corrupt' ? scenario : run.status;
       return route.fulfill({ json: { items: scenario === 'empty' ? [] : [{ ...run, status }] } });
     }
-    if (path.endsWith('/business')) return route.fulfill({ json: scenario === 'empty' ? { ...businessPage(0), items: [] } : businessPage(count) });
+    if (path.endsWith('/business')) {
+      if (url.searchParams.has('cursor')) {
+        olderBusinessAttempts += 1;
+        if (olderBusinessAttempts === 1) return route.fulfill({ status: 503, json: { code: 'cursor_failed', message: 'older cursor unavailable' } });
+        return route.fulfill({ json: olderBusinessPage() });
+      }
+      return route.fulfill({ json: scenario === 'empty' ? { ...businessPage(0), items: [] } : businessPage(count) });
+    }
     if (path.endsWith('/agent')) return route.fulfill({ json: agentPage });
     if (path.includes('/context')) return route.fulfill({ json: contextFrame });
     if (path.endsWith('/evidence')) return route.fulfill({ json: evidenceIndex });

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VirtualTrajectory, type TrajectoryItem } from './VirtualTrajectory';
 
@@ -56,5 +56,42 @@ describe('VirtualTrajectory', () => {
 
     const focused = await screen.findByRole('button', { name: 'business:61' });
     expect(focused).toHaveFocus();
+  });
+
+  it('renders loading and failed older cursor states as sticky controls', async () => {
+    const retryOlder = vi.fn();
+    const pagination = { olderState: 'failed' as const, olderError: 'cursor-before-48 unavailable', onRetryOlder: retryOlder };
+    render(<VirtualTrajectory
+      items={items.slice(47, 60)}
+      label="Business trajectory"
+      hasOlder
+      onRequestOlder={vi.fn()}
+      renderRow={(item) => <span>{item.id}</span>}
+      {...pagination}
+    />);
+
+    expect(await screen.findByText('cursor-before-48 unavailable')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry older history' }));
+
+    expect(retryOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps problem headers inside the <=120-row virtual window for 100k events', async () => {
+    const mixedItems = [
+      { id: 'problem:q7', source_sequence: 1, type: 'problem' as const },
+      ...items.map((item) => ({ ...item, type: 'node' as const })),
+    ];
+    render(<VirtualTrajectory
+      items={mixedItems}
+      label="Business trajectory"
+      onRequestOlder={vi.fn()}
+      estimateSize={(item) => item.type === 'problem' ? 52 : 44}
+      renderRow={(item) => item.type === 'problem'
+        ? <div data-testid={`problem-header-${item.id}`}>Q7 problem</div>
+        : <button type="button" data-testid={`causal-node-${item.id}`}>{item.id}</button>}
+    />);
+
+    expect(await screen.findByTestId('problem-header-problem:q7')).toBeVisible();
+    expect(screen.getAllByTestId(/causal-node|problem-header/).length).toBeLessThanOrEqual(120);
   });
 });
