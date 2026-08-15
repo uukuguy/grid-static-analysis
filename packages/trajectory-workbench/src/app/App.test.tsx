@@ -376,6 +376,44 @@ describe('App shell', () => {
     expect(await screen.findByText(/Authoritative state at sequence 42/i)).toBeVisible();
   });
 
+  it('ignores an exact Context detail that resolves after its summary filters change', async () => {
+    const summary: ContextFrameSummary = {
+      id: 'context:42', source_sequence: 42, before_revision: 8, after_revision: 9,
+      changed: true, request_input_available: true, event_kind: 'tool-result',
+    };
+    const getContextPage = vi.fn(async (): Promise<ProjectionPage<ContextFrameSummary>> => ({
+      analysis_id: 'analysis-test', items: [summary], older_cursor: null, newer_cursor: null,
+      first_sequence: 42, last_sequence: 42, has_older: false, encoded_bytes: 80,
+    }));
+    const pendingDetails: Array<{ signal: AbortSignal; resolve: (frame: ContextFrame) => void }> = [];
+    const getContextFrame = vi.fn((_runId: string, _sequence: number, signal?: AbortSignal) => new Promise<ContextFrame>((resolve) => {
+      pendingDetails.push({ signal: signal ?? new AbortController().signal, resolve });
+    }));
+    render(<App client={{ ...fixtureClient(), getContextPage, getContextFrame }} />);
+
+    fireEvent.click(viewTab('Context'));
+    fireEvent.click(await screen.findByRole('button', { name: /sequence 42.*tool-result/i }));
+    await waitFor(() => expect(getContextFrame).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByLabelText('Context changed state'), { target: { value: 'true' } });
+    await waitFor(() => expect(getContextPage).toHaveBeenLastCalledWith('analysis-test', {
+      filters: { changed: true },
+    }, expect.any(AbortSignal)));
+    await waitFor(() => expect(getContextFrame).toHaveBeenCalledTimes(2));
+    expect(pendingDetails[0].signal.aborted).toBe(true);
+
+    await act(async () => pendingDetails[0].resolve({
+      id: 'context:42:old-filter', source: 'observed', source_sequences: [42], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: 42,
+      before_revision: 8, after_revision: 9, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: { filter: 'old' }, delta: {}, after_state: { filter: 'old' },
+      max_sequence: 78, request_artifact_ref: 'artifact:request',
+    }));
+
+    expect(screen.queryByRole('heading', { name: 'Authoritative state at sequence 42' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pin sequence 42 as frame A' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Pinned frame comparison' })).toHaveTextContent('Pin frame A · Pin frame B');
+  });
+
   it('retains Context summaries and retries the identical failed opaque cursor', async () => {
     let olderAttempts = 0;
     const summary = (sequence: number): ContextFrameSummary => ({

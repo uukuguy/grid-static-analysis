@@ -415,7 +415,9 @@ export function App({ client = api }: { client?: AppClient }) {
       return;
     }
     const requestedSequence = sequence;
-    const requestKey = pageRequestKey(requestedRunId, 'context', { filters: { at_sequence: requestedSequence } });
+    const requestKey = pageRequestKey(requestedRunId, 'context', {
+      filters: { ...state.pageFilters.context, at_sequence: requestedSequence },
+    });
     const detailOwnsPageStatus = state.activeView !== 'context' || !client.getContextPage;
     const controller = new AbortController();
     contextDetailRequestKeyRef.current = requestKey;
@@ -451,7 +453,7 @@ export function App({ client = api }: { client?: AppClient }) {
       }
     });
     return () => controller.abort();
-  }, [client, contextDetailAttempt, contextSequence, hasAuditSelection, pageAttempts.context, state.activeView, state.selectedRunId]);
+  }, [client, contextDetailAttempt, contextSequence, hasAuditSelection, pageAttempts.context, state.activeView, state.pageFilters.context, state.selectedRunId]);
 
   useEffect(() => {
     const needsEvidence = state.activeView === 'evidence'
