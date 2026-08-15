@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode } from 'react';
+import type { KeyboardEvent } from 'react';
 import { useState } from 'react';
 import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, JsonValue, ModelRequest, ToolCall } from '../../api/types';
 import type { AuditInspectorModel, AuditPanel } from '../../audit/inspector-model';
@@ -110,7 +110,7 @@ function PanelContent({
   if (active === 'overview') return <OverviewPanel model={model} onSelectSequence={onSelectSequence} />;
   if (active === 'evidence') return <EvidencePanel model={model} artifactUrl={artifactUrl} onSelectSequence={onSelectSequence} />;
   if (active === 'context') return <ContextPanel model={model} artifactUrl={artifactUrl} onSelectSequence={onSelectSequence} />;
-  return <ExecutionPanel model={model} artifactUrl={artifactUrl} />;
+  return <ExecutionPanel model={model} />;
 }
 
 function OverviewPanel({ model, onSelectSequence }: { model: AuditInspectorModel; onSelectSequence: (sequence: number) => void }) {
@@ -182,7 +182,7 @@ function StateBlock({ title, value }: { title: string; value: JsonValue }) {
   </section>;
 }
 
-function ExecutionPanel({ model, artifactUrl }: { model: AuditInspectorModel; artifactUrl: (ref: string) => string }) {
+function ExecutionPanel({ model }: { model: AuditInspectorModel }) {
   const turn = model.execution;
   if (!turn) return <p className="unavailable">{model.unavailable.execution ?? 'Execution linkage is unavailable for this event.'}</p>;
   return <div className="audit-panel-stack">
@@ -193,46 +193,42 @@ function ExecutionPanel({ model, artifactUrl }: { model: AuditInspectorModel; ar
       <dt>Source</dt><dd><SourceBadge source={turn.source} /></dd>
       <dt>Status</dt><dd>{turn.status}{turn.unavailable_reason ? ` · ${turn.unavailable_reason}` : ''}</dd>
     </dl>
-    {turn.steps.length ? turn.steps.map((step) => <StepCard key={step.id} step={step} artifactUrl={artifactUrl} />) : <p className="unavailable">No public request/tool entries are recorded for this selected turn.</p>}
+    {turn.steps.length ? turn.steps.map((step) => <StepCard key={step.id} step={step} />) : <p className="unavailable">No public request/tool entries are recorded for this selected turn.</p>}
   </div>;
 }
 
-function StepCard({ step, artifactUrl }: { step: AgentStep; artifactUrl: (ref: string) => string }) {
+function StepCard({ step }: { step: AgentStep }) {
   return <article className="audit-card">
     <h3>Step {step.step_id}</h3>
-    {step.request ? <RequestDetails request={step.request} artifactUrl={artifactUrl} /> : <p className="unavailable">{step.unavailable_reason ?? 'No model request is recorded for this step.'}</p>}
+    {step.request ? <RequestDetails request={step.request} /> : <p className="unavailable">{step.unavailable_reason ?? 'No model request is recorded for this step.'}</p>}
   </article>;
 }
 
-function RequestDetails({ request, artifactUrl }: { request: ModelRequest; artifactUrl: (ref: string) => string }) {
+function RequestDetails({ request }: { request: ModelRequest }) {
   return <div className="audit-panel-stack">
     <dl>
       <dt>Request</dt><dd>{request.request_id}</dd>
-      <dt>Input</dt><dd>{artifactLink(request.artifact_ref, artifactUrl)}</dd>
+      <dt>Input</dt><dd>{request.artifact_ref ? <span className="unavailable">Raw request input is unavailable in the execution inspector.</span> : <span className="unavailable">Request input artifact unavailable.</span>}</dd>
       <dt>Status</dt><dd>{request.status}{request.unavailable_reason ? ` · ${request.unavailable_reason}` : ''}</dd>
     </dl>
     {request.retries.length ? <section><h4>Retries</h4>{request.retries.map((retry) => <p key={retry.id}>Attempt {retry.attempt} of {retry.max_attempts}; delay {retry.delay_seconds ?? 'unavailable'} seconds{retry.message ? ` · ${retry.message}` : ''}</p>)}</section> : null}
-    {request.tools.length ? <section><h4>Tools</h4>{request.tools.map((tool) => <ToolSummary key={tool.id} tool={tool} artifactUrl={artifactUrl} />)}</section> : null}
-    {request.response ? <ResponseSummary response={request.response} artifactUrl={artifactUrl} /> : null}
+    {request.tools.length ? <section><h4>Tools</h4>{request.tools.map((tool) => <ToolSummary key={tool.id} tool={tool} />)}</section> : null}
+    {request.response ? <ResponseSummary response={request.response} /> : null}
   </div>;
 }
 
-function ToolSummary({ tool, artifactUrl }: { tool: ToolCall; artifactUrl: (ref: string) => string }) {
+function ToolSummary({ tool }: { tool: ToolCall }) {
   return <article className="audit-subcard">
     <h5>{tool.capability}</h5>
     <p>Sequence {tool.start_sequence}{tool.end_sequence === null ? ' · still open' : `–${tool.end_sequence}`} · {tool.ok === null ? 'outcome unavailable' : tool.ok ? 'completed' : 'failed'} · duration {tool.duration_seconds ?? 'unavailable'} seconds</p>
-    <p>{artifactLink(tool.artifact_ref, artifactUrl)}</p>
+    {tool.artifact_ref ? <p className="unavailable">Raw tool artifact is unavailable in the execution inspector.</p> : null}
   </article>;
 }
 
-function ResponseSummary({ response, artifactUrl }: { response: AssistantResponse; artifactUrl: (ref: string) => string }) {
+function ResponseSummary({ response }: { response: AssistantResponse }) {
   return <section>
     <h4>Assistant response</h4>
     <p>Stop reason {response.stop_reason ?? 'unavailable'} · TTFT {response.ttft_seconds ?? 'unavailable'} seconds · duration {response.duration_seconds ?? 'unavailable'} seconds · tokens {response.input_tokens ?? '—'} in / {response.output_tokens ?? '—'} out</p>
-    <p>{artifactLink(response.artifact_ref, artifactUrl)}</p>
+    {response.artifact_ref ? <p className="unavailable">Raw assistant artifact is unavailable in the execution inspector.</p> : null}
   </section>;
-}
-
-function artifactLink(reference: string | null, artifactUrl: (ref: string) => string): ReactNode {
-  return reference ? <a href={artifactUrl(reference)} download>{reference}</a> : <span className="unavailable">Artifact unavailable</span>;
 }

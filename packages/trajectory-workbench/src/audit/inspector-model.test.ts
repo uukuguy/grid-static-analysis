@@ -126,8 +126,8 @@ describe('buildAuditInspectorModel', () => {
     expect(model.selection).toBe(selection);
     expect(model.evidence.map((record) => record.reference)).toEqual(['evidence:line-17']);
     expect(model.context).toBe(matchingContext);
-    expect(model.execution).toBe(turn);
-    expect(model.unavailable).toEqual({});
+    expect(model.execution).toBeNull();
+    expect(model.unavailable.execution).toMatch(/no typed execution relation/i);
   });
 
   it('does not reuse a context frame from another sequence', () => {
@@ -139,5 +139,145 @@ describe('buildAuditInspectorModel', () => {
 
     expect(model.context).toBeNull();
     expect(model.unavailable.context).toMatch(/sequence 61/i);
+  });
+
+  it('scopes execution to typed evidence relations and excludes unrelated same-turn requests', () => {
+    const turnWithMixedRequests: AgentTurn = {
+      ...turn,
+      steps: [{
+        id: 'step:related',
+        source: 'observed',
+        source_sequences: [52],
+        rule_id: null,
+        status: 'completed',
+        unavailable_reason: null,
+        step_id: 'step-related',
+        request: {
+          id: 'request:related',
+          source: 'observed',
+          source_sequences: [52],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          request_id: 'request-2',
+          artifact_ref: 'raw:request-related',
+          retries: [],
+          response: null,
+          tools: [{
+            id: 'tool:related',
+            source: 'observed',
+            source_sequences: [47],
+            rule_id: null,
+            status: 'completed',
+            unavailable_reason: null,
+            tool_call_id: 'tool-17',
+            capability: 'grid.analyze',
+            start_sequence: 47,
+            end_sequence: 48,
+            artifact_ref: 'raw:tool-related',
+            ok: true,
+            duration_seconds: 1.25,
+          }, {
+            id: 'tool:unrelated',
+            source: 'observed',
+            source_sequences: [58],
+            rule_id: null,
+            status: 'completed',
+            unavailable_reason: null,
+            tool_call_id: 'tool-unrelated',
+            capability: 'grid.unrelated',
+            start_sequence: 58,
+            end_sequence: 59,
+            artifact_ref: 'raw:tool-unrelated',
+            ok: true,
+            duration_seconds: 2,
+          }],
+        },
+      }, {
+        id: 'step:unrelated',
+        source: 'observed',
+        source_sequences: [55],
+        rule_id: null,
+        status: 'completed',
+        unavailable_reason: null,
+        step_id: 'step-unrelated',
+        request: {
+          id: 'request:unrelated',
+          source: 'observed',
+          source_sequences: [55],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          request_id: 'request-unrelated',
+          artifact_ref: 'raw:request-unrelated',
+          retries: [],
+          response: null,
+          tools: [],
+        },
+      }],
+    };
+
+    const model = buildAuditInspectorModel({
+      selection: { ...selection, agentTurn: turnWithMixedRequests },
+      evidenceIndex,
+      context: matchingContext,
+    });
+
+    expect(model.execution?.steps.map((step) => step.step_id)).toEqual(['step-related']);
+    expect(model.execution?.steps[0].request?.request_id).toBe('request-2');
+    expect(model.execution?.steps[0].request?.tools.map((tool) => tool.tool_call_id)).toEqual(['tool-17']);
+    expect(JSON.stringify(model.execution)).not.toContain('request-unrelated');
+    expect(JSON.stringify(model.execution)).not.toContain('tool-unrelated');
+  });
+
+  it('marks execution unavailable when raw artifacts are the only possible relation', () => {
+    const rawArtifactOnlyTurn: AgentTurn = {
+      ...turn,
+      steps: [{
+        id: 'step:raw-only',
+        source: 'observed',
+        source_sequences: [52],
+        rule_id: null,
+        status: 'completed',
+        unavailable_reason: null,
+        step_id: 'step-raw-only',
+        request: {
+          id: 'request:raw-only',
+          source: 'observed',
+          source_sequences: [52],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          request_id: 'request-raw-only',
+          artifact_ref: 'evidence:line-17',
+          retries: [],
+          response: null,
+          tools: [],
+        },
+      }],
+    };
+    const rawArtifactOnlyEvidence: EvidenceIndex = {
+      analysis_id: 'analysis-test',
+      records: {
+        'evidence:line-17': {
+          ...evidenceIndex.records['evidence:line-17'],
+          request_id: null,
+          tool_call_id: null,
+          result_id: null,
+          claim_id: null,
+          producing_sequence: null,
+          source_sequences: [52],
+        },
+      },
+    };
+
+    const model = buildAuditInspectorModel({
+      selection: { ...selection, agentTurn: rawArtifactOnlyTurn },
+      evidenceIndex: rawArtifactOnlyEvidence,
+      context: matchingContext,
+    });
+
+    expect(model.execution).toBeNull();
+    expect(model.unavailable.execution).toMatch(/typed execution relation/i);
   });
 });

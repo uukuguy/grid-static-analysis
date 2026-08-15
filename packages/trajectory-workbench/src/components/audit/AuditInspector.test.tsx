@@ -134,4 +134,88 @@ describe('AuditInspector', () => {
     expect(onSelectSequence).toHaveBeenCalledWith(47);
     expect(screen.queryByText(/"node"/)).not.toBeInTheDocument();
   });
+
+  it('does not link raw execution artifacts while showing permitted public summaries', () => {
+    const artifactUrl = vi.fn((ref: string) => `/artifact/${ref}`);
+    const model: AuditInspectorModel = {
+      selection,
+      evidence: [],
+      context: null,
+      execution: {
+        ...turn,
+        steps: [{
+          id: 'step:related',
+          source: 'observed',
+          source_sequences: [52],
+          rule_id: null,
+          status: 'completed',
+          unavailable_reason: null,
+          step_id: 'step-related',
+          request: {
+            id: 'request:related',
+            source: 'observed',
+            source_sequences: [52],
+            rule_id: null,
+            status: 'completed',
+            unavailable_reason: null,
+            request_id: 'request-2',
+            artifact_ref: 'raw:request-input',
+            retries: [{
+              id: 'retry:1',
+              source: 'observed',
+              source_sequences: [53],
+              rule_id: null,
+              status: 'completed',
+              unavailable_reason: null,
+              attempt: 1,
+              max_attempts: 2,
+              delay_seconds: 0.5,
+              message: 'retryable failure',
+            }],
+            response: {
+              id: 'response:related',
+              source: 'observed',
+              source_sequences: [61],
+              rule_id: null,
+              status: 'completed',
+              unavailable_reason: null,
+              artifact_ref: 'raw:assistant-response',
+              stop_reason: 'stop',
+              input_tokens: 120,
+              output_tokens: 45,
+              ttft_seconds: 0.2,
+              duration_seconds: 1.4,
+            },
+            tools: [{
+              id: 'tool:related',
+              source: 'observed',
+              source_sequences: [47],
+              rule_id: null,
+              status: 'completed',
+              unavailable_reason: null,
+              tool_call_id: 'tool-17',
+              capability: 'grid.analyze',
+              start_sequence: 47,
+              end_sequence: 48,
+              artifact_ref: 'raw:tool-result',
+              ok: true,
+              duration_seconds: 1.25,
+            }],
+          },
+        }],
+      },
+      unavailable: { context: 'Context projection is not loaded.' },
+    };
+
+    render(<AuditInspector model={model} artifactUrl={artifactUrl} onSelectSequence={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Execution' }));
+
+    expect(screen.getByText('request-2')).toBeVisible();
+    expect(screen.getByText('grid.analyze')).toBeVisible();
+    expect(screen.getByText(/completed · duration 1.25 seconds/i)).toBeVisible();
+    expect(screen.getByText(/tokens 120 in \/ 45 out/i)).toBeVisible();
+    expect(screen.getByText(/raw request input is unavailable/i)).toBeVisible();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(artifactUrl).not.toHaveBeenCalledWith(expect.stringMatching(/^raw:/));
+  });
 });
