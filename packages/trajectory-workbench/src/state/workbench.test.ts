@@ -35,4 +35,21 @@ describe('workbenchReducer', () => {
     expect(folded.search).toBe('contingency');
     expect(folded.foldedNodeIds).toContain('q7');
   });
+
+  it('focuses a problem group without replacing the selected node', () => {
+    const selected: WorkbenchState = {
+      ...initialWorkbenchState,
+      activeView: 'agent',
+      selectedNodeId: 'business:q7:claim',
+    };
+
+    const next = workbenchReducer(selected, {
+      type: 'problem/focused',
+      problemId: 'business:q7',
+    });
+
+    expect(next.activeView).toBe('business');
+    expect(next.focusedProblemId).toBe('business:q7');
+    expect(next.selectedNodeId).toBe('business:q7:claim');
+  });
 });

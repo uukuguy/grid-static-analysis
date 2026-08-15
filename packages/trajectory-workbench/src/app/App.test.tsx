@@ -170,6 +170,43 @@ describe('App shell', () => {
       .toHaveTextContent('analysis-test-t007');
   });
 
+  it('selecting a problem in the rail focuses its causal group without replacing node selection', async () => {
+    const selectedProblem: BusinessProblem = {
+      ...problems[0],
+      title: 'Q7 · Line 17 N-1',
+      nodes: [
+        {
+          id: 'business:7:claim', source: 'agent-declared', source_sequences: [61], rule_id: null,
+          status: 'completed', unavailable_reason: null, source_sequence: 61, kind: 'claim',
+          title: 'Nested conclusion', detail: null, refs: [],
+        },
+        {
+          id: 'business:7:evidence', source: 'observed', source_sequences: [62], rule_id: null,
+          status: 'completed', unavailable_reason: null, source_sequence: 62, kind: 'evidence',
+          title: 'Evidence collected', detail: null, refs: [],
+        },
+        {
+          id: 'business:7:decision', source: 'derived', source_sequences: [63], rule_id: null,
+          status: 'completed', unavailable_reason: null, source_sequence: 63, kind: 'decision',
+          title: 'Decision recorded', detail: null, refs: [],
+        },
+      ],
+    };
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => ({ items: [selectedProblem], older_cursor: null, newer_cursor: null, first_sequence: 59, last_sequence: 78, has_older: false, encoded_bytes: 100 }),
+    }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Nested conclusion/i }));
+    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveTextContent('business:7:claim');
+
+    fireEvent.click(screen.getByRole('button', { name: /Q7.*3 decisions/i }));
+
+    expect(screen.getByRole('heading', { name: /Q7.*Line 17/i })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /Q7.*Line 17/i })).toHaveFocus();
+    expect(screen.getByRole('complementary', { name: 'Trajectory inspector' })).toHaveTextContent('business:7:claim');
+  });
+
   it('keyboard tabs move without a pointer', async () => {
     render(<App client={fixtureClient()} />);
     const business = await screen.findByRole('tab', { name: 'Business' });

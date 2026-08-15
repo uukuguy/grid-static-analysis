@@ -15,6 +15,7 @@ export interface WorkbenchState {
   selectedRunId: string | null;
   activeView: WorkbenchView;
   selectedNodeId: string | null;
+  focusedProblemId: string | null;
   pages: Record<WorkbenchView, LoadedPage[]>;
   pageStatus: Record<WorkbenchView, AsyncStatus>;
   pageError: Record<WorkbenchView, string | null>;
@@ -36,6 +37,7 @@ export const initialWorkbenchState: WorkbenchState = {
   selectedRunId: null,
   activeView: 'business',
   selectedNodeId: null,
+  focusedProblemId: null,
   pages: emptyPages(),
   pageStatus: emptyStatus(),
   pageError: emptyErrors(),
@@ -57,6 +59,7 @@ export type WorkbenchAction =
   | { type: 'page/prepended'; view: WorkbenchView; page: LoadedPage }
   | { type: 'page/failed'; view: WorkbenchView; message: string }
   | { type: 'node/selected'; nodeId: string | null }
+  | { type: 'problem/focused'; problemId: string }
   | { type: 'node/foldToggled'; nodeId: string }
   | { type: 'search/changed'; search: string }
   | { type: 'sourceFilter/changed'; source: SourceFilter }
@@ -69,13 +72,14 @@ export type WorkbenchAction =
 
 export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
-    case 'run/selected': return { ...state, selectedRunId: action.runId, selectedNodeId: null, pages: emptyPages(), pageStatus: emptyStatus(), pageError: emptyErrors() };
+    case 'run/selected': return { ...state, selectedRunId: action.runId, selectedNodeId: null, focusedProblemId: null, pages: emptyPages(), pageStatus: emptyStatus(), pageError: emptyErrors() };
     case 'view/selected': return { ...state, activeView: action.view };
     case 'page/requested': return { ...state, pageStatus: { ...state.pageStatus, [action.view]: 'loading' }, pageError: { ...state.pageError, [action.view]: null } };
     case 'page/loaded': return { ...state, pages: { ...state.pages, [action.view]: [action.page] }, pageStatus: { ...state.pageStatus, [action.view]: 'ready' } };
     case 'page/prepended': return { ...state, pages: { ...state.pages, [action.view]: [action.page, ...state.pages[action.view]] }, pageStatus: { ...state.pageStatus, [action.view]: 'ready' } };
     case 'page/failed': return { ...state, pageStatus: { ...state.pageStatus, [action.view]: 'failed' }, pageError: { ...state.pageError, [action.view]: action.message } };
     case 'node/selected': return { ...state, selectedNodeId: action.nodeId, inspectorOpen: action.nodeId !== null ? true : state.inspectorOpen };
+    case 'problem/focused': return { ...state, activeView: 'business', focusedProblemId: action.problemId };
     case 'node/foldToggled': return { ...state, foldedNodeIds: state.foldedNodeIds.includes(action.nodeId) ? state.foldedNodeIds.filter((id) => id !== action.nodeId) : [...state.foldedNodeIds, action.nodeId] };
     case 'search/changed': return { ...state, search: action.search };
     case 'sourceFilter/changed': return { ...state, sourceFilter: action.source };

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { BusinessProblem, LifecycleStatus, NodeSource } from '../api/types';
 import { TrajectoryRow, type BusinessTrajectoryRow } from '../components/trajectory/TrajectoryRow';
 import { VirtualTrajectory, type PrependAnchor } from '../components/trajectory/VirtualTrajectory';
@@ -30,6 +31,15 @@ export function BusinessView({ problems, state, dispatch, hasOlder = false, onRe
   const rows = filteredRows(problems, state);
   const sources: NodeSource[] = ['observed', 'derived', 'agent-declared'];
   const statuses: LifecycleStatus[] = ['running', 'completed', 'failed', 'interrupted', 'unavailable'];
+  const problemHeadings = useRef<Record<string, HTMLHeadingElement | null>>({});
+
+  useEffect(() => {
+    const heading = state.focusedProblemId ? problemHeadings.current[state.focusedProblemId] : null;
+    if (!heading) return;
+    heading.scrollIntoView?.({ block: 'center' });
+    heading.focus({ preventScroll: true });
+  }, [state.focusedProblemId, rows]);
+
   return <section className="business-view" aria-label="Business trajectory view">
     <header className="business-view-header"><div><h1>Business trajectory</h1><p>Chronological problem-solving evidence</p></div>
       <div className="business-controls"><label>Search business trajectory<input aria-label="Search business trajectory" value={state.search} onChange={(event) => dispatch({ type: 'search/changed', search: event.target.value })} placeholder="Search decisions, tools, claims" /></label>
@@ -38,9 +48,12 @@ export function BusinessView({ problems, state, dispatch, hasOlder = false, onRe
     </header>
     <div className="business-filter-summary" aria-label="Business trajectory filters">{sources.length + statuses.length} available filters · {rows.length} matching events</div>
     <VirtualTrajectory items={rows} label="Business trajectory" hasOlder={hasOlder} onRequestOlder={onRequestOlder} estimateSize={(item) => item.type === 'problem' ? 52 : 84} renderRow={(item) => item.type === 'problem'
-      ? <button type="button" className="problem-fold" aria-expanded={!state.foldedNodeIds.includes(item.problem.id)} onClick={() => dispatch({ type: 'node/foldToggled', nodeId: item.problem.id })} aria-label={`${state.foldedNodeIds.includes(item.problem.id) ? 'Expand' : 'Fold'} ${item.problem.title}`}>
-        <span>{state.foldedNodeIds.includes(item.problem.id) ? '▸' : '▾'}</span><strong>{item.problem.title}</strong><small>{item.problem.status} · {item.problem.nodes.length} events</small>
-      </button>
+      ? <div className="problem-group-header">
+        <h2 ref={(node) => { problemHeadings.current[item.problem.id] = node; }} tabIndex={-1}>{item.problem.title}</h2>
+        <button type="button" className="problem-fold" aria-expanded={!state.foldedNodeIds.includes(item.problem.id)} onClick={() => dispatch({ type: 'node/foldToggled', nodeId: item.problem.id })} aria-label={`${state.foldedNodeIds.includes(item.problem.id) ? 'Expand' : 'Fold'} ${item.problem.title}`}>
+          <span>{state.foldedNodeIds.includes(item.problem.id) ? '▸' : '▾'}</span><small>{item.problem.status} · {item.problem.nodes.length} events</small>
+        </button>
+      </div>
       : <TrajectoryRow item={item} selected={state.selectedNodeId === item.id} onSelect={() => dispatch({ type: 'node/selected', nodeId: item.id })} />}
     />
   </section>;
