@@ -52,4 +52,26 @@ describe('workbenchReducer', () => {
     expect(next.focusedProblemId).toBe('business:q7');
     expect(next.selectedNodeId).toBe('business:q7:claim');
   });
+
+  it('resets only the filtered operational view page metadata', () => {
+    const loaded: WorkbenchState = {
+      ...initialWorkbenchState,
+      pages: {
+        ...initialWorkbenchState.pages,
+        agent: [tailPage],
+        context: [olderPage],
+      },
+      pageStatus: { ...initialWorkbenchState.pageStatus, agent: 'ready', context: 'ready' },
+    };
+
+    const next = workbenchReducer(loaded, {
+      type: 'page/filtersChanged', view: 'agent', filters: { kind: 'tool', q: 'voltage' },
+    });
+
+    expect(next.pageFilters.agent).toEqual({ kind: 'tool', q: 'voltage' });
+    expect(next.pages.agent).toEqual([]);
+    expect(next.pageStatus.agent).toBe('idle');
+    expect(next.pages.context).toEqual([olderPage]);
+    expect(next.pageStatus.context).toBe('ready');
+  });
 });

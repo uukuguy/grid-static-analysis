@@ -1,8 +1,17 @@
+import type { AgentPageFilters, ContextPageFilters, EvidencePageFilters } from '../api/types';
+
 export type WorkbenchView = 'business' | 'agent' | 'context' | 'evidence';
 export type Theme = 'dark' | 'light' | 'system';
 export type AsyncStatus = 'idle' | 'loading' | 'ready' | 'failed';
 export type SourceFilter = 'all' | 'observed' | 'derived' | 'agent-declared';
 export type StatusFilter = 'all' | 'running' | 'completed' | 'failed' | 'interrupted' | 'unavailable';
+
+export interface WorkbenchPageFilters {
+  business: Record<string, never>;
+  agent: AgentPageFilters;
+  context: ContextPageFilters;
+  evidence: EvidencePageFilters;
+}
 
 export interface LoadedPage {
   firstSequence: number | null;
@@ -19,6 +28,7 @@ export interface WorkbenchState {
   pages: Record<WorkbenchView, LoadedPage[]>;
   pageStatus: Record<WorkbenchView, AsyncStatus>;
   pageError: Record<WorkbenchView, string | null>;
+  pageFilters: WorkbenchPageFilters;
   foldedNodeIds: string[];
   search: string;
   sourceFilter: SourceFilter;
@@ -32,6 +42,7 @@ export interface WorkbenchState {
 const emptyPages = (): Record<WorkbenchView, LoadedPage[]> => ({ business: [], agent: [], context: [], evidence: [] });
 const emptyStatus = (): Record<WorkbenchView, AsyncStatus> => ({ business: 'idle', agent: 'idle', context: 'idle', evidence: 'idle' });
 const emptyErrors = (): Record<WorkbenchView, string | null> => ({ business: null, agent: null, context: null, evidence: null });
+const emptyFilters = (): WorkbenchPageFilters => ({ business: {}, agent: {}, context: {}, evidence: {} });
 
 export const initialWorkbenchState: WorkbenchState = {
   selectedRunId: null,
@@ -41,6 +52,7 @@ export const initialWorkbenchState: WorkbenchState = {
   pages: emptyPages(),
   pageStatus: emptyStatus(),
   pageError: emptyErrors(),
+  pageFilters: emptyFilters(),
   foldedNodeIds: [],
   search: '',
   sourceFilter: 'all',
@@ -58,6 +70,9 @@ export type WorkbenchAction =
   | { type: 'page/loaded'; view: WorkbenchView; page: LoadedPage }
   | { type: 'page/prepended'; view: WorkbenchView; page: LoadedPage }
   | { type: 'page/failed'; view: WorkbenchView; message: string }
+  | { type: 'page/filtersChanged'; view: 'agent'; filters: AgentPageFilters }
+  | { type: 'page/filtersChanged'; view: 'context'; filters: ContextPageFilters }
+  | { type: 'page/filtersChanged'; view: 'evidence'; filters: EvidencePageFilters }
   | { type: 'node/selected'; nodeId: string | null }
   | { type: 'problem/focused'; problemId: string }
   | { type: 'node/foldToggled'; nodeId: string }
@@ -78,6 +93,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'page/loaded': return { ...state, pages: { ...state.pages, [action.view]: [action.page] }, pageStatus: { ...state.pageStatus, [action.view]: 'ready' } };
     case 'page/prepended': return { ...state, pages: { ...state.pages, [action.view]: [action.page, ...state.pages[action.view]] }, pageStatus: { ...state.pageStatus, [action.view]: 'ready' } };
     case 'page/failed': return { ...state, pageStatus: { ...state.pageStatus, [action.view]: 'failed' }, pageError: { ...state.pageError, [action.view]: action.message } };
+    case 'page/filtersChanged': return {
+      ...state,
+      pageFilters: { ...state.pageFilters, [action.view]: { ...action.filters } },
+      pages: { ...state.pages, [action.view]: [] },
+      pageStatus: { ...state.pageStatus, [action.view]: 'idle' },
+      pageError: { ...state.pageError, [action.view]: null },
+    };
     case 'node/selected': return { ...state, selectedNodeId: action.nodeId, inspectorOpen: action.nodeId !== null ? true : state.inspectorOpen };
     case 'problem/focused': return { ...state, activeView: 'business', focusedProblemId: action.problemId };
     case 'node/foldToggled': return { ...state, foldedNodeIds: state.foldedNodeIds.includes(action.nodeId) ? state.foldedNodeIds.filter((id) => id !== action.nodeId) : [...state.foldedNodeIds, action.nodeId] };

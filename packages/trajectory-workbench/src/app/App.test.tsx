@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessCausalRow, BusinessNode, BusinessProblem, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunListResponse } from '../api/types';
+import type { AgentTurn, BusinessCausalRow, BusinessNode, BusinessProblem, ContextFrame, ContextFrameSummary, EvidenceIndex, EvidencePageRequest, EvidenceRecord, ExecutionSlice, ProjectionPage, RunListResponse } from '../api/types';
 import { App } from './App';
 
 const run: RunListResponse = {
@@ -95,6 +95,16 @@ function businessWireNode(node: BusinessNode): Omit<BusinessNode, 'source_sequen
   const { source_sequence, ...wireNode } = node;
   void source_sequence;
   return wireNode;
+}
+
+function evidenceRecord(reference: string, sequence: number): EvidenceRecord {
+  return {
+    id: `artifact:${reference}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+    status: 'completed', unavailable_reason: null, reference, kind: 'evidence',
+    relative_path: `evidence/${reference}.json`, sha256: 'a'.repeat(64), verification_status: 'verified',
+    producing_sequence: sequence, consuming_sequences: [], turn_id: null, step_id: null,
+    request_id: null, tool_call_id: null, result_id: null, evidence_id: reference, claim_id: null,
+  };
 }
 
 function viewTab(name: 'Business' | 'Agent' | 'Context' | 'Evidence') {
@@ -350,6 +360,37 @@ describe('App shell', () => {
     const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
     fireEvent.click(within(inspector).getByRole('tab', { name: 'Evidence' }));
     expect(await within(inspector).findByRole('link', { name: 'evidence:nested' })).toHaveAttribute('href', '/artifact/evidence:nested');
+  });
+
+  it('fetches selected audit evidence by exact reference when it is outside the current page', async () => {
+    const reference = 'evidence:outside-first-page';
+    const node = { ...nestedProblem.nodes[0], refs: [reference] };
+    const page = (items: EvidenceRecord[]): ProjectionPage<EvidenceRecord> => ({
+      analysis_id: 'analysis-test', items, older_cursor: null, newer_cursor: null,
+      first_sequence: items[0]?.producing_sequence ?? null,
+      last_sequence: items.at(-1)?.producing_sequence ?? null,
+      has_older: false, encoded_bytes: 100,
+    });
+    const getEvidencePage = vi.fn(async (_runId: string, request?: EvidencePageRequest) => (
+      request?.filters.relevant_ref === reference
+        ? page([evidenceRecord(reference, 61)])
+        : page([evidenceRecord('evidence:first-page-only', 78)])
+    ));
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => businessProjectionPage([{ ...nestedProblem, nodes: [node] }]),
+      getEvidencePage,
+      artifactUrl: (_runId, ref) => `/artifact/${ref}`,
+    }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /nested conclusion/i }));
+    const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
+    fireEvent.click(within(inspector).getByRole('tab', { name: 'Evidence' }));
+
+    expect(await within(inspector).findByRole('link', { name: reference })).toHaveAttribute('href', `/artifact/${reference}`);
+    expect(getEvidencePage).toHaveBeenCalledWith('analysis-test', {
+      filters: { relevant_ref: reference },
+    }, expect.any(AbortSignal));
   });
 
   it('shows selected claim evidence with verified digest and jumps to the producing sequence', async () => {
@@ -776,6 +817,84 @@ describe('App shell', () => {
 
     expect(await within(inspector).findByText(/60 → 61/)).toBeVisible();
     expect(within(inspector).queryByText(/47 → 48/)).not.toBeInTheDocument();
+  });
+
+  it('does not render a late Context page after the user selects another run', async () => {
+    const pending: Array<{
+      runId: string;
+      signal: AbortSignal;
+      resolve: (page: ProjectionPage<ContextFrameSummary>) => void;
+    }> = [];
+    const getContextPage = vi.fn((runId: string, _request: unknown, signal?: AbortSignal) => new Promise<ProjectionPage<ContextFrameSummary>>((resolve) => {
+      pending.push({ runId, signal: signal ?? new AbortController().signal, resolve });
+    }));
+    const getContextFrame = vi.fn(async (runId: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${runId}:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: { runId }, delta: {}, after_state: { runId }, max_sequence: sequence,
+      request_artifact_ref: 'artifact:request',
+    }));
+    render(<App client={{ ...fixtureClient(), getContextPage, getContextFrame }} />);
+
+    fireEvent.click(viewTab('Context'));
+    await waitFor(() => expect(pending.at(-1)?.runId).toBe('analysis-test'));
+    fireEvent.click(screen.getByRole('button', { name: /analysis-partial/i }));
+    await waitFor(() => expect(pending.at(-1)?.runId).toBe('analysis-partial'));
+    expect(pending[0].signal.aborted).toBe(true);
+
+    const page = (analysisId: string, id: string, sequence: number): ProjectionPage<ContextFrameSummary> => ({
+      analysis_id: analysisId,
+      items: [{ id, source_sequence: sequence, before_revision: sequence - 1, after_revision: sequence, changed: true, request_input_available: true, event_kind: 'context-frame' }],
+      older_cursor: null, newer_cursor: null, first_sequence: sequence, last_sequence: sequence,
+      has_older: false, encoded_bytes: 100,
+    });
+    await act(async () => {
+      pending[1].resolve(page('analysis-partial', 'context:fresh', 33));
+      pending[0].resolve(page('analysis-test', 'context:stale', 77));
+    });
+
+    await waitFor(() => expect(getContextFrame).toHaveBeenCalledWith('analysis-partial', 33, expect.any(AbortSignal)));
+    expect(getContextFrame).not.toHaveBeenCalledWith('analysis-test', 77, expect.anything());
+    expect(await screen.findByText(/state at sequence 33/i)).toBeVisible();
+    expect(screen.queryByText(/state at sequence 77/i)).not.toBeInTheDocument();
+  });
+
+  it('retains loaded evidence and retries exactly the failed opaque cursor', async () => {
+    const evidencePage = (
+      items: EvidenceRecord[], olderCursor: string | null, hasOlder: boolean,
+    ): ProjectionPage<EvidenceRecord> => ({
+      analysis_id: 'analysis-test', items, older_cursor: olderCursor, newer_cursor: null,
+      first_sequence: items[0]?.producing_sequence ?? null,
+      last_sequence: items.at(-1)?.producing_sequence ?? null,
+      has_older: hasOlder, encoded_bytes: 100,
+    });
+    const getEvidencePage = vi.fn()
+      .mockResolvedValueOnce(evidencePage([evidenceRecord('evidence:current', 61)], 'opaque/evidence-cursor', true))
+      .mockRejectedValueOnce(new Error('older evidence unavailable'))
+      .mockResolvedValueOnce(evidencePage([evidenceRecord('evidence:older', 17)], null, false))
+      .mockResolvedValueOnce(evidencePage([evidenceRecord('evidence:current', 61)], 'opaque/evidence-cursor', true));
+    render(<App client={{ ...fixtureClient(), getEvidencePage }} />);
+
+    fireEvent.click(viewTab('Evidence'));
+    expect((await screen.findAllByText('evidence:current')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Load older evidence history' }));
+
+    expect(await screen.findByText('older evidence unavailable')).toBeVisible();
+    expect(screen.getAllByText('evidence:current').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry older evidence history' }));
+
+    expect((await screen.findAllByText('evidence:older')).length).toBeGreaterThan(0);
+    expect(getEvidencePage).toHaveBeenNthCalledWith(3, 'analysis-test', {
+      cursor: 'opaque/evidence-cursor', filters: {},
+    }, expect.any(AbortSignal));
+
+    fireEvent.click(viewTab('Business'));
+    fireEvent.click(viewTab('Evidence'));
+
+    await waitFor(() => expect(getEvidencePage).toHaveBeenCalledTimes(4));
+    expect((await screen.findAllByText('evidence:current')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('evidence:older').length).toBeGreaterThan(0);
   });
 
   it('ignores an out-of-order evidence index after switching runs', async () => {

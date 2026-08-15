@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessCausalRow, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunSummary } from '../api/types';
+import type {
+  AgentEventRow, AgentPageRequest, AgentTurn, BusinessCausalRow, ContextFrame,
+  ContextFrameSummary, ContextPageRequest, EvidenceIndex,
+  EvidencePageRequest, EvidenceRecord, ExecutionSlice, ProjectionPage, RunSummary,
+} from '../api/types';
 import { prependBusinessRows, problemsFromBusinessRows } from '../api/business';
+import { pageRequestKey, prependOperationalPage, type OperationalPageState } from '../api/operational-page';
 import { AuditInspector } from '../components/audit/AuditInspector';
 import { OverviewTimeline } from '../components/layout/OverviewTimeline';
 import { RunExplorer } from '../components/layout/RunExplorer';
@@ -20,8 +25,18 @@ import { readThemePreference, saveThemePreference, systemTheme, type ResolvedThe
 
 const api = new TrajectoryApiClient();
 
-/** Data ownership begins here; the Task 2 shell supplies the visual regions. */
-type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & Partial<Pick<TrajectoryApiClient, 'getAgentPage' | 'getContextFrame' | 'getExecutionSlice' | 'getEvidenceIndex' | 'artifactUrl'>>;
+/** Transitional clients may still return nested Agent turns while fixtures migrate to flat rows. */
+type AppClient = Pick<TrajectoryApiClient, 'listRuns' | 'getBusinessPage'> & {
+  getAgentPage?: (
+    id: string, request?: AgentPageRequest, signal?: AbortSignal,
+  ) => Promise<ProjectionPage<AgentEventRow | AgentTurn>>;
+  getContextPage?: (
+    id: string, request?: ContextPageRequest, signal?: AbortSignal,
+  ) => Promise<ProjectionPage<ContextFrameSummary>>;
+  getEvidencePage?: (
+    id: string, request?: EvidencePageRequest, signal?: AbortSignal,
+  ) => Promise<ProjectionPage<EvidenceRecord>>;
+} & Partial<Pick<TrajectoryApiClient, 'getContextFrame' | 'getExecutionSlice' | 'getEvidenceIndex' | 'artifactUrl'>>;
 
 export function App({ client = api }: { client?: AppClient }) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
@@ -35,14 +50,48 @@ export function App({ client = api }: { client?: AppClient }) {
   const [pageErrors, setPageErrors] = useState<Partial<Record<WorkbenchView, unknown>>>({});
   const [businessRows, setBusinessRows] = useState<BusinessCausalRow[]>([]);
   const problems = useMemo(() => problemsFromBusinessRows(businessRows), [businessRows]);
-  const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
+  const [agentPageState, setAgentPageState] = useState<OperationalPageState<AgentEventRow | AgentTurn>>({
+    items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey: '',
+  });
+  const agentTurns = useMemo(() => agentPageState.page?.analysis_id === state.selectedRunId
+    ? agentPageState.items.filter((item): item is AgentTurn => 'steps' in item && 'source_sequences' in item)
+    : [], [agentPageState, state.selectedRunId]);
+  const [contextPageState, setContextPageState] = useState<OperationalPageState<ContextFrameSummary>>({
+    items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey: '',
+  });
   const [contextFrame, setContextFrame] = useState<ContextFrame | null>(null);
   const [contextSequence, setContextSequence] = useState<number | null>(null);
   const [executionSlice, setExecutionSlice] = useState<ExecutionSlice | null>(null);
   const [executionSliceState, setExecutionSliceState] = useState<AsyncStateName>('idle');
   const [executionSliceDiagnostic, setExecutionSliceDiagnostic] = useState<string | null>(null);
   const [executionSliceAttempt, setExecutionSliceAttempt] = useState(0);
-  const [evidenceIndex, setEvidenceIndex] = useState<EvidenceIndex | null>(null);
+  const [evidencePageState, setEvidencePageState] = useState<OperationalPageState<EvidenceRecord>>({
+    items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey: '',
+  });
+  const [legacyEvidenceIndex, setLegacyEvidenceIndex] = useState<EvidenceIndex | null>(null);
+  const [selectedEvidence, setSelectedEvidence] = useState<{
+    analysisId: string;
+    requestKey: string;
+    items: EvidenceRecord[];
+  } | null>(null);
+  const evidenceIndex = useMemo<EvidenceIndex | null>(() => {
+    const legacyRecords = legacyEvidenceIndex?.analysis_id === state.selectedRunId
+      ? Object.values(legacyEvidenceIndex.records) : [];
+    const pageRecords = evidencePageState.page?.analysis_id === state.selectedRunId
+      ? evidencePageState.items : [];
+    const selectedRecords = selectedEvidence?.analysisId === state.selectedRunId
+      ? selectedEvidence.items : [];
+    if (
+      legacyEvidenceIndex?.analysis_id !== state.selectedRunId
+      && evidencePageState.page?.analysis_id !== state.selectedRunId
+      && selectedEvidence?.analysisId !== state.selectedRunId
+    ) return null;
+    return {
+      analysis_id: state.selectedRunId,
+      records: Object.fromEntries([...legacyRecords, ...pageRecords, ...selectedRecords]
+        .map((record) => [record.reference, record])),
+    };
+  }, [evidencePageState, legacyEvidenceIndex, selectedEvidence, state.selectedRunId]);
   const [businessPage, setBusinessPage] = useState<Pick<ProjectionPage<BusinessCausalRow>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const [olderState, setOlderState] = useState<'idle' | 'loading' | 'failed'>('idle');
   const [olderError, setOlderError] = useState<string | null>(null);
@@ -51,11 +100,17 @@ export function App({ client = api }: { client?: AppClient }) {
   const businessPageRef = useRef<Pick<ProjectionPage<BusinessCausalRow>, 'older_cursor' | 'has_older'>>({ older_cursor: null, has_older: false });
   const olderRequestRef = useRef<{ controller: AbortController; runId: string; cursor: string } | null>(null);
   const selectedRunIdRef = useRef<string | null>(state.selectedRunId);
-  const contextSequenceRef = useRef<number | null>(contextSequence);
+  const operationalRequestKeyRef = useRef<Record<'agent' | 'context' | 'evidence', string>>({ agent: '', context: '', evidence: '' });
+  const operationalBaseRequestKeyRef = useRef<Record<'agent' | 'context' | 'evidence', string>>({ agent: '', context: '', evidence: '' });
+  const operationalOlderRequestRef = useRef<Record<'agent' | 'context' | 'evidence', { controller: AbortController; requestKey: string } | null>>({
+    agent: null, context: null, evidence: null,
+  });
+  const contextDetailRequestKeyRef = useRef('');
+  const executionRequestKeyRef = useRef('');
+  const selectedEvidenceRequestKeyRef = useRef('');
   const deepLinkNode = useRef(new URLSearchParams(window.location.search).get('node'));
 
   selectedRunIdRef.current = state.selectedRunId;
-  contextSequenceRef.current = contextSequence;
 
   useEffect(() => {
     document.documentElement.dataset.theme = activeTheme;
@@ -154,30 +209,48 @@ export function App({ client = api }: { client?: AppClient }) {
 
   useEffect(() => {
     const needsAgent = state.activeView === 'agent';
-    if (!needsAgent || !state.selectedRunId || !client.getAgentPage) return;
+    operationalOlderRequestRef.current.agent?.controller.abort();
+    operationalOlderRequestRef.current.agent = null;
+    if (!needsAgent || !state.selectedRunId || !client.getAgentPage) {
+      operationalRequestKeyRef.current.agent = '';
+      return;
+    }
     const requestedRunId = state.selectedRunId;
+    const filters = { ...state.pageFilters.agent };
+    const request: AgentPageRequest = { filters };
+    const requestKey = pageRequestKey(requestedRunId, 'agent', { filters: { ...filters } });
+    const isNewIdentity = operationalBaseRequestKeyRef.current.agent !== requestKey;
+    const showInitialLoading = isNewIdentity || agentPageState.page === null;
     const controller = new AbortController();
+    operationalBaseRequestKeyRef.current.agent = requestKey;
+    operationalRequestKeyRef.current.agent = requestKey;
+    setAgentPageState((current) => isNewIdentity
+      ? { items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey }
+      : { ...current, olderState: 'idle', olderError: null, failedCursor: null, requestKey });
     setPageErrors((errors) => ({ ...errors, agent: null }));
-    dispatch({ type: 'page/requested', view: 'agent' });
-    void client.getAgentPage(requestedRunId, undefined, controller.signal).then((page) => {
-      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
-      if (page.analysis_id !== requestedRunId) {
-        throw new Error('Agent projection response identity does not match the requested run.');
-      }
-      setAgentTurns(page.items);
-      dispatch({ type: 'page/loaded', view: 'agent', page: pageMetadata(page) });
+    if (showInitialLoading) dispatch({ type: 'page/requested', view: 'agent' });
+    void client.getAgentPage(requestedRunId, request, controller.signal).then((page) => {
+      if (
+        controller.signal.aborted
+        || operationalRequestKeyRef.current.agent !== requestKey
+        || page.analysis_id !== requestedRunId
+      ) return;
+      setAgentPageState((current) => ({
+        items: isNewIdentity ? page.items : prependOperationalPage(current.items, page.items),
+        page: isNewIdentity ? page : current.page ?? page,
+        olderState: 'idle', olderError: null, failedCursor: null, requestKey,
+      }));
+      if (showInitialLoading) dispatch({ type: 'page/loaded', view: 'agent', page: pageMetadata(page) });
     }).catch((error: unknown) => {
-      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
+      if (controller.signal.aborted || operationalRequestKeyRef.current.agent !== requestKey) return;
       setPageErrors((errors) => ({ ...errors, agent: error }));
-      dispatch({ type: 'page/failed', view: 'agent', message: pageErrorMessage(error, 'Unable to load agent trajectory.') });
+      if (showInitialLoading) dispatch({ type: 'page/failed', view: 'agent', message: pageErrorMessage(error, 'Unable to load agent trajectory.') });
     });
     return () => controller.abort();
-  }, [client, pageAttempts.agent, state.activeView, state.selectedNodeId, state.selectedRunId]);
+  }, [client, pageAttempts.agent, state.activeView, state.pageFilters.agent, state.selectedRunId]);
 
   const auditSelection = resolveAuditSelection(problems, agentTurns, state.selectedNodeId);
   const auditSequence = auditSelection?.sequence ?? null;
-  const auditSequenceRef = useRef<number | null>(auditSequence);
-  auditSequenceRef.current = auditSequence;
   const focusedProblem = problems.find((problem) => problem.id === state.focusedProblemId) ?? null;
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;
   const auditInspectorModel = auditSelection ? buildAuditInspectorModel({
@@ -189,7 +262,43 @@ export function App({ client = api }: { client?: AppClient }) {
   const auditArtifactKey = auditSelection?.artifactRefs.join('\0') ?? '';
 
   useEffect(() => {
+    if (!state.selectedRunId || !client.getEvidencePage || auditArtifactKey.length === 0) {
+      selectedEvidenceRequestKeyRef.current = '';
+      setSelectedEvidence(null);
+      return;
+    }
+    const requestedRunId = state.selectedRunId;
+    const references = [...new Set(auditArtifactKey.split('\0'))].sort();
+    const requestKeys = references.map((reference) => pageRequestKey(requestedRunId, 'evidence', {
+      filters: { relevant_ref: reference },
+    }));
+    const requestKey = JSON.stringify(requestKeys);
+    const controller = new AbortController();
+    selectedEvidenceRequestKeyRef.current = requestKey;
+    setSelectedEvidence((current) => current?.requestKey === requestKey ? current : null);
+    void Promise.all(references.map((reference) => client.getEvidencePage!(requestedRunId, {
+      filters: { relevant_ref: reference },
+    }, controller.signal))).then((pages) => {
+      if (
+        controller.signal.aborted
+        || selectedEvidenceRequestKeyRef.current !== requestKey
+        || pages.some((page) => page.analysis_id !== requestedRunId)
+      ) return;
+      setSelectedEvidence({
+        analysisId: requestedRunId,
+        requestKey,
+        items: pages.reduce<EvidenceRecord[]>((items, page) => prependOperationalPage(items, page.items), []),
+      });
+    }).catch(() => {
+      if (controller.signal.aborted || selectedEvidenceRequestKeyRef.current !== requestKey) return;
+      setSelectedEvidence((current) => current?.requestKey === requestKey ? null : current);
+    });
+    return () => controller.abort();
+  }, [auditArtifactKey, client, pageAttempts.evidence, state.selectedRunId]);
+
+  useEffect(() => {
     if (!auditSequence || !state.selectedRunId || !client.getExecutionSlice) {
+      executionRequestKeyRef.current = '';
       setExecutionSlice(null);
       setExecutionSliceState('idle');
       setExecutionSliceDiagnostic(null);
@@ -197,26 +306,25 @@ export function App({ client = api }: { client?: AppClient }) {
     }
     const requestedRunId = state.selectedRunId;
     const requestedSequence = auditSequence;
+    const requestKey = pageRequestKey(requestedRunId, 'agent', { filters: { at_sequence: requestedSequence } });
     const controller = new AbortController();
+    executionRequestKeyRef.current = requestKey;
     setExecutionSlice(null);
     setExecutionSliceState('loading');
     setExecutionSliceDiagnostic(null);
     void client.getExecutionSlice(requestedRunId, requestedSequence, controller.signal).then((slice) => {
       if (
         controller.signal.aborted
-        || selectedRunIdRef.current !== requestedRunId
-        || auditSequenceRef.current !== requestedSequence
+        || executionRequestKeyRef.current !== requestKey
+        || slice.analysis_id !== requestedRunId
+        || slice.source_sequence !== requestedSequence
       ) return;
-      if (slice.analysis_id !== requestedRunId || slice.source_sequence !== requestedSequence) {
-        throw new Error('Execution slice response identity does not match the requested selection.');
-      }
       setExecutionSlice(slice);
       setExecutionSliceState('ready');
     }).catch((error: unknown) => {
       if (
         controller.signal.aborted
-        || selectedRunIdRef.current !== requestedRunId
-        || auditSequenceRef.current !== requestedSequence
+        || executionRequestKeyRef.current !== requestKey
       ) return;
       setExecutionSlice(null);
       setExecutionSliceState(error instanceof ApiError && error.status === 501 ? 'unsupported' : 'network-error');
@@ -230,9 +338,59 @@ export function App({ client = api }: { client?: AppClient }) {
     // A scrubber selection owns its sequence. Only an external trajectory
     // selection should derive a new context sequence from the business page.
     if (state.selectedNodeId?.startsWith('context:')) return;
+    if (!auditSelection && client.getContextPage) return;
     const sequence = auditSelection?.sequence ?? (state.activeView === 'context' ? selectedRun?.last_sequence ?? null : null);
     setContextSequence(sequence && sequence >= 1 ? sequence : null);
-  }, [auditSelection?.sequence, state.activeView, state.selectedNodeId, state.selectedRunId, selectedRun?.last_sequence]);
+  }, [auditSelection?.sequence, client, state.activeView, state.selectedNodeId, state.selectedRunId, selectedRun?.last_sequence]);
+
+  useEffect(() => {
+    operationalOlderRequestRef.current.context?.controller.abort();
+    operationalOlderRequestRef.current.context = null;
+    if (state.activeView !== 'context' || !state.selectedRunId || !client.getContextPage) {
+      operationalRequestKeyRef.current.context = '';
+      return;
+    }
+    const requestedRunId = state.selectedRunId;
+    const filters = { ...state.pageFilters.context };
+    const request: ContextPageRequest = { filters };
+    const requestKey = pageRequestKey(requestedRunId, 'context', { filters: { ...filters } });
+    const isNewIdentity = operationalBaseRequestKeyRef.current.context !== requestKey;
+    const showInitialLoading = isNewIdentity || contextPageState.page === null;
+    const chooseDefaultSequence = !hasAuditSelection && !state.selectedNodeId?.startsWith('context:');
+    const controller = new AbortController();
+    operationalBaseRequestKeyRef.current.context = requestKey;
+    operationalRequestKeyRef.current.context = requestKey;
+    setContextPageState((current) => isNewIdentity
+      ? { items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey }
+      : { ...current, olderState: 'idle', olderError: null, failedCursor: null, requestKey });
+    if (isNewIdentity) {
+      setContextFrame(null);
+      if (chooseDefaultSequence) setContextSequence(null);
+    }
+    setPageErrors((errors) => ({ ...errors, context: null }));
+    if (showInitialLoading) dispatch({ type: 'page/requested', view: 'context' });
+    void client.getContextPage(requestedRunId, request, controller.signal).then((page) => {
+      if (
+        controller.signal.aborted
+        || operationalRequestKeyRef.current.context !== requestKey
+        || page.analysis_id !== requestedRunId
+      ) return;
+      setContextPageState((current) => ({
+        items: isNewIdentity ? page.items : prependOperationalPage(current.items, page.items),
+        page: isNewIdentity ? page : current.page ?? page,
+        olderState: 'idle', olderError: null, failedCursor: null, requestKey,
+      }));
+      if (showInitialLoading) dispatch({ type: 'page/loaded', view: 'context', page: pageMetadata(page) });
+      if (chooseDefaultSequence) {
+        setContextSequence(page.items.at(-1)?.source_sequence ?? null);
+      }
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || operationalRequestKeyRef.current.context !== requestKey) return;
+      setPageErrors((errors) => ({ ...errors, context: error }));
+      if (showInitialLoading) dispatch({ type: 'page/failed', view: 'context', message: pageErrorMessage(error, 'Unable to load context trajectory.') });
+    });
+    return () => controller.abort();
+  }, [client, hasAuditSelection, pageAttempts.context, state.activeView, state.pageFilters.context, state.selectedNodeId, state.selectedRunId]);
 
   useEffect(() => {
     const needsContext = state.activeView === 'context' || hasAuditSelection;
@@ -241,26 +399,27 @@ export function App({ client = api }: { client?: AppClient }) {
     const sequence = contextSequence;
     if (!sequence || sequence < 1) return;
     const requestedSequence = sequence;
+    const requestKey = pageRequestKey(requestedRunId, 'context', { filters: { at_sequence: requestedSequence } });
+    const detailOwnsPageStatus = state.activeView !== 'context' || !client.getContextPage;
     const controller = new AbortController();
+    contextDetailRequestKeyRef.current = requestKey;
     setContextFrame(null);
     setPageErrors((errors) => ({ ...errors, context: null }));
-    dispatch({ type: 'page/requested', view: 'context' });
+    if (detailOwnsPageStatus) dispatch({ type: 'page/requested', view: 'context' });
     void client.getContextFrame(requestedRunId, requestedSequence, controller.signal).then((frame) => {
       if (
         controller.signal.aborted
-        || selectedRunIdRef.current !== requestedRunId
-        || contextSequenceRef.current !== requestedSequence
+        || contextDetailRequestKeyRef.current !== requestKey
+        || frame.source_sequence !== requestedSequence
       ) return;
-      if (frame.source_sequence !== requestedSequence) {
-        throw new Error('Context projection response sequence does not match the requested sequence.');
-      }
       setContextFrame(frame);
-      dispatch({ type: 'page/loaded', view: 'context', page: { firstSequence: frame.source_sequence, lastSequence: frame.source_sequence, hasOlder: false } });
+      if (detailOwnsPageStatus) {
+        dispatch({ type: 'page/loaded', view: 'context', page: { firstSequence: frame.source_sequence, lastSequence: frame.source_sequence, hasOlder: false } });
+      }
     }).catch((error: unknown) => {
       if (
         controller.signal.aborted
-        || selectedRunIdRef.current !== requestedRunId
-        || contextSequenceRef.current !== requestedSequence
+        || contextDetailRequestKeyRef.current !== requestKey
       ) return;
       setContextFrame(null);
       setPageErrors((errors) => ({ ...errors, context: error }));
@@ -270,28 +429,59 @@ export function App({ client = api }: { client?: AppClient }) {
   }, [client, contextSequence, hasAuditSelection, pageAttempts.context, state.activeView, state.selectedRunId]);
 
   useEffect(() => {
-    const needsEvidence = state.activeView === 'evidence' || auditArtifactKey.length > 0;
-    if (!needsEvidence || !state.selectedRunId || !client.getEvidenceIndex) return;
+    const needsEvidence = state.activeView === 'evidence'
+      || (!client.getEvidencePage && auditArtifactKey.length > 0);
+    operationalOlderRequestRef.current.evidence?.controller.abort();
+    operationalOlderRequestRef.current.evidence = null;
+    if (!needsEvidence || !state.selectedRunId || (!client.getEvidencePage && !client.getEvidenceIndex)) {
+      operationalRequestKeyRef.current.evidence = '';
+      return;
+    }
     const requestedRunId = state.selectedRunId;
+    const filters = { ...state.pageFilters.evidence };
+    const request: EvidencePageRequest = { filters };
+    const requestKey = pageRequestKey(requestedRunId, 'evidence', { filters: { ...filters } });
+    const isNewIdentity = operationalBaseRequestKeyRef.current.evidence !== requestKey;
+    const showInitialLoading = isNewIdentity || (client.getEvidencePage ? evidencePageState.page === null : legacyEvidenceIndex === null);
     const controller = new AbortController();
-    setEvidenceIndex(null);
+    operationalBaseRequestKeyRef.current.evidence = requestKey;
+    operationalRequestKeyRef.current.evidence = requestKey;
+    if (client.getEvidencePage) {
+      setEvidencePageState((current) => isNewIdentity
+        ? { items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey }
+        : { ...current, olderState: 'idle', olderError: null, failedCursor: null, requestKey });
+    }
+    if (isNewIdentity) setLegacyEvidenceIndex(null);
     setPageErrors((errors) => ({ ...errors, evidence: null }));
-    dispatch({ type: 'page/requested', view: 'evidence' });
-    void client.getEvidenceIndex(requestedRunId, controller.signal).then((index) => {
-      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
-      if (index.analysis_id !== requestedRunId) {
-        throw new Error('Evidence projection response identity does not match the requested run.');
+    if (showInitialLoading) dispatch({ type: 'page/requested', view: 'evidence' });
+    const response = client.getEvidencePage
+      ? client.getEvidencePage(requestedRunId, request, controller.signal)
+      : client.getEvidenceIndex!(requestedRunId, controller.signal);
+    void response.then((result) => {
+      if (
+        controller.signal.aborted
+        || operationalRequestKeyRef.current.evidence !== requestKey
+        || result.analysis_id !== requestedRunId
+      ) return;
+      if ('items' in result) {
+        setLegacyEvidenceIndex(null);
+        setEvidencePageState((current) => ({
+          items: isNewIdentity ? result.items : prependOperationalPage(current.items, result.items),
+          page: isNewIdentity ? result : current.page ?? result,
+          olderState: 'idle', olderError: null, failedCursor: null, requestKey,
+        }));
+        if (showInitialLoading) dispatch({ type: 'page/loaded', view: 'evidence', page: pageMetadata(result) });
+      } else {
+        setLegacyEvidenceIndex(result);
+        if (showInitialLoading) dispatch({ type: 'page/loaded', view: 'evidence', page: { firstSequence: null, lastSequence: null, hasOlder: false } });
       }
-      setEvidenceIndex(index);
-      dispatch({ type: 'page/loaded', view: 'evidence', page: { firstSequence: null, lastSequence: null, hasOlder: false } });
     }).catch((error: unknown) => {
-      if (controller.signal.aborted || selectedRunIdRef.current !== requestedRunId) return;
-      setEvidenceIndex(null);
+      if (controller.signal.aborted || operationalRequestKeyRef.current.evidence !== requestKey) return;
       setPageErrors((errors) => ({ ...errors, evidence: error }));
-      dispatch({ type: 'page/failed', view: 'evidence', message: pageErrorMessage(error, 'Unable to load evidence projection.') });
+      if (showInitialLoading) dispatch({ type: 'page/failed', view: 'evidence', message: pageErrorMessage(error, 'Unable to load evidence projection.') });
     });
     return () => controller.abort();
-  }, [auditArtifactKey, client, pageAttempts.evidence, state.activeView, state.selectedRunId]);
+  }, [auditArtifactKey, client, pageAttempts.evidence, state.activeView, state.pageFilters.evidence, state.selectedRunId]);
 
   const selectTurn = (turnId: string) => dispatch({ type: 'node/selected', nodeId: turnId });
   const selectSequence = (sequence: number) => {
@@ -307,6 +497,115 @@ export function App({ client = api }: { client?: AppClient }) {
     }
     setContextSequence(sequence);
     dispatch({ type: 'node/selected', nodeId: `context:${sequence}` });
+  };
+  const loadOlderOperational = (view: 'agent' | 'context' | 'evidence', cursor: string) => {
+    const runId = state.selectedRunId;
+    if (!runId || !cursor) return;
+
+    if (view === 'agent') {
+      if (!client.getAgentPage || !agentPageState.page?.has_older || agentPageState.olderState === 'loading') return;
+      const filters = { ...state.pageFilters.agent };
+      const request: AgentPageRequest = { cursor, filters };
+      const requestKey = pageRequestKey(runId, view, { cursor, filters: { ...filters } });
+      const controller = new AbortController();
+      const pending = { controller, requestKey };
+      operationalOlderRequestRef.current.agent?.controller.abort();
+      operationalOlderRequestRef.current.agent = pending;
+      operationalRequestKeyRef.current.agent = requestKey;
+      setAgentPageState((current) => ({ ...current, olderState: 'loading', olderError: null, failedCursor: null, requestKey }));
+      setPageErrors((errors) => ({ ...errors, agent: null }));
+      void client.getAgentPage(runId, request, controller.signal).then((page) => {
+        if (
+          controller.signal.aborted
+          || operationalOlderRequestRef.current.agent !== pending
+          || operationalRequestKeyRef.current.agent !== requestKey
+          || page.analysis_id !== runId
+        ) return;
+        setAgentPageState((current) => ({
+          items: prependOperationalPage(page.items, current.items), page,
+          olderState: 'idle', olderError: null, failedCursor: null, requestKey,
+        }));
+        dispatch({ type: 'page/prepended', view, page: pageMetadata(page) });
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted || operationalOlderRequestRef.current.agent !== pending) return;
+        setAgentPageState((current) => ({
+          ...current, olderState: 'failed', olderError: pageErrorMessage(error, 'Unable to load older agent trajectory.'),
+          failedCursor: cursor, requestKey,
+        }));
+      }).finally(() => {
+        if (operationalOlderRequestRef.current.agent === pending) operationalOlderRequestRef.current.agent = null;
+      });
+      return;
+    }
+
+    if (view === 'context') {
+      if (!client.getContextPage || !contextPageState.page?.has_older || contextPageState.olderState === 'loading') return;
+      const filters = { ...state.pageFilters.context };
+      const request: ContextPageRequest = { cursor, filters };
+      const requestKey = pageRequestKey(runId, view, { cursor, filters: { ...filters } });
+      const controller = new AbortController();
+      const pending = { controller, requestKey };
+      operationalOlderRequestRef.current.context?.controller.abort();
+      operationalOlderRequestRef.current.context = pending;
+      operationalRequestKeyRef.current.context = requestKey;
+      setContextPageState((current) => ({ ...current, olderState: 'loading', olderError: null, failedCursor: null, requestKey }));
+      setPageErrors((errors) => ({ ...errors, context: null }));
+      void client.getContextPage(runId, request, controller.signal).then((page) => {
+        if (
+          controller.signal.aborted
+          || operationalOlderRequestRef.current.context !== pending
+          || operationalRequestKeyRef.current.context !== requestKey
+          || page.analysis_id !== runId
+        ) return;
+        setContextPageState((current) => ({
+          items: prependOperationalPage(page.items, current.items), page,
+          olderState: 'idle', olderError: null, failedCursor: null, requestKey,
+        }));
+        dispatch({ type: 'page/prepended', view, page: pageMetadata(page) });
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted || operationalOlderRequestRef.current.context !== pending) return;
+        setContextPageState((current) => ({
+          ...current, olderState: 'failed', olderError: pageErrorMessage(error, 'Unable to load older context trajectory.'),
+          failedCursor: cursor, requestKey,
+        }));
+      }).finally(() => {
+        if (operationalOlderRequestRef.current.context === pending) operationalOlderRequestRef.current.context = null;
+      });
+      return;
+    }
+
+    if (!client.getEvidencePage || !evidencePageState.page?.has_older || evidencePageState.olderState === 'loading') return;
+    const filters = { ...state.pageFilters.evidence };
+    const request: EvidencePageRequest = { cursor, filters };
+    const requestKey = pageRequestKey(runId, view, { cursor, filters: { ...filters } });
+    const controller = new AbortController();
+    const pending = { controller, requestKey };
+    operationalOlderRequestRef.current.evidence?.controller.abort();
+    operationalOlderRequestRef.current.evidence = pending;
+    operationalRequestKeyRef.current.evidence = requestKey;
+    setEvidencePageState((current) => ({ ...current, olderState: 'loading', olderError: null, failedCursor: null, requestKey }));
+    setPageErrors((errors) => ({ ...errors, evidence: null }));
+    void client.getEvidencePage(runId, request, controller.signal).then((page) => {
+      if (
+        controller.signal.aborted
+        || operationalOlderRequestRef.current.evidence !== pending
+        || operationalRequestKeyRef.current.evidence !== requestKey
+        || page.analysis_id !== runId
+      ) return;
+      setEvidencePageState((current) => ({
+        items: prependOperationalPage(page.items, current.items), page,
+        olderState: 'idle', olderError: null, failedCursor: null, requestKey,
+      }));
+      dispatch({ type: 'page/prepended', view, page: pageMetadata(page) });
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || operationalOlderRequestRef.current.evidence !== pending) return;
+      setEvidencePageState((current) => ({
+        ...current, olderState: 'failed', olderError: pageErrorMessage(error, 'Unable to load older evidence trajectory.'),
+        failedCursor: cursor, requestKey,
+      }));
+    }).finally(() => {
+      if (operationalOlderRequestRef.current.evidence === pending) operationalOlderRequestRef.current.evidence = null;
+    });
   };
   const loadOlder = (cursor: string) => {
     const runId = state.selectedRunId;
@@ -396,9 +695,25 @@ export function App({ client = api }: { client?: AppClient }) {
     context: state.pageError.context,
     execution: executionSliceDiagnostic,
   };
+  const activeOperationalPageState = state.activeView === 'agent' ? agentPageState
+    : state.activeView === 'context' ? contextPageState
+      : state.activeView === 'evidence' ? evidencePageState : null;
+  const operationalPaging = activeOperationalPageState ? <div className="operational-paging" aria-live="polite">
+    {activeOperationalPageState.olderState === 'failed' ? <>
+      <p role="alert">{activeOperationalPageState.olderError}</p>
+      <button type="button" onClick={() => {
+        if (activeOperationalPageState.failedCursor) loadOlderOperational(state.activeView as 'agent' | 'context' | 'evidence', activeOperationalPageState.failedCursor);
+      }}>Retry older {state.activeView} history</button>
+    </> : activeOperationalPageState.page?.has_older && activeOperationalPageState.page.older_cursor ? <button
+      type="button"
+      disabled={activeOperationalPageState.olderState === 'loading'}
+      onClick={() => loadOlderOperational(state.activeView as 'agent' | 'context' | 'evidence', activeOperationalPageState.page!.older_cursor!)}
+    >{activeOperationalPageState.olderState === 'loading' ? `Loading older ${state.activeView} history` : `Load older ${state.activeView} history`}</button> : null}
+  </div> : null;
   const content = <section id={`workbench-panel-${state.activeView}`} role="tabpanel" aria-label={`${state.activeView} trajectory`} aria-busy={viewState === 'loading'}>
     {selectedRun?.status === 'partial' ? <AsyncState state="partial" diagnostic={selectedRun.diagnostic} /> : null}
     <AsyncState state={viewState} diagnostic={state.pageError[state.activeView]} onRetry={retryActivePage}>
+    <>
     {state.activeView === 'business' ? <BusinessView
       problems={problems}
       state={state}
@@ -415,6 +730,8 @@ export function App({ client = api }: { client?: AppClient }) {
       : state.activeView === 'agent' ? <AgentView trajectory={agentTurns} selectedNodeId={state.selectedNodeId} onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })} artifactUrl={artifactUrl} />
         : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
           : <EvidenceView index={evidenceIndex} selectedRefs={auditSelection?.artifactRefs ?? (state.selectedNodeId ? [state.selectedNodeId] : [])} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
+    {operationalPaging}
+    </>
     </AsyncState>
   </section>;
 

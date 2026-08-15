@@ -92,4 +92,30 @@ describe('TrajectoryApiClient', () => {
     expect(slice.turn?.source_sequences).toEqual([45]);
     expect(slice.turn?.source_sequence).toBeUndefined();
   });
+
+  it('encodes typed operational page cursors and filters without null query values', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      analysis_id: 'analysis/test', items: [], older_cursor: null, newer_cursor: null,
+      first_sequence: null, last_sequence: null, has_older: false, encoded_bytes: 0,
+    }), { status: 200 }));
+    const client = new TrajectoryApiClient(fetcher);
+    const controller = new AbortController();
+
+    await client.getAgentPage('analysis/test', {
+      cursor: 'agent/cursor', filters: { kind: 'tool', status: null, q: 'voltage' },
+    }, controller.signal);
+    await client.getContextPage('analysis/test', {
+      filters: { from_sequence: 7, changed: false },
+    }, controller.signal);
+    await client.getEvidencePage('analysis/test', {
+      cursor: 'evidence/cursor', filters: { source: 'observed', sort: 'verification_status' },
+    }, controller.signal);
+
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+      '/api/runs/analysis%2Ftest/agent?cursor=agent%2Fcursor&kind=tool&q=voltage',
+      '/api/runs/analysis%2Ftest/context?changed=false&from_sequence=7',
+      '/api/runs/analysis%2Ftest/evidence?cursor=evidence%2Fcursor&sort=verification_status&source=observed',
+    ]);
+    expect(fetcher.mock.calls.every(([, init]) => init.signal === controller.signal)).toBe(true);
+  });
 });

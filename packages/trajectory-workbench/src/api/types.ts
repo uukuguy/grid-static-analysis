@@ -1,6 +1,7 @@
 /** Types mirror the read-only trajectory API's JSON response envelopes. */
 export type NodeSource = 'observed' | 'derived' | 'agent-declared';
 export type LifecycleStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'unavailable';
+export type AgentEventKind = 'turn' | 'step' | 'request' | 'retry' | 'response' | 'tool';
 
 /** JSON values emitted by the API after Pydantic serializes context mappings. */
 export type JsonPrimitive = boolean | number | string | null;
@@ -77,6 +78,20 @@ export interface AgentTurn extends ProjectionNode {
   turn_id: string;
   ordinal: number | null;
   steps: AgentStep[];
+}
+
+/** One bounded public row from the paged agent projection. */
+export interface AgentEventRow {
+  id: string;
+  parent_id: string | null;
+  turn_id: string;
+  kind: AgentEventKind;
+  level: number;
+  source_sequence: number;
+  source: NodeSource;
+  status: LifecycleStatus;
+  title: string;
+  detail: string | null;
 }
 
 export type ExecutionAgentTurn = Omit<AgentTurn, 'source_sequence'> & {
@@ -165,6 +180,17 @@ export interface ContextFrameWithoutRequest extends ContextFrameBase {
 
 export type ContextFrame = ContextFrameWithRequest | ContextFrameWithoutRequest;
 
+/** Context page metadata intentionally excludes recorded state documents. */
+export interface ContextFrameSummary {
+  id: string;
+  source_sequence: number;
+  before_revision: number;
+  after_revision: number;
+  changed: boolean;
+  request_input_available: boolean;
+  event_kind: string;
+}
+
 /** Exact immutable artifact projection returned by the read-only evidence endpoint. */
 export interface EvidenceRecord {
   id: string;
@@ -193,6 +219,37 @@ export interface EvidenceIndex {
   analysis_id: string;
   records: Record<string, EvidenceRecord>;
 }
+
+export interface AgentPageFilters {
+  turn_id?: string | null;
+  kind?: AgentEventKind | null;
+  status?: LifecycleStatus | null;
+  capability?: string | null;
+  q?: string | null;
+}
+
+export interface ContextPageFilters {
+  from_sequence?: number | null;
+  to_sequence?: number | null;
+  from_revision?: number | null;
+  to_revision?: number | null;
+  changed?: boolean | null;
+  request_input?: boolean | null;
+}
+
+export interface EvidencePageFilters {
+  kind?: string | null;
+  source?: NodeSource | null;
+  verification_status?: 'verified' | 'unavailable' | null;
+  from_sequence?: number | null;
+  to_sequence?: number | null;
+  relevant_ref?: string | null;
+  sort?: 'producer_sequence' | 'verification_status' | null;
+}
+
+export interface AgentPageRequest { cursor?: string; filters: AgentPageFilters; }
+export interface ContextPageRequest { cursor?: string; filters: ContextPageFilters; }
+export interface EvidencePageRequest { cursor?: string; filters: EvidencePageFilters; }
 
 export interface RunSummary {
   analysis_id: string;

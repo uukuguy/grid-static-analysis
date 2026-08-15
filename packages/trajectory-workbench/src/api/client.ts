@@ -1,5 +1,7 @@
 import type {
-  AgentTurn, ApiErrorResponse, BusinessCausalRow, ContextFrame, EvidenceIndex, ExecutionSlice, ProjectionPage, RunListResponse, RunSummary,
+  AgentEventRow, AgentPageRequest, ApiErrorResponse, BusinessCausalRow, ContextFrame, ContextFrameSummary,
+  ContextPageRequest, EvidenceIndex, EvidencePageRequest, EvidenceRecord, ExecutionSlice, ProjectionPage,
+  RunListResponse, RunSummary,
 } from './types';
 
 export class ApiError extends Error {
@@ -45,8 +47,14 @@ export class TrajectoryApiClient {
   getBusinessPage(id: string, cursor?: string, signal?: AbortSignal) {
     return this.get<ProjectionPage<BusinessCausalRow>>(this.pagePath(id, 'business', cursor), signal);
   }
-  getAgentPage(id: string, cursor?: string, signal?: AbortSignal) {
-    return this.get<ProjectionPage<AgentTurn>>(this.pagePath(id, 'agent', cursor), signal);
+  getAgentPage(id: string, request: AgentPageRequest = { filters: {} }, signal?: AbortSignal) {
+    return this.get<ProjectionPage<AgentEventRow>>(this.operationalPagePath(id, 'agent', request), signal);
+  }
+  getContextPage(id: string, request: ContextPageRequest = { filters: {} }, signal?: AbortSignal) {
+    return this.get<ProjectionPage<ContextFrameSummary>>(this.operationalPagePath(id, 'context', request), signal);
+  }
+  getEvidencePage(id: string, request: EvidencePageRequest = { filters: {} }, signal?: AbortSignal) {
+    return this.get<ProjectionPage<EvidenceRecord>>(this.operationalPagePath(id, 'evidence', request), signal);
   }
   getContextFrame(id: string, atSequence: number, signal?: AbortSignal) {
     return this.get<ContextFrame>(`/api/runs/${encodeURIComponent(id)}/context?at_sequence=${atSequence}`, signal);
@@ -64,5 +72,19 @@ export class TrajectoryApiClient {
   private pagePath(id: string, view: 'business' | 'agent', cursor?: string) {
     const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
     return `/api/runs/${encodeURIComponent(id)}/${view}${query}`;
+  }
+
+  private operationalPagePath(
+    id: string,
+    view: 'agent' | 'context' | 'evidence',
+    request: { cursor?: string; filters: object },
+  ) {
+    const query = new URLSearchParams();
+    if (request.cursor) query.set('cursor', request.cursor);
+    for (const [name, value] of Object.entries(request.filters).sort(([left], [right]) => left.localeCompare(right))) {
+      if (value !== null && value !== undefined) query.set(name, String(value));
+    }
+    const encoded = query.toString();
+    return `/api/runs/${encodeURIComponent(id)}/${view}${encoded ? `?${encoded}` : ''}`;
   }
 }
