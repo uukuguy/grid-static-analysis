@@ -135,6 +135,46 @@ describe('AuditInspector', () => {
     expect(screen.queryByText(/"node"/)).not.toBeInTheDocument();
   });
 
+  it('does not create an artifact URL for unavailable inspector evidence', () => {
+    const artifactUrl = vi.fn((ref: string) => `/artifact/${ref}`);
+    const model: AuditInspectorModel = {
+      selection,
+      evidence: [{
+        id: 'record:legacy-unavailable',
+        source: 'derived',
+        source_sequences: [47],
+        rule_id: null,
+        status: 'completed',
+        unavailable_reason: 'legacy run did not record a verified artifact',
+        reference: 'evidence:legacy-unavailable',
+        kind: 'tool-result',
+        relative_path: '',
+        sha256: '',
+        verification_status: 'unavailable',
+        producing_sequence: 47,
+        consuming_sequences: [],
+        turn_id: 'turn-7',
+        step_id: null,
+        request_id: null,
+        tool_call_id: null,
+        result_id: null,
+        evidence_id: null,
+        claim_id: null,
+      }],
+      context: null,
+      execution: turn,
+      unavailable: { context: 'Context projection is not loaded.' },
+    };
+
+    render(<AuditInspector model={model} artifactUrl={artifactUrl} onSelectSequence={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }));
+
+    expect(screen.getByText(/legacy run did not record a verified artifact/)).toBeVisible();
+    expect(screen.getByText('Download blocked.')).toBeVisible();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(artifactUrl).not.toHaveBeenCalled();
+  });
+
   it('does not link raw execution artifacts while showing permitted public summaries', () => {
     const artifactUrl = vi.fn((ref: string) => `/artifact/${ref}`);
     const model: AuditInspectorModel = {

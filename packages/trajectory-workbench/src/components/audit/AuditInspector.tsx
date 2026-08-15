@@ -146,15 +146,18 @@ function EvidencePanel({ model, artifactUrl, onSelectSequence }: { model: AuditI
 }
 
 function EvidenceCard({ record, artifactUrl, onSelectSequence }: { record: EvidenceRecord; artifactUrl: (ref: string) => string; onSelectSequence: (sequence: number) => void }) {
+  const verified = record.verification_status === 'verified';
   return <article className="audit-card">
     <h3>{record.kind} · {record.reference}</h3>
     <dl>
-      <dt>Verification</dt><dd>{record.verification_status}{record.unavailable_reason ? ` · ${record.unavailable_reason}` : ''}</dd>
+      <dt>Verification</dt><dd>{record.verification_status}{verified ? '' : ` · ${record.unavailable_reason || 'Artifact verification is unavailable for this record.'}`}</dd>
       <dt>Digest</dt><dd><code>{record.sha256.slice(0, 12)}</code></dd>
       <dt>Path</dt><dd>{record.relative_path}</dd>
       <dt>Producer</dt><dd>{record.producing_sequence === null ? 'Unavailable' : <button type="button" className="sequence-link" onClick={() => onSelectSequence(record.producing_sequence!)}>Go to sequence {record.producing_sequence}</button>}</dd>
       <dt>Consumers</dt><dd>{record.consuming_sequences.length ? record.consuming_sequences.map((sequence) => <button key={sequence} type="button" className="sequence-link" onClick={() => onSelectSequence(sequence)}>Go to sequence {sequence}</button>) : 'No recorded consumers'}</dd>
-      <dt>Artifact</dt><dd><a href={artifactUrl(record.reference)} download>{record.reference}</a></dd>
+      <dt>Artifact</dt><dd>{verified
+        ? <a href={artifactUrl(record.reference)} download>{record.reference}</a>
+        : <span className="unavailable">Download blocked.</span>}</dd>
     </dl>
   </article>;
 }

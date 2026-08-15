@@ -137,3 +137,31 @@ Temporary catalogs, browser output, and downloaded artifacts were removed after 
 - The local `pi-grid-tools` dependency install reports four transitive npm audit findings (two moderate, two high); package versions remain lockfile-pinned and were not changed by this task.
 - Existing Starlette/httpx and pandapower deprecation warnings are unchanged.
 - The pre-existing `docs/status/JOURNAL.md` modification is intentionally excluded from the release commit.
+
+## HIGH review fix — unavailable Inspector artifact links
+
+Root cause: the main Evidence view gated artifact URL creation on `verification_status === 'verified'`, but the Audit Inspector's independent `EvidenceCard` rendering path always called `artifactUrl(record.reference)` and rendered a download anchor. Selecting an unavailable record could therefore construct and expose an actionable gateway URL despite the release contract.
+
+TDD RED:
+
+```sh
+npm test --prefix packages/trajectory-workbench -- --run src/components/audit/AuditInspector.test.tsx
+```
+
+Observed: the new unavailable-evidence regression found a download anchor with `/artifact/evidence:legacy-unavailable`; the expected blocked text was absent. The test also records that `artifactUrl` must remain uncalled.
+
+Fix: `EvidenceCard` now branches on the exact verified status before evaluating the URL builder. Verified records retain their download link. Unavailable records render their persisted reason (or the same safe fallback used by Evidence) and `Download blocked.`, with no anchor or URL construction.
+
+Focused GREEN:
+
+```sh
+npm test --prefix packages/trajectory-workbench -- --run src/components/audit/AuditInspector.test.tsx
+```
+
+Result: 1 file passed, 6 tests passed.
+
+```sh
+npm run check --prefix packages/trajectory-workbench
+```
+
+Result: exit 0 (`tsc -b --pretty false`).
