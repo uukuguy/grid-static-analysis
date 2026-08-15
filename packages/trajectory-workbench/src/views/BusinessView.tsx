@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import type { BusinessProblem, LifecycleStatus, NodeSource } from '../api/types';
 import { TrajectoryRow, type BusinessTrajectoryRow } from '../components/trajectory/TrajectoryRow';
 import { VirtualTrajectory, type PrependAnchor } from '../components/trajectory/VirtualTrajectory';
@@ -31,14 +30,8 @@ export function BusinessView({ problems, state, dispatch, hasOlder = false, onRe
   const rows = filteredRows(problems, state);
   const sources: NodeSource[] = ['observed', 'derived', 'agent-declared'];
   const statuses: LifecycleStatus[] = ['running', 'completed', 'failed', 'interrupted', 'unavailable'];
-  const problemHeadings = useRef<Record<string, HTMLHeadingElement | null>>({});
-
-  useEffect(() => {
-    const heading = state.focusedProblemId ? problemHeadings.current[state.focusedProblemId] : null;
-    if (!heading) return;
-    heading.scrollIntoView?.({ block: 'center' });
-    heading.focus({ preventScroll: true });
-  }, [state.focusedProblemId, rows]);
+  const focusedProblemRowId = state.focusedProblemId ? `problem:${state.focusedProblemId}` : null;
+  const focusedProblemHeadingId = state.focusedProblemId ? problemHeadingId(state.focusedProblemId) : null;
 
   return <section className="business-view" aria-label="Business trajectory view">
     <header className="business-view-header"><div><h1>Business trajectory</h1><p>Chronological problem-solving evidence</p></div>
@@ -47,9 +40,9 @@ export function BusinessView({ problems, state, dispatch, hasOlder = false, onRe
       <label>Status filter<select aria-label="Status filter" value={state.statusFilter} onChange={(event) => dispatch({ type: 'statusFilter/changed', status: event.target.value as LifecycleStatus | 'all' })}><option value="all">All states</option>{statuses.map((status) => <option value={status} key={status}>{status}</option>)}</select></label></div>
     </header>
     <div className="business-filter-summary" aria-label="Business trajectory filters">{sources.length + statuses.length} available filters · {rows.length} matching events</div>
-    <VirtualTrajectory items={rows} label="Business trajectory" hasOlder={hasOlder} onRequestOlder={onRequestOlder} estimateSize={(item) => item.type === 'problem' ? 52 : 84} renderRow={(item) => item.type === 'problem'
+    <VirtualTrajectory items={rows} label="Business trajectory" hasOlder={hasOlder} onRequestOlder={onRequestOlder} estimateSize={(item) => item.type === 'problem' ? 52 : 84} focusItemId={focusedProblemRowId} focusElementId={focusedProblemHeadingId} renderRow={(item) => item.type === 'problem'
       ? <div className="problem-group-header">
-        <h2 ref={(node) => { problemHeadings.current[item.problem.id] = node; }} tabIndex={-1}>{item.problem.title}</h2>
+        <h2 id={problemHeadingId(item.problem.id)} tabIndex={-1}>{item.problem.title}</h2>
         <button type="button" className="problem-fold" aria-expanded={!state.foldedNodeIds.includes(item.problem.id)} onClick={() => dispatch({ type: 'node/foldToggled', nodeId: item.problem.id })} aria-label={`${state.foldedNodeIds.includes(item.problem.id) ? 'Expand' : 'Fold'} ${item.problem.title}`}>
           <span>{state.foldedNodeIds.includes(item.problem.id) ? '▸' : '▾'}</span><small>{item.problem.status} · {item.problem.nodes.length} events</small>
         </button>
@@ -57,4 +50,8 @@ export function BusinessView({ problems, state, dispatch, hasOlder = false, onRe
       : <TrajectoryRow item={item} selected={state.selectedNodeId === item.id} onSelect={() => dispatch({ type: 'node/selected', nodeId: item.id })} />}
     />
   </section>;
+}
+
+function problemHeadingId(problemId: string) {
+  return `business-problem-heading-${problemId}`;
 }

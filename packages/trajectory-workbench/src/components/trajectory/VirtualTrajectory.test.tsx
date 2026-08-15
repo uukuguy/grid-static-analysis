@@ -43,4 +43,18 @@ describe('VirtualTrajectory', () => {
 
     expect(await screen.findByTestId('business:1')).toHaveAttribute('data-index', '0');
   });
+
+  it('scrolls to an off-window focused item and focuses it after mount', async () => {
+    render(<VirtualTrajectory
+      items={items.slice(0, 80)}
+      label="Business trajectory"
+      onRequestOlder={vi.fn()}
+      focusItemId="business:61"
+      focusElementId="focus-business:61"
+      renderRow={(item) => <button id={`focus-${item.id}`} type="button">{item.id}</button>}
+    />);
+
+    const focused = await screen.findByRole('button', { name: 'business:61' });
+    expect(focused).toHaveFocus();
+  });
 });

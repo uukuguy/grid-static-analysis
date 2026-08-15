@@ -19,16 +19,19 @@ interface VirtualTrajectoryProps<T extends TrajectoryItem> {
   onRequestOlder: (anchor: PrependAnchor) => void;
   hasOlder?: boolean;
   estimateSize?: (item: T) => number;
+  focusItemId?: string | null;
+  focusElementId?: string | null;
 }
 
 /** A bounded, semantic-ID keyed list shared by the trajectory projections. */
 export function VirtualTrajectory<T extends TrajectoryItem>({
-  items, label, renderRow, onRequestOlder, hasOlder = false, estimateSize = () => 84,
+  items, label, renderRow, onRequestOlder, hasOlder = false, estimateSize = () => 84, focusItemId = null, focusElementId = null,
 }: VirtualTrajectoryProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const previousIds = useRef<string[]>(items.map((item) => item.id));
   const pendingAnchor = useRef<PrependAnchor | null>(null);
+  const pendingFocus = useRef<{ itemId: string; elementId: string | null } | null>(null);
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollElement,
@@ -42,6 +45,14 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
   useEffect(() => {
     virtualizer.measure();
   }, [virtualizer]);
+
+  useEffect(() => {
+    if (!focusItemId) return;
+    const index = items.findIndex((item) => item.id === focusItemId);
+    if (index < 0) return;
+    pendingFocus.current = { itemId: focusItemId, elementId: focusElementId };
+    virtualizer.scrollToIndex(index, { align: 'center' });
+  }, [focusElementId, focusItemId, items, virtualizer]);
 
   useEffect(() => {
     const anchor = pendingAnchor.current;
@@ -70,9 +81,24 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
   // A deterministic initial window keeps the list usable before layout observation settles
   // (including embedded and test environments that report a zero-size scroll container).
   const virtualItems = virtualizer.getVirtualItems();
-  const renderedItems = virtualItems.length > 0 ? virtualItems : items.slice(0, 16).map((_, index) => ({
+  const baseRenderedItems = virtualItems.length > 0 ? virtualItems : items.slice(0, 16).map((_, index) => ({
     index, key: items[index].id, start: index * estimateSize(items[index]),
   }));
+  const focusIndex = focusItemId ? items.findIndex((item) => item.id === focusItemId) : -1;
+  const renderedItems = focusIndex >= 0 && !baseRenderedItems.some((row) => row.index === focusIndex)
+    ? [...baseRenderedItems, { index: focusIndex, key: items[focusIndex].id, start: estimatedOffset(items, focusIndex, estimateSize) }]
+    : baseRenderedItems;
+
+  useEffect(() => {
+    const focus = pendingFocus.current;
+    if (!focus) return;
+    const target = focus.elementId
+      ? document.getElementById(focus.elementId)
+      : Array.from(document.querySelectorAll<HTMLElement>('[data-focus-item-id]')).find((element) => element.dataset.focusItemId === focus.itemId) ?? null;
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    pendingFocus.current = null;
+  }, [renderedItems]);
 
   return (
     <div ref={(node) => { parentRef.current = node; setScrollElement(node); }} className="virtual-scroll" onScroll={() => {
@@ -87,7 +113,9 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
             ref={virtualizer.measureElement}
             data-index={row.index}
             data-testid={item.id}
+            data-focus-item-id={item.id}
             role="listitem"
+            tabIndex={focusItemId === item.id && !focusElementId ? -1 : undefined}
             aria-posinset={row.index + 1}
             aria-setsize={items.length}
             style={{ position: 'absolute', width: '100%', transform: `translateY(${row.start}px)` }}
@@ -96,4 +124,10 @@ export function VirtualTrajectory<T extends TrajectoryItem>({
       </div>
     </div>
   );
+}
+
+function estimatedOffset<T extends TrajectoryItem>(items: T[], index: number, estimateSize: (item: T) => number) {
+  let offset = 0;
+  for (let cursor = 0; cursor < index; cursor += 1) offset += estimateSize(items[cursor]);
+  return offset;
 }

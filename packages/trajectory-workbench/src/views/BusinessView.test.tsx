@@ -56,4 +56,29 @@ describe('BusinessView', () => {
     expect(await screen.findByRole('button', { name: /fold problem 0/i })).toBeVisible();
     expect(screen.getAllByRole('button', { name: /fold|expand problem/i }).length).toBeLessThanOrEqual(120);
   });
+
+  it('focuses a problem header that starts outside the mounted virtual window', async () => {
+    const manyProblems = Array.from({ length: 80 }, (_, index) => ({
+      ...problem,
+      id: `business:${index}`,
+      title: `Problem ${index}`,
+      source_sequence: index + 1,
+      source_sequences: [index + 1],
+      nodes: [],
+    }));
+
+    render(<BusinessView
+      problems={manyProblems}
+      state={{
+        ...initialWorkbenchState,
+        focusedProblemId: 'business:60',
+        selectedNodeId: 'business:0:claim',
+      }}
+      dispatch={vi.fn()}
+    />);
+
+    const focusedHeading = await screen.findByRole('heading', { name: 'Problem 60' });
+    expect(focusedHeading).toHaveFocus();
+    expect(screen.queryByRole('button', { name: /Agent-declared.*Contingency conclusion/i })).not.toBeInTheDocument();
+  });
 });
