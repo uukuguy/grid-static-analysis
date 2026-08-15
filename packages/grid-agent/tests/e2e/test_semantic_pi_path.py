@@ -21,7 +21,18 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
     pi.write_text(
         "#!/usr/bin/env python3\n"
         "import json, os, subprocess\n"
-        "json.loads(input())\n"
+        "from datetime import datetime, timezone\n"
+        "from pathlib import Path\n"
+        "prompt=json.loads(input())\n"
+        "requests_path=os.environ.get('GRID_AGENT_TRAJECTORY_REQUESTS')\n"
+        "if requests_path:\n"
+        " turn=json.load(open(os.environ['GRID_AGENT_ACTIVE_TURN'],encoding='utf-8'))\n"
+        " state=json.load(open(os.environ['GRID_AGENT_TRAJECTORY_CAPTURE_STATE'],encoding='utf-8'))\n"
+        " request_id=turn['turn_id']+'-r001'\n"
+        " request_path=Path(requests_path)/request_id/'input.json'\n"
+        " request_path.parent.mkdir()\n"
+        " request={'schema_version':'grid-model-request-input/1.0','request_id':request_id,'request_index':1,'turn_id':turn['turn_id'],'provider':os.environ['GRID_AGENT_PROVIDER_ID'],'model':os.environ['GRID_AGENT_MODEL_ID'],'captured_at':datetime.now(timezone.utc).isoformat(),'source_event_sequences':state['source_event_sequences'],'context_revision':state['context_revision'],'context_state_hash':state['context_state_hash'],'provider_payload':{'model':os.environ['GRID_AGENT_MODEL_ID'],'messages':[{'role':'user','content':prompt}],'tools':[]}}\n"
+        " request_path.write_text(json.dumps(request,ensure_ascii=False),encoding='utf-8')\n"
         "catalog=json.load(open(os.environ['GRID_AGENT_TOOL_CATALOG'],encoding='utf-8'))\n"
         "by_cap={tool['capability']:tool['name'] for tool in catalog['tools']}\n"
         "def emit(payload): print(json.dumps(payload), flush=True)\n"
@@ -56,6 +67,7 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft,ensure_ascii=False))\n"
         "emit({'type':'tool_execution_start','toolCallId':'submit-1','toolName':'grid_submit_answer','args':{'answer_output':draft['answer_output']}})\n"
         "emit({'type':'tool_execution_end','toolCallId':'submit-1','toolName':'grid_submit_answer','isError':False,'result':{'answer_output':draft['answer_output']}})\n"
+        "emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'scripted answer submitted'}],'usage':{'input':1,'output':1},'stopReason':'stop'}})\n"
         "emit({'type':'agent_end'})\n",
         encoding="utf-8",
     )

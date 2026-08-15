@@ -1,0 +1,16 @@
+{
+  "analysis_id": "analysis-20260814T081822Z",
+  "paired_tool_count": 36,
+  "projection_digests": {
+    "agent": "13a4637940b07224ecc7d739061b1d8bd3e03ef6aec0b215eb09fad4f20e7b8c",
+    "artifacts": "ccdbee5890436bd8cc3cea617aa7b2a1650423f2926fefda93a62cee2dc19417",
+    "business": "b228edfb52477737643d2d248a8c1665ca37e7b2dea02b1c3e5e5eb233c3fc50",
+    "context": "854624320e0239656e9d44e6647e76c36803861b4a425bbe727ee34e5e1980f5"
+  },
+  "q7_lineage_verified": true,
+  "source_digest": "462aeeeeb1b97b0e7bdacba2c7a9cae7da145cfa502eef1bc27f669fe27c24c0",
+  "source_unchanged": true,
+  "tool_result_count": 36,
+  "tool_start_count": 36,
+  "turn_count": 9
+}

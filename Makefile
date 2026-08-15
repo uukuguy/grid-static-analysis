@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-agent setup-simulator setup-tools install-pi auth-import-pi auth-login doctor run run-llm analysis report test test-agent test-simulator test-tools test-e2e validate validate-provider
+.PHONY: help setup setup-agent setup-simulator setup-tools setup-workbench build-workbench test-workbench install-pi auth-import-pi auth-login doctor run run-llm analysis report trajectory test test-agent test-simulator test-tools test-e2e validate validate-provider
 
 help:
 	@echo "Grid Static Analysis commands"
@@ -10,6 +10,8 @@ help:
 	@echo "  make run-llm QUESTION='...'  Primary natural-language agent path via Pi/LLM"
 	@echo "  make analysis [INSTRUCTIONS=...]  Continuous analysis report; default TASK instruction set"
 	@echo "  make report [INSTRUCTIONS=...]  Compatibility alias for make analysis"
+	@echo "  make build-workbench         Build packaged trajectory workbench assets"
+	@echo "  make trajectory [PORT=8765]  Build and serve the local trajectory workbench"
 	@echo "  make install-pi            Install the pinned Pi runtime"
 	@echo "  make auth-import-pi        Import local Pi Codex OAuth to this project"
 	@echo "  make auth-login            Log in to Pi Codex OAuth for this project"
@@ -19,7 +21,7 @@ help:
 	@echo "  make validate-provider PROVIDER=... [MODEL=...]  Run optional billed provider validation"
 	@echo "  Manual: docs/MANUAL-VALIDATION.md (human verification for every entry above)"
 
-setup: setup-agent setup-simulator setup-tools
+setup: setup-agent setup-simulator setup-tools setup-workbench build-workbench
 
 setup-agent:
 	uv sync --project packages/grid-agent
@@ -29,6 +31,16 @@ setup-simulator:
 
 setup-tools:
 	npm ci --prefix packages/pi-grid-tools
+
+setup-workbench:
+	npm ci --prefix packages/trajectory-workbench
+
+build-workbench:
+	npm run build --prefix packages/trajectory-workbench
+
+test-workbench:
+	npm run check --prefix packages/trajectory-workbench
+	npm test --prefix packages/trajectory-workbench
 
 install-pi:
 	uv run --project packages/grid-agent grid-agent install-pi
@@ -66,6 +78,11 @@ analysis:
 	uv run --project packages/grid-agent grid-agent analysis --instructions "$(INSTRUCTIONS)" $(if $(PROVIDER),--provider "$(PROVIDER)") $(if $(MODEL),--model "$(MODEL)")
 
 report: analysis
+
+PORT ?= 8765
+
+trajectory: build-workbench
+	uv run --project packages/grid-agent grid-agent trajectory serve --host 127.0.0.1 --port "$(PORT)" --runs-root runs
 
 test: test-agent test-simulator test-tools
 

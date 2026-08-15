@@ -1,0 +1,9 @@
+.theme-toggle {
+  min-height: 32px;
+  padding: 5px 9px;
+  color: var(--wb-text);
+  background: var(--wb-panel-raised);
+  border: 1px solid var(--wb-line-strong);
+  border-radius: var(--wb-radius-small);
+  cursor: pointer;
+}

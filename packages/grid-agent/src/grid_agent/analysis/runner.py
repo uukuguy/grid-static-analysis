@@ -17,6 +17,11 @@ from grid_agent.analysis.view import materialize_context_view
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.runtime.rpc import PiProtocolError, SemanticEventCallback
 from grid_agent.observability.trace import JsonlTraceWriter
+from grid_agent.trajectory.artifacts import ArtifactIntegrityError
+from grid_agent.trajectory.capture import CaptureIntegrityError, NativeCaptureAdapter
+from grid_agent.trajectory.context_bridge import NativeContextBridge
+from grid_agent.trajectory.reader import RunEventReader
+from grid_agent.trajectory.recorder import RecorderIntegrityError
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +55,7 @@ class PiSession(Protocol):
         on_heartbeat: Callable[[], None] | None = None,
         heartbeat_seconds: float = 10.0,
         require_answer_text: bool = True,
+        capture: NativeCaptureAdapter | None = None,
     ) -> str: ...
 
     def stop(self) -> None: ...
@@ -76,6 +82,8 @@ class AnalysisRunner:
         environment: Mapping[str, str] | None = None,
         progress_callback: ProgressCallback | None = None,
         trace: JsonlTraceWriter | None = None,
+        capture: NativeCaptureAdapter | None = None,
+        context_bridge: NativeContextBridge | None = None,
     ) -> None:
         self._workspace = workspace
         self._store = store
@@ -85,6 +93,8 @@ class AnalysisRunner:
         self._environment = dict(environment or {})
         self._progress_callback = progress_callback
         self._trace = trace
+        self._capture = capture
+        self._context_bridge = context_bridge
         self._last_context_revision: int | None = None
 
     def run(self, request: AnalysisRequest) -> AnalysisOutcome:
@@ -95,7 +105,7 @@ class AnalysisRunner:
             try:
                 # Pi loads the extension before the first prompt; its configured
                 # context-view path must therefore already exist.
-                self._materialize_context_view()
+                self._materialize_context_view(record_injection=True)
                 self._pi.start()
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
@@ -110,7 +120,9 @@ class AnalysisRunner:
                     self._fail_analysis(error, total_turns=len(request.instructions))
                     return self._outcome(request, "failed", error)
                 try:
-                    self._materialize_context_view()
+                    if self._capture is not None:
+                        self._capture.begin_turn(handle.turn_id)
+                    self._materialize_context_view(record_injection=True)
                     self._pi.prompt_and_wait(
                         self._prompt_for(instruction),
                         on_event=self._progress_callback,
@@ -120,23 +132,21 @@ class AnalysisRunner:
                             trace_sequence=sequence,
                         ),
                         require_answer_text=False,
+                        capture=self._capture,
                     )
                     finalized = self._finalize_turn(handle)
-                except PiProtocolError as exc:
+                    self._end_capture()
+                except (
+                    ArtifactIntegrityError,
+                    CaptureIntegrityError,
+                    ContextStoreError,
+                    PiProtocolError,
+                    RecorderIntegrityError,
+                    SimulatorIntegrityError,
+                ) as exc:
                     error = f"{type(exc).__name__}: {exc}"
                     finalized = self._fail_turn_if_active(handle, error)
-                    self._checkpoint_after_turn(finalized)
-                    self._fail_analysis(error, total_turns=len(request.instructions))
-                    return self._outcome(request, "failed", error)
-                except SimulatorIntegrityError as exc:
-                    error = f"{type(exc).__name__}: {exc}"
-                    finalized = self._fail_turn_if_active(handle, error)
-                    self._checkpoint_after_turn(finalized)
-                    self._fail_analysis(error, total_turns=len(request.instructions))
-                    return self._outcome(request, "failed", error)
-                except ContextStoreError as exc:
-                    error = f"{type(exc).__name__}: {exc}"
-                    finalized = self._fail_turn_if_active(handle, error)
+                    self._end_capture_after_failure()
                     self._checkpoint_after_turn(finalized)
                     self._fail_analysis(error, total_turns=len(request.instructions))
                     return self._outcome(request, "failed", error)
@@ -154,6 +164,7 @@ class AnalysisRunner:
                         },
                     )
                 )
+                self._verify_completed_trajectory()
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 self._fail_analysis(error, total_turns=len(request.instructions))
@@ -162,7 +173,11 @@ class AnalysisRunner:
             self._write_final_artifacts(status="completed", error=None, total_turns=len(request.instructions))
             return self._outcome(request, "completed", None)
         finally:
-            self._pi.stop()
+            try:
+                self._pi.stop()
+            finally:
+                if self._context_bridge is not None:
+                    self._context_bridge.recorder.close()
 
     def _finalize_turn(self, handle: ActiveTurnHandle) -> FinalizedTurn:
         return self._turns.finalize(handle, duration_seconds=max(0.0, time.monotonic() - handle.started_monotonic))
@@ -251,20 +266,62 @@ class AnalysisRunner:
         replayed = AnalysisContextStore.replay(self._workspace.context_events_path)
         if replayed != self._store.snapshot:
             raise ContextStoreError("replayed context does not match in-memory snapshot before completion")
+        if self._context_bridge is not None:
+            prefix = RunEventReader(
+                self._context_bridge.recorder.events_path
+            ).read_prefix()
+            if prefix.failure is not None:
+                raise ContextStoreError(
+                    "native trajectory replay failed at "
+                    f"line {prefix.failure.line_number}: {prefix.failure.message}"
+                )
 
     def _fail_analysis(self, error: str, *, total_turns: int) -> None:
-        if self._store.snapshot.status not in {"completed", "failed"} and self._store.snapshot.current_turn is None:
+        if (
+            self._store.snapshot.status not in {"completed", "failed"}
+            and self._store.snapshot.current_turn is None
+            and self._native_trajectory_is_replayable()
+        ):
             try:
                 self._store.append(
                     ContextEventDraft(
                         event_type="analysis.failed",
-                        payload={"error": error},
+                        payload={
+                            "error": error,
+                            "error_type": _terminal_error_type(error),
+                        },
                     ),
                     integrity="diagnostic",
                 )
             except ContextStoreError:
                 pass
         self._write_final_artifacts(status="failed", error=error, total_turns=total_turns)
+
+    def _native_trajectory_is_replayable(self) -> bool:
+        if self._context_bridge is None:
+            return True
+        return (
+            RunEventReader(self._context_bridge.recorder.events_path)
+            .read_prefix()
+            .failure
+            is None
+        )
+
+    def _verify_completed_trajectory(self) -> None:
+        if self._context_bridge is None:
+            return
+        prefix = RunEventReader(
+            self._context_bridge.recorder.events_path
+        ).read_prefix()
+        if prefix.failure is not None:
+            raise ContextStoreError(
+                "native trajectory terminal replay failed at "
+                f"line {prefix.failure.line_number}: {prefix.failure.message}"
+            )
+        if not prefix.events or prefix.events[-1].event_type != "analysis.completed":
+            raise ContextStoreError(
+                "native trajectory does not end with analysis.completed"
+            )
 
     def _write_final_artifacts(
         self,
@@ -292,12 +349,29 @@ class AnalysisRunner:
             "context_events_path": str(self._workspace.context_events_path.relative_to(self._workspace.root_path)),
             "context_available": context_available,
         }
+        if self._context_bridge is not None:
+            manifest.update(
+                {
+                    "events_path": str(
+                        self._context_bridge.recorder.events_path.relative_to(
+                            self._workspace.root_path
+                        )
+                    ),
+                    "trajectory_schema_version": "grid-run-event/1.0",
+                }
+            )
         if error is not None:
             manifest["error"] = error
         _write_json_atomic(self._workspace.manifest_path, manifest)
 
-    def _materialize_context_view(self) -> None:
+    def _materialize_context_view(
+        self, *, record_injection: bool = False
+    ) -> None:
         materialize_context_view(self._store.snapshot, self._workspace.context_view_path)
+        if record_injection and self._context_bridge is not None:
+            self._context_bridge.record_injection(
+                self._workspace.context_view_path, self._store.snapshot
+            )
         if self._trace is None:
             return
         revision = self._store.snapshot.revision
@@ -306,6 +380,18 @@ class AnalysisRunner:
             self._trace.append("analysis_context.changed", {"revision": revision, "state_hash": state_hash})
         self._trace.append("analysis_context.injected", {"revision": revision, "state_hash": state_hash, "path": str(self._workspace.context_view_path.relative_to(self._workspace.root_path))})
         self._last_context_revision = revision
+
+    def _end_capture(self) -> None:
+        if self._capture is not None:
+            self._capture.end_turn()
+
+    def _end_capture_after_failure(self) -> None:
+        if self._capture is None:
+            return
+        try:
+            self._capture.end_turn()
+        except (CaptureIntegrityError, RecorderIntegrityError):
+            pass
 
     def _prompt_for(self, instruction: str) -> str:
         context_view = self._workspace.context_view_path.read_text(encoding="utf-8")
@@ -352,3 +438,9 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(path)
+
+
+def _terminal_error_type(error: str) -> str:
+    if error.startswith("CaptureIntegrityError:"):
+        return "capture_integrity_error"
+    return "analysis_error"

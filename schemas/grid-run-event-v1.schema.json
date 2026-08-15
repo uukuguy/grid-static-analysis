@@ -1,0 +1,289 @@
+{
+  "$defs": {
+    "Causation": {
+      "additionalProperties": false,
+      "properties": {
+        "correlation_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "parent_sequence": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Sequence"
+        }
+      },
+      "title": "Causation",
+      "type": "object"
+    },
+    "ContextBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "after_revision": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Revision"
+        },
+        "before_revision": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Revision"
+        }
+      },
+      "title": "ContextBoundary",
+      "type": "object"
+    },
+    "EventRefs": {
+      "additionalProperties": false,
+      "properties": {
+        "consumed": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumed",
+          "type": "array"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "produced": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Produced",
+          "type": "array"
+        }
+      },
+      "title": "EventRefs",
+      "type": "object"
+    },
+    "EventSource": {
+      "additionalProperties": false,
+      "properties": {
+        "integrity": {
+          "default": "verified",
+          "minLength": 1,
+          "title": "Integrity",
+          "type": "string"
+        },
+        "kind": {
+          "default": "observed",
+          "enum": [
+            "observed",
+            "agent-declared"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "producer": {
+          "default": "grid-agent",
+          "minLength": 1,
+          "title": "Producer",
+          "type": "string"
+        }
+      },
+      "title": "EventSource",
+      "type": "object"
+    },
+    "RunScope": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "title": "RunScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "minLength": 1,
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "causation": {
+      "$ref": "#/$defs/Causation"
+    },
+    "context": {
+      "$ref": "#/$defs/ContextBoundary"
+    },
+    "event_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Event Hash",
+      "type": "string"
+    },
+    "event_type": {
+      "enum": [
+        "analysis.started",
+        "analysis.completed",
+        "analysis.failed",
+        "turn.started",
+        "turn.completed",
+        "turn.failed",
+        "step.started",
+        "step.completed",
+        "step.failed",
+        "model.request.started",
+        "model.response.completed",
+        "model.response.failed",
+        "model.retry.scheduled",
+        "model.retry.started",
+        "model.retry.exhausted",
+        "tool.started",
+        "tool.completed",
+        "tool.failed",
+        "business.decision.declared",
+        "business.claim.declared",
+        "context.projected",
+        "context.injected",
+        "answer.submitted",
+        "answer.rejected",
+        "audit.diagnostic.recorded"
+      ],
+      "title": "Event Type",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "previous_event_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Previous Event Hash",
+      "type": "string"
+    },
+    "refs": {
+      "$ref": "#/$defs/EventRefs"
+    },
+    "schema_version": {
+      "const": "grid-run-event/1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/RunScope"
+    },
+    "sequence": {
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/EventSource"
+    },
+    "timestamp": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+      "title": "Timestamp",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_type",
+    "scope",
+    "causation",
+    "source",
+    "context",
+    "refs",
+    "payload",
+    "schema_version",
+    "analysis_id",
+    "sequence",
+    "timestamp",
+    "previous_event_hash",
+    "event_hash"
+  ],
+  "title": "RunEvent",
+  "type": "object"
+}

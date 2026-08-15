@@ -58,6 +58,23 @@ make analysis INSTRUCTIONS=validation/questions/task.md.txt
 
 `make report` 和 `grid-agent report --questions PATH` 是兼容别名，委托同一个连续分析路径；它们不再启动每题一个 `grid-agent run` 子进程。
 
+## 本地轨迹工作台
+
+面向日常操作的界面说明、排障和 API 示例见 [轨迹工作台操作手册](TRAJECTORY-WORKBENCH-OPERATOR-GUIDE.md)。
+
+已存在的原生或兼容 v0.2 分析目录可通过只绑定回环接口的服务检查：
+
+```sh
+make trajectory PORT=8765
+# 等价：grid-agent trajectory serve --host 127.0.0.1 --port 8765 --runs-root runs
+```
+
+`make trajectory` 每次都会先构建并打包 workbench 静态资源，再在 `http://127.0.0.1:8765` 提供同源 UI 与只读 API。只需要更新静态资源时使用 `make build-workbench`；首次安装或重装依赖使用 `make setup-workbench`。生产资源随 `grid-agent` wheel 一起发布，服务启动时会验证 `index.html`、`assets/app.js` 和 `assets/app.css` 都存在；缺失时会清晰失败并提示运行 `make build-workbench`。浏览器的非 `/api/` 客户端路由返回 SPA 入口，`/api/*` 永远保持 JSON API 响应（包括 404）。
+
+首版只接受 `127.0.0.1`、`::1` 或 `localhost`；例如 `0.0.0.0` 和局域网地址会在启动前被拒绝。该操作是服务命令，不产生答案 JSON；启动和故障诊断只写 stderr，使用 Ctrl-C 停止。
+
+服务仅提供 GET：`/api/runs`、`/api/runs/{analysis_id}`、`/api/runs/{analysis_id}/business`、`/api/runs/{analysis_id}/agent`、`/api/runs/{analysis_id}/context?at_sequence=N` 与 `/api/runs/{analysis_id}/artifacts/{artifact_ref}`。工件必须已在投影索引登记并在读取时重新校验摘要；任意路径、Pi 原始 sidecar、符号链接逃逸和未知引用都会被拒绝。响应固定为不可执行数据类型，并包含 CSP、`nosniff`、拒绝 frame、`no-referrer` 和 `no-store`；服务没有 CORS、写入路由或实时流。
+
 ## LLM 配置与 Pi RPC 路径
 
 配置写在仓库根目录的 `.env`：它已被 Git 忽略。先复制模板，再只填写一个实际使用的密钥：

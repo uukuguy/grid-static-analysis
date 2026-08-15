@@ -21,6 +21,10 @@ class ProjectPaths:
         return self.root / ".grid-agent"
 
     @property
+    def trajectory_cache_dir(self) -> Path:
+        return self.internal_dir / "trajectory-cache"
+
+    @property
     def pi_runtime_dir(self) -> Path:
         return self.internal_dir / "runtime/pi"
 

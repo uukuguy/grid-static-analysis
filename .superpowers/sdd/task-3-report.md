@@ -1,101 +1,136 @@
-# Task 3 Report: Durable ledger, replay, and normative schemas
+# Task 3 Report: Immutable sidecar registry
 
-## Summary
+## Implementation
 
-Implemented `AnalysisContextStore` as a durable persistence boundary for analysis context state. The store initializes a deterministic revision-zero genesis state, commits the first `analysis.started` event as sequence/revision 1, appends every subsequent event to JSONL with fsync before replacing the snapshot atomically, and can replay the ledger into an identical `AnalysisContext`.
-
-Generated normative JSON schemas for `AnalysisContext` and `AnalysisContextEvent`, with a contract test that ensures checked-in schemas stay synchronized with the Pydantic models.
-
-## Files changed
-
-- Created `packages/grid-agent/src/grid_agent/analysis/store.py`
-- Created `packages/grid-agent/tests/analysis/test_store.py`
-- Created `scripts/update_analysis_context_schemas.py`
-- Created `schemas/analysis-context-v1.schema.json`
-- Created `schemas/analysis-context-event-v1.schema.json`
-- Created `packages/grid-agent/tests/contract/test_analysis_context_docs.py`
-
-## Behavior covered
-
-- `AnalysisContextStore.initialize(workspace, input_record=..., runtime_record=...)`
-  - Builds deterministic revision-zero `initializing` state with `initial_context`.
-  - Appends `analysis.started` with complete input/runtime payload as sequence 1 / revision 1.
-  - Materializes the running snapshot only after ledger fsync.
-
-- `AnalysisContextStore.append(draft, integrity="verified")`
-  - Reduces state through `reduce_context`.
-  - Emits an `AnalysisContextEvent` containing contiguous sequence/revision and previous/next state hashes.
-  - Fsyncs the ledger append before atomic snapshot replacement.
-
-- `AnalysisContextStore.replay(ledger_path)`
-  - Rebuilds genesis from the first `analysis.started` payload.
-  - Rejects empty, malformed, truncated, non-contiguous, revision-mismatched, previous-hash-mismatched, and next-hash-mismatched ledgers.
-
-- `AnalysisContextStore.verify_materialized_snapshot()`
-  - Validates the materialized snapshot against both the in-memory snapshot and replayed ledger state.
+- Added `ArtifactPointer` and `ImmutableArtifactRegistry` for the three declared
+  trajectory sidecar layouts.
+- JSON writes are canonical, fsynced to a temporary file, atomically published
+  without replacing an existing path, directory-fsynced, and digest-verified
+  before a pointer is returned.
+- Existing artifacts are admitted byte-for-byte without rewriting.  All
+  admission and verification paths reject invalid identities, mismatched
+  registered paths, symlinks, non-regular files, out-of-root paths, and changed
+  size or digest.
 
 ## TDD evidence
 
-RED:
+### RED
+
+1. `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_artifacts.py -q`
+   - Failed in collection as expected: `ModuleNotFoundError: No module named
+     'grid_agent.trajectory.artifacts'`.
+2. `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_artifacts.py::test_registry_rejects_run_root_beneath_a_symlink -q`
+   - Failed as expected because a registry accepted a root below a symlinked
+     ancestor.
+3. `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_artifacts.py::test_registry_rejects_non_string_kind_and_identity -q`
+   - Failed as expected because a non-string identity raised `TypeError` rather
+     than `ArtifactIntegrityError`.
+
+### GREEN / verification
+
+- `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_artifacts.py -q`
+  - `12 passed in 0.07s`.
+- `uv run --project packages/grid-agent ruff check packages/grid-agent/src/grid_agent/trajectory/artifacts.py packages/grid-agent/tests/trajectory/test_artifacts.py`
+  - `All checks passed!`
+- `uv run --project packages/grid-agent python -m compileall -q packages/grid-agent/src/grid_agent/trajectory/artifacts.py`
+  - Completed successfully.
+- `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory -q`
+  - `67 passed in 0.14s`.
+
+## Files changed
+
+- `packages/grid-agent/src/grid_agent/trajectory/artifacts.py`
+- `packages/grid-agent/tests/trajectory/test_artifacts.py`
+
+## Self-review
+
+- Confirmed pointers encode the digest, relative path, kind, and byte size and
+  that verification independently recomputes both size and SHA-256.
+- Confirmed idempotent same-byte writes and exact-byte pre-existing artifact
+  admission; a content mismatch fails closed.
+- Confirmed the supplied registration path must exactly equal the layout path.
+- Confirmed every existing path component beneath the real run root is checked
+  with `lstat`, and both a symlinked request directory and a symlinked run-root
+  ancestor are rejected.
+
+## Concerns
+
+No known concerns within this task's owned scope.
+
+## Review fix: descriptor-rooted TOCTOU protection
+
+### Finding addressed
+
+The original registry checked directories and files with `lstat()` and then
+read or published through pathnames.  A directory or artifact could therefore
+be replaced with a symlink after the check, causing matching bytes from outside
+the run root to be verified.
+
+All artifact operations now traverse the absolute run-root prefix and every
+artifact-relative directory component through directory descriptors using
+`O_NOFOLLOW`.  Artifact bytes are read only from an `O_NOFOLLOW` descriptor
+whose type is checked with `fstat()`.  Atomic writes create, fsync, hard-link,
+and unlink the temporary file relative to the already verified parent
+descriptor.  Before `verify()` returns its required `Path`, it reopens the
+named root, parent, and artifact without following symlinks and compares their
+device/inode identities with the descriptors used for the verified read.
+
+### TDD evidence
+
+RED, before the implementation change:
 
 ```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_store.py packages/grid-agent/tests/contract/test_analysis_context_docs.py -q
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_artifacts.py::test_registry_rejects_replacement_during_verified_read -q
 ```
 
-Result: failed during collection because `grid_agent.analysis.store` did not exist.
+Result: `2 failed in 0.09s`.  Both the parent replacement and final-file
+replacement cases failed with `DID NOT RAISE ArtifactIntegrityError`, proving
+that an outside regular file with matching bytes passed the old pathname-based
+verification.
 
-GREEN / focused:
+GREEN, after the descriptor-rooted implementation:
 
 ```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_store.py packages/grid-agent/tests/contract/test_analysis_context_docs.py -q
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_artifacts.py::test_registry_rejects_replacement_during_verified_read -q
 ```
 
-Result: `7 passed in 0.08s`.
+Result: `2 passed in 0.07s`.
 
-Broader package verification:
+Focused artifact suite:
 
 ```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests -q
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_artifacts.py -q
 ```
 
-Result: `178 passed in 47.61s`.
+Result: `14 passed in 0.09s`.
 
-Schema generation idempotence:
+Broader trajectory suite:
 
 ```sh
-uv run --project packages/grid-agent python scripts/update_analysis_context_schemas.py
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory -q
 ```
 
-Result: second run preserved the same SHA-256 hashes for both generated schema files.
+Result: `69 passed in 0.15s`.
 
-## Notes and concerns
-
-- No Pi/runtime integration was added.
-- Existing unrelated workspace changes were preserved and not staged.
-- The report file is local under `.superpowers/sdd/`, which is ignored by that directory's `.gitignore`.
-
-## Review fix evidence: append integrity type
-
-Review finding fixed: `AnalysisContextStore.append()` now declares `integrity` as `Literal["verified", "diagnostic"]`, matching `AnalysisContextEvent.integrity`, while retaining the runtime guard for dynamically typed callers.
-
-RED:
+Static checks:
 
 ```sh
-pyright packages/grid-agent/src/grid_agent/analysis/store.py
+uv run --project packages/grid-agent ruff check packages/grid-agent/src/grid_agent/trajectory/artifacts.py packages/grid-agent/tests/trajectory/test_artifacts.py
+uv run --project packages/grid-agent python -m compileall -q packages/grid-agent/src/grid_agent/trajectory/artifacts.py
+pyright packages/grid-agent/src/grid_agent/trajectory/artifacts.py
+git diff --check
 ```
 
-Result before fix: one `reportArgumentType` error because `str` could not be assigned to `Literal['verified', 'diagnostic']`.
+Results: Ruff reported `All checks passed!`; compileall and `git diff --check`
+completed successfully; Pyright reported `0 errors, 0 warnings, 0
+informations` for the production module.  A combined source/test Pyright
+invocation was also attempted, but this repository's standalone Pyright
+configuration does not resolve the package import from the test file; the
+production-module invocation above is clean.
 
-Verification after fix:
+### Review-fix files
 
-```sh
-pyright packages/grid-agent/src/grid_agent/analysis/store.py
-```
+- `packages/grid-agent/src/grid_agent/trajectory/artifacts.py`
+- `packages/grid-agent/tests/trajectory/test_artifacts.py`
 
-Result: `0 errors, 0 warnings, 0 informations`.
-
-```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/analysis/test_store.py packages/grid-agent/tests/contract/test_analysis_context_docs.py -q
-```
-
-Result: `7 passed in 0.12s`.
+No event, recorder, or workspace files were changed by this review fix.

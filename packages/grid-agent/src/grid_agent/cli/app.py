@@ -38,10 +38,18 @@ from grid_agent.auth.service import AuthService
 from grid_agent.auth.store import CODEX_PROVIDER, ProjectAuthStore
 from grid_agent.tools.catalog import ToolCatalog, load_packaged_capability_documents
 from grid_agent.tools.guide import GuideIndex
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.capture import NativeCaptureAdapter
+from grid_agent.trajectory.context_bridge import NativeContextBridge
+from grid_agent.trajectory.events import RunEvent
+from grid_agent.trajectory.recorder import RunEventRecorder
+from grid_agent.trajectory.api.server import serve_trajectory
 from grid_agent.reporting import AuditDiagnostic, humanize_answer, load_questions
 
 
 app = typer.Typer(add_completion=False)
+trajectory_app = typer.Typer(help="Inspect read-only agent and business trajectories.")
+app.add_typer(trajectory_app, name="trajectory")
 _NON_SIMULATOR_CAPABILITIES = {"grid_submit_answer", "grid_guide_open"}
 
 
@@ -49,6 +57,68 @@ _NON_SIMULATOR_CAPABILITIES = {"grid_submit_answer", "grid_guide_open"}
 class SubmittedAnswer:
     answer_output: str
     diagnostics: tuple[AuditDiagnostic, ...]
+
+
+@trajectory_app.command("serve")
+def trajectory_serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8765, "--port", min=1, max=65535),
+    runs_root: Path = typer.Option(Path("runs"), "--runs-root"),
+) -> None:
+    """Serve immutable trajectory projections only on loopback interfaces."""
+    try:
+        serve_trajectory(
+            project_paths=ProjectPaths.from_root(Path.cwd()),
+            host=host,
+            port=port,
+            runs_root=runs_root,
+        )
+    except Exception as exc:
+        typer.echo(f"grid-agent trajectory error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
+class _TrajectoryAllowedRefs:
+    """Publish the controller-known, non-artifact refs visible to native tools."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._refs: set[str] = set()
+        self._write(self._refs)
+
+    def observe(self, event: RunEvent) -> None:
+        candidates = {
+            reference
+            for reference in (
+                *event.refs.consumed,
+                *event.refs.produced,
+                *event.refs.evidence,
+            )
+            if not reference.startswith("artifact:")
+        }
+        updated = self._refs | candidates
+        if updated == self._refs:
+            return
+        self._write(updated)
+        self._refs = updated
+
+    def _write(self, references: set[str]) -> None:
+        payload = json.dumps(
+            {
+                "schema_version": "grid-trajectory-allowed-refs/1.0",
+                "refs": sorted(references),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.tmp")
+        with temporary.open("wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(self.path)
 
 
 def _repo_root() -> Path:
@@ -414,74 +484,108 @@ def _execute_analysis(
         workspace.root_path / "guide-index.json"
     )
     PiConfigMaterializer(project_paths.pi_agent_dir).materialize(resolved)
-    launch = build_pi_launch(
-        resolved,
-        RuntimePaths(
-            command=command,
-            project_pi_dir=project_paths.pi_agent_dir,
-            session_dir=workspace.pi_path,
-            workspace=workspace.root_path,
-            gridctl_dir=workspace.bin_path,
-            extension_path=_repo_root() / "packages/pi-grid-tools/src/domain-tools.mjs",
-            tool_catalog_path=tool_catalog_path,
-            guide_index_path=guide_index_path,
-            answer_draft_path=workspace.active_answer_draft_path,
-            system_policy_path=_repo_root() / "configs/agent/system-policy.md",
-            active_turn_path=workspace.active_turn_path,
-            analysis_context_view_path=workspace.context_view_path,
-        ),
-        base_environment=runtime_env,
+    secret_values = (
+        {resolved.secret.value} if resolved.secret is not None else set()
     )
-    store = AnalysisContextStore.initialize(
-        workspace,
-        input_record=_input_record(copied_instructions),
-        runtime_record=_runtime_record(
-            resolved.config.provider,
-            resolved.config.model,
-            environment_description,
-        ),
+    artifacts = ImmutableArtifactRegistry(workspace.root_path)
+    allowed_refs_path = (
+        workspace.root_path / "context" / "trajectory-allowed-refs.json"
     )
-    verifier = ContentReferenceVerifier(workspace.root_path)
-    trace = JsonlTraceWriter(
-        workspace.trace_path,
-        secret_values={resolved.secret.value} if resolved.secret is not None else set(),
+    allowed_refs = _TrajectoryAllowedRefs(allowed_refs_path)
+    recorder = RunEventRecorder(
+        workspace.events_path,
+        workspace.analysis_id,
+        artifact_registry=artifacts,
+        secret_values=secret_values,
+        subscribers=(allowed_refs.observe,),
     )
-    progress = _ProgressReporter("\n".join(instruction_items))
-    typer.echo(
-        f"开始连续系统仿真分析 analysis={workspace.analysis_id} 指令文件={instructions} "
-        f"provider={resolved.config.provider} model={resolved.config.model}",
-        err=True,
-    )
-    runner = AnalysisRunner(
-        workspace=workspace,
-        store=store,
-        turn_controller=TurnController(
+    try:
+        bridge = NativeContextBridge(recorder, artifacts, workspace)
+        store = AnalysisContextStore.initialize(
             workspace,
-            store,
-            audit_callback=lambda claimed, results: verifier.audit_answer_references(claimed, results),
-        ),
-        pi_client=PiRpcClient(launch, workspace, trace),
-        projector=AnalysisContextProjector(
-            store,
-            verifier,
-            CapabilityContextCatalog.from_documents(capability_documents),
-        ),
-        environment={
-            "provider": resolved.config.provider,
-            "model": resolved.config.model,
-            "pandapower": str(environment_description.get("pandapower_version", "3.4.0")),
-            "gridctl": str(workspace.bin_path / "gridctl"),
-        },
-        progress_callback=progress.on_event,
-        trace=trace,
-    )
-    outcome = runner.run(AnalysisRequest(analysis_id=workspace.analysis_id, instructions=instruction_items))
-    typer.echo(
-        f"连续分析结束 analysis={outcome.analysis_id} status={outcome.status} "
-        f"completed={outcome.completed_turns}/{outcome.total_turns} report={_project_relative(outcome.report_path, project_paths.root)}",
-        err=True,
-    )
-    return outcome
+            input_record=_input_record(copied_instructions),
+            runtime_record=_runtime_record(
+                resolved.config.provider,
+                resolved.config.model,
+                environment_description,
+            ),
+            transition_commit=bridge.commit,
+        )
+        capture = NativeCaptureAdapter(recorder, artifacts, workspace)
+        launch = build_pi_launch(
+            resolved,
+            RuntimePaths(
+                command=command,
+                project_pi_dir=project_paths.pi_agent_dir,
+                session_dir=workspace.pi_path,
+                workspace=workspace.root_path,
+                gridctl_dir=workspace.bin_path,
+                extension_path=_repo_root() / "packages/pi-grid-tools/src/domain-tools.mjs",
+                tool_catalog_path=tool_catalog_path,
+                guide_index_path=guide_index_path,
+                answer_draft_path=workspace.active_answer_draft_path,
+                system_policy_path=_repo_root() / "configs/agent/system-policy.md",
+                active_turn_path=workspace.active_turn_path,
+                analysis_context_view_path=workspace.context_view_path,
+                trajectory_requests_path=workspace.requests_path,
+                trajectory_capture_state_path=workspace.trajectory_capture_state_path,
+                trajectory_allowed_refs_path=allowed_refs_path,
+                provider_id=resolved.config.provider,
+                model_id=resolved.config.model,
+            ),
+            base_environment=runtime_env,
+        )
+        verifier = ContentReferenceVerifier(workspace.root_path)
+        trace = JsonlTraceWriter(
+            workspace.trace_path,
+            secret_values=secret_values,
+        )
+        progress = _ProgressReporter("\n".join(instruction_items))
+        typer.echo(
+            f"开始连续系统仿真分析 analysis={workspace.analysis_id} 指令文件={instructions} "
+            f"provider={resolved.config.provider} model={resolved.config.model}",
+            err=True,
+        )
+        runner = AnalysisRunner(
+            workspace=workspace,
+            store=store,
+            turn_controller=TurnController(
+                workspace,
+                store,
+                audit_callback=lambda claimed, results: verifier.audit_answer_references(claimed, results),
+                recorder=recorder,
+            ),
+            pi_client=PiRpcClient(launch, workspace, trace),
+            projector=AnalysisContextProjector(
+                store,
+                verifier,
+                CapabilityContextCatalog.from_documents(capability_documents),
+            ),
+            environment={
+                "provider": resolved.config.provider,
+                "model": resolved.config.model,
+                "pandapower": str(environment_description.get("pandapower_version", "3.4.0")),
+                "gridctl": str(workspace.bin_path / "gridctl"),
+            },
+            progress_callback=progress.on_event,
+            trace=trace,
+            capture=capture,
+            context_bridge=bridge,
+        )
+        outcome = runner.run(
+            AnalysisRequest(
+                analysis_id=workspace.analysis_id,
+                instructions=instruction_items,
+            )
+        )
+        typer.echo(
+            f"连续分析结束 analysis={outcome.analysis_id} status={outcome.status} "
+            f"completed={outcome.completed_turns}/{outcome.total_turns} report={_project_relative(outcome.report_path, project_paths.root)}",
+            err=True,
+        )
+        return outcome
+    finally:
+        recorder.close()
 
 
 @app.command()

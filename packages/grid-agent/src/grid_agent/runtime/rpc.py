@@ -5,12 +5,13 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Thread
+from threading import Event, Lock, Thread
 from typing import Any, Protocol
 
 from grid_agent.observability.trace import JsonlTraceWriter
 from grid_agent.runtime.lock import PiCommand
 from grid_agent.runtime.environment import PiLaunch
+from grid_agent.trajectory.capture import CaptureIntegrityError, NativeCaptureAdapter
 
 
 SemanticEventCallback = Callable[[dict[str, Any], int], None]
@@ -26,6 +27,9 @@ TRACEABLE_RPC_TYPES = frozenset(
         "auto_retry_end",
     }
 )
+CAPTURE_FATAL_EXIT_CODE = 86
+CAPTURE_FATAL_MARKER = "trajectory request capture failed"
+_STDERR_CAPTURE_LIMIT = 64 * 1024
 
 
 class RpcWorkspace(Protocol):
@@ -45,6 +49,7 @@ class PiRpcClient:
         self.environment = environment
         self.process: subprocess.Popen[bytes] | None = None
         self._stdout_lines: Queue[bytes | None] | None = None
+        self._stderr_capture: _BoundedStderrCapture | None = None
 
     def start(self) -> None:
         launch_environment = self.command.environment if isinstance(self.command, PiLaunch) else self.environment
@@ -52,6 +57,13 @@ class PiRpcClient:
         self._stdout_lines = Queue()
         if self.process.stdout is not None:
             Thread(target=_read_lines, args=(self.process.stdout, self._stdout_lines), daemon=True).start()
+        self._stderr_capture = _BoundedStderrCapture()
+        if self.process.stderr is not None:
+            Thread(
+                target=_drain_stderr,
+                args=(self.process.stderr, self._stderr_capture),
+                daemon=True,
+            ).start()
 
     def prompt_and_wait(
         self,
@@ -62,6 +74,7 @@ class PiRpcClient:
         on_heartbeat: Callable[[], None] | None = None,
         heartbeat_seconds: float = 10.0,
         require_answer_text: bool = True,
+        capture: NativeCaptureAdapter | None = None,
     ) -> str:
         if self.process is None or self.process.stdin is None or self.process.stdout is None:
             raise PiProtocolError("Pi RPC process is not started")
@@ -72,7 +85,7 @@ class PiRpcClient:
         lines = self._stdout_lines
         text: list[str] = []
         acknowledged = False
-        pending_tool_calls: list[dict[str, str]] = []
+        pending_tool_calls: dict[str, dict[str, str]] = {}
         while True:
             try:
                 raw = lines.get(timeout=heartbeat_seconds)
@@ -81,7 +94,7 @@ class PiRpcClient:
                     on_heartbeat()
                 continue
             if raw is None:
-                break
+                raise self._eof_error()
             line = raw.decode("utf-8").rstrip("\r\n")
             if not line:
                 continue
@@ -89,6 +102,9 @@ class PiRpcClient:
                 event = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise PiProtocolError("Pi RPC returned invalid JSONL") from exc
+            if capture is not None:
+                capture.drain_provider_requests()
+                capture.on_raw_event(event)
             if on_event is not None:
                 on_event(event)
             if event.get("type") == "text_delta":
@@ -99,6 +115,8 @@ class PiRpcClient:
                     text.append(str(assistant_event.get("delta", "")))
             for payload in _semantic_trace_payloads(event, "".join(text), pending_tool_calls):
                 sequence = self.trace.append("pi_event", payload)
+                if capture is not None:
+                    capture.on_semantic_event(payload, sequence)
                 if on_semantic_event is not None:
                     on_semantic_event(payload, sequence)
             if event.get("type") == "prompt_ack" and event.get("ok") is True:
@@ -125,7 +143,41 @@ class PiRpcClient:
                         return ""
                     raise PiProtocolError("Pi agent ended without answer text")
                 return answer
-        raise PiProtocolError("Pi RPC ended before agent completion")
+
+    def _eof_error(self) -> RuntimeError:
+        process = self.process
+        if process is None:
+            return PiProtocolError("Pi RPC ended before agent completion")
+        returncode = process.poll()
+        if returncode is None:
+            try:
+                returncode = process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                returncode = process.poll()
+        stderr = self._stderr_capture
+        if stderr is not None:
+            stderr.wait(timeout=0.5 if returncode is not None else 0.0)
+            stderr_text = stderr.text()
+        else:
+            stderr_text = ""
+        marker_line = next(
+            (
+                line.strip()[:500]
+                for line in stderr_text.splitlines()
+                if CAPTURE_FATAL_MARKER in line.lower()
+            ),
+            None,
+        )
+        if returncode == CAPTURE_FATAL_EXIT_CODE or marker_line is not None:
+            detail = marker_line or CAPTURE_FATAL_MARKER
+            return CaptureIntegrityError(
+                f"Pi capture-fatal exit {returncode}: {detail}"
+            )
+        if returncode is not None:
+            return PiProtocolError(
+                f"Pi RPC ended before agent completion (exit {returncode})"
+            )
+        return PiProtocolError("Pi RPC ended before agent completion")
 
     def stop(self) -> None:
         if self.process is None:
@@ -139,6 +191,31 @@ class PiRpcClient:
                 self.process.wait(timeout=2)
         self.process = None
         self._stdout_lines = None
+        self._stderr_capture = None
+
+
+class _BoundedStderrCapture:
+    def __init__(self, limit: int = _STDERR_CAPTURE_LIMIT) -> None:
+        self._limit = limit
+        self._buffer = bytearray()
+        self._lock = Lock()
+        self._done = Event()
+
+    def append(self, chunk: bytes) -> None:
+        with self._lock:
+            self._buffer.extend(chunk)
+            if len(self._buffer) > self._limit:
+                del self._buffer[: len(self._buffer) - self._limit]
+
+    def finish(self) -> None:
+        self._done.set()
+
+    def wait(self, timeout: float) -> None:
+        self._done.wait(timeout)
+
+    def text(self) -> str:
+        with self._lock:
+            return bytes(self._buffer).decode("utf-8", errors="replace")
 
 
 def _read_lines(stream: Any, lines: Queue[bytes | None]) -> None:
@@ -147,6 +224,17 @@ def _read_lines(stream: Any, lines: Queue[bytes | None]) -> None:
             lines.put(raw)
     finally:
         lines.put(None)
+
+
+def _drain_stderr(stream: Any, capture: _BoundedStderrCapture) -> None:
+    try:
+        while True:
+            chunk = stream.read(8192)
+            if not chunk:
+                return
+            capture.append(chunk)
+    finally:
+        capture.finish()
 
 
 def _provider_error(event: dict[str, Any]) -> str | None:
@@ -165,7 +253,7 @@ def _skip_trace_event(event: dict[str, Any]) -> bool:
     return event.get("type") not in TRACEABLE_RPC_TYPES
 
 
-def _semantic_trace_payloads(event: dict[str, Any], assembled_public_text: str, pending_tool_calls: list[dict[str, str]]) -> tuple[dict[str, Any], ...]:
+def _semantic_trace_payloads(event: dict[str, Any], assembled_public_text: str, pending_tool_calls: dict[str, dict[str, str]]) -> tuple[dict[str, Any], ...]:
     canonical_tool_result = _canonical_tool_result_event(event, pending_tool_calls)
     if canonical_tool_result is not None:
         return (canonical_tool_result,)
@@ -200,8 +288,9 @@ def _semantic_trace_payloads(event: dict[str, Any], assembled_public_text: str, 
             }.items()
             if isinstance(value, str)
         }
-        if pending:
-            pending_tool_calls.append(pending)
+        tool_call_id = pending.get("tool_call_id")
+        if isinstance(tool_call_id, str):
+            pending_tool_calls[tool_call_id] = pending
         return (start,)
     if event_type == "agent_end":
         payloads = [_canonical_agent_end_event(event, assembled_public_text)]
@@ -244,7 +333,7 @@ def _canonical_agent_end_event(event: dict[str, Any], assembled_public_text: str
     return {"type": "agent_end", "stop_status": stop_status}
 
 
-def _canonical_tool_result_event(event: dict[str, Any], pending_tool_calls: list[dict[str, str]] | None = None) -> dict[str, Any] | None:
+def _canonical_tool_result_event(event: dict[str, Any], pending_tool_calls: dict[str, dict[str, str]] | None = None) -> dict[str, Any] | None:
     if event.get("type") not in {"tool_execution_end", "tool_result"}:
         return None
     details = _tool_result_details(event)
@@ -301,7 +390,7 @@ def _tool_result_details(event: dict[str, Any]) -> object:
     return None
 
 
-def _consume_tool_pair(event: dict[str, Any], pending_tool_calls: list[dict[str, str]] | None) -> dict[str, str]:
+def _consume_tool_pair(event: dict[str, Any], pending_tool_calls: dict[str, dict[str, str]] | None) -> dict[str, str]:
     event_pair = {
         key: value
         for key, value in {
@@ -312,25 +401,13 @@ def _consume_tool_pair(event: dict[str, Any], pending_tool_calls: list[dict[str,
     }
     if pending_tool_calls is None:
         return event_pair
-    pending_index = _matching_pending_tool_index(pending_tool_calls, event_pair)
-    pending_pair = pending_tool_calls.pop(pending_index) if pending_index is not None else {}
-    return {**pending_pair, **event_pair}
-
-
-def _matching_pending_tool_index(pending_tool_calls: list[dict[str, str]], event_pair: dict[str, str]) -> int | None:
     tool_call_id = event_pair.get("tool_call_id")
-    if tool_call_id is not None:
-        for index, pending in enumerate(pending_tool_calls):
-            if pending.get("tool_call_id") == tool_call_id:
-                return index
-    tool_name = event_pair.get("tool_name")
-    if tool_name is not None:
-        for index, pending in enumerate(pending_tool_calls):
-            if pending.get("tool_name") == tool_name:
-                return index
-    if pending_tool_calls:
-        return 0
-    return None
+    pending_pair = (
+        pending_tool_calls.pop(tool_call_id, {})
+        if tool_call_id is not None
+        else {}
+    )
+    return {**pending_pair, **event_pair}
 
 
 def _event_tool_call_id(event: dict[str, Any]) -> str | None:

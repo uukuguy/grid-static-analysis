@@ -1,0 +1,36 @@
+{
+  "name": "@grid-static-analysis/trajectory-workbench",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "check": "tsc -b --pretty false",
+    "build": "tsc -b --pretty false && vite build",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:visual": "playwright test e2e/visual.e2e.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.62.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.4",
+    "jsdom": "^27.0.0",
+    "typescript": "^7.0.2",
+    "vite": "~8.1.5",
+    "vitest": "^4.1.10"
+  }
+}

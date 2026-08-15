@@ -35,6 +35,7 @@ class ToolDocument:
 
 class ToolCatalog:
     def __init__(self, tools: tuple[ToolDocument, ...]) -> None:
+        tools = (*tools, _decision_tool())
         names = [tool.name for tool in tools]
         if len(set(names)) != len(names):
             raise ToolCatalogError("tool names must be unique")
@@ -124,6 +125,34 @@ def _materialize_tool(document: dict[str, object]) -> ToolDocument:
     )
 
 
+def _decision_tool() -> ToolDocument:
+    bounded_text = {"type": "string", "minLength": 1, "maxLength": 500}
+    return ToolDocument(
+        name="grid_record_decision",
+        capability="grid_record_decision",
+        description=(
+            "Declare bounded agent intent and its next action. "
+            "This declaration is agent intent, not simulator truth, and cannot "
+            "create results, facts, or evidence."
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["intent", "decision", "next_action", "refs"],
+            "properties": {
+                "intent": dict(bounded_text),
+                "decision": dict(bounded_text),
+                "next_action": dict(bounded_text),
+                "refs": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "maxItems": 20,
+                },
+            },
+        },
+    )
+
+
 def _validate_document(document: dict[str, object]) -> None:
     required = (
         "id",
@@ -171,7 +200,8 @@ def _validate_document(document: dict[str, object]) -> None:
     if not isinstance(document["purpose"], str) or not document["purpose"].strip():
         raise ToolCatalogError("purpose is required")
     for field in ("applies_to", "not_for", "requires", "produces", "common_next"):
-        if not isinstance(document[field], list) or not all(isinstance(item, str) for item in document[field]):
+        values = document[field]
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
             raise ToolCatalogError(f"{field} must be a list of strings")
     if not isinstance(document["recovery"], dict) or not all(
         isinstance(error, str)

@@ -35,6 +35,7 @@ def test_catalog_filters_to_environment_executable_capabilities(
 
     assert [tool.capability for tool in catalog.tools] == [
         "environment.describe",
+        "grid_record_decision",
         "topology.branch.endpoints.get",
     ]
 
@@ -61,8 +62,27 @@ def test_catalog_materializes_deterministic_sorted_json(
     assert first_payload["fingerprint"].startswith("sha256:")
     assert [tool["name"] for tool in first_payload["tools"]] == [
         "grid_environment_describe",
+        "grid_record_decision",
         "grid_topology_branch_endpoints",
     ]
+
+
+def test_catalog_publishes_bounded_decision_as_agent_intent(
+    capability_documents: tuple[dict[str, object], ...],
+) -> None:
+    catalog = ToolCatalog.from_documents(capability_documents)
+
+    decision = catalog.require("grid_record_decision")
+
+    assert decision.capability == "grid_record_decision"
+    assert "agent intent" in decision.description
+    assert "not simulator truth" in decision.description
+    assert decision.input_schema["properties"]["intent"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500,
+    }
+    assert decision.input_schema["properties"]["refs"]["maxItems"] == 20
 
 
 def test_catalog_rejects_schema_drift() -> None:

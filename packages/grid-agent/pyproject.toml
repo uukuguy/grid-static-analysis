@@ -7,17 +7,23 @@ name = "grid-agent"
 version = "0.2.0"
 requires-python = ">=3.12"
 dependencies = [
+  "fastapi>=0.139,<1",
   "filelock>=3.20,<4",
   "pydantic>=2.12,<3",
   "python-dotenv>=1.2,<2",
   "typer>=0.20,<1",
+  "uvicorn>=0.51,<1",
 ]
 
 [project.scripts]
 grid-agent = "grid_agent.cli.app:main"
 
 [dependency-groups]
-dev = ["pytest>=9,<10", "pytest-cov>=7,<8"]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=9,<10",
+    "pytest-cov>=7,<8",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/grid_agent"]

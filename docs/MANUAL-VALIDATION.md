@@ -19,6 +19,7 @@
 | 主产品/评测路径 | `make run-llm QUESTION="..."` | Pi/LLM 解释自然语言并组合 domain tools；stdout 是单个答案 JSON，stderr 有 Pi 工具轨迹。 |
 | 连续系统仿真分析 | `make analysis [INSTRUCTIONS=...]` | 缺省运行 TASK 指令集；stdout 是单个最终报告 envelope，stderr 有进度与检查点，所有工件位于一个 `runs/<analysis_id>/` 目录。 |
 | 兼容报告入口 | `make report [INSTRUCTIONS=...]` | `make analysis` 的兼容别名；不再启动每题一个子进程。 |
+| 本地轨迹工作台检查 | `make trajectory PORT=8765` | 先构建打包 SPA，再在 `127.0.0.1` 提供 workbench 与固定 GET API；服务日志仅写 stderr。 |
 | 离线冒烟 | `make run QUESTION="..."` | 只验证确定性离线知识/诊断路由；不代替智能体能力验证。 |
 | Pi 安装/认证 | `make install-pi`、`make auth-import-pi`、`make auth-login` | 仅在使用托管 Pi 或 `openai-codex` OAuth 时需要。 |
 | 单元与契约测试 | `make test` | Python agent、pandapower simulator 和 Node tools 全部通过。 |
@@ -27,6 +28,25 @@
 | 付费 provider 抽检 | `make validate-provider PROVIDER=<id> [MODEL=<id>]` | 仅在凭证已配置时运行；报告写入 `runs/validation-provider.json`。 |
 
 `make validate-provider` 可能实际调用计费模型，不能把它当作本地常规检查；缺少对应 provider 凭证时应失败且不得输出密钥。
+
+## 轨迹工作台与 API（只读本机检查）
+
+在一个终端启动服务（它不输出 AnswerEnvelope）：
+
+```sh
+make trajectory PORT=8765
+```
+
+在浏览器打开 `http://127.0.0.1:8765/`，确认工作台 HTML 和 `/assets/app.js` 均正常加载；直接访问一个客户端路由（例如 `http://127.0.0.1:8765/runs/analysis-20260814T081822Z/business`）也应返回 SPA。静态资源不存在时，服务必须在启动前以 `make build-workbench` 提示失败。`/api/not-a-route` 必须仍返回 JSON 404，而不是 SPA。
+
+另开终端检查响应类型、安全头和只读边界：
+
+```sh
+curl -i http://127.0.0.1:8765/api/runs
+curl -i -X POST http://127.0.0.1:8765/api/runs
+```
+
+第一个请求必须包含 CSP、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer` 和 `Cache-Control: no-store`。第二个请求必须返回 `405`；不得出现 CORS 头。使用 `/api/runs/<analysis_id>/artifacts/<artifact_ref>` 时，仅已登记且摘要仍匹配的 JSON、Markdown 或纯文本工件可作为 attachment 返回。用 Ctrl-C 关闭服务。`--host` 只允许 `127.0.0.1`、`::1` 和 `localhost`；公共或局域网绑定应在 uvicorn 启动前失败。
 
 ## 1. 初始化与边界检查
 

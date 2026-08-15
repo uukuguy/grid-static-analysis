@@ -22,6 +22,11 @@ class RuntimePaths:
     system_policy_path: Path
     active_turn_path: Path | None = None
     analysis_context_view_path: Path | None = None
+    trajectory_requests_path: Path | None = None
+    trajectory_capture_state_path: Path | None = None
+    trajectory_allowed_refs_path: Path | None = None
+    provider_id: str | None = None
+    model_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,23 @@ def build_pi_environment(resolved: ResolvedLLM, paths: RuntimePaths, *, base_env
         allowed["GRID_AGENT_ACTIVE_TURN"] = str(paths.active_turn_path)
     if paths.analysis_context_view_path is not None:
         allowed["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"] = str(paths.analysis_context_view_path)
+    native_capture = (
+        paths.trajectory_requests_path,
+        paths.trajectory_capture_state_path,
+        paths.trajectory_allowed_refs_path,
+        paths.provider_id,
+        paths.model_id,
+    )
+    if all(value is not None for value in native_capture):
+        allowed["GRID_AGENT_TRAJECTORY_REQUESTS"] = str(paths.trajectory_requests_path)
+        allowed["GRID_AGENT_TRAJECTORY_CAPTURE_STATE"] = str(
+            paths.trajectory_capture_state_path
+        )
+        allowed["GRID_AGENT_TRAJECTORY_ALLOWED_REFS"] = str(
+            paths.trajectory_allowed_refs_path
+        )
+        allowed["GRID_AGENT_PROVIDER_ID"] = str(paths.provider_id)
+        allowed["GRID_AGENT_MODEL_ID"] = str(paths.model_id)
     if resolved.secret is not None:
         allowed[resolved.config.credential_reference] = resolved.secret.value
         allowed["GRID_AGENT_SECRET_ENV_NAMES"] = resolved.config.credential_reference

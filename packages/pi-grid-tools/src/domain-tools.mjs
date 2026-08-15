@@ -6,6 +6,8 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 
+import { configureTrajectoryCapture } from "./trajectory-capture.mjs";
+
 const CANONICAL_SECRET_NAMES = [
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
@@ -71,13 +73,33 @@ export function createGridTool(contract, runner = runGridctl) {
 
 export default function domainToolsExtension(pi) {
   const paths = runtimePaths(process.env);
+  if (
+    paths.trajectoryRequestsPath !== undefined &&
+    paths.trajectoryCaptureStatePath !== undefined &&
+    paths.trajectoryAllowedRefsPath !== undefined
+  ) {
+    configureTrajectoryCapture(pi, {
+      requestsPath: paths.trajectoryRequestsPath,
+      activeTurnPath: paths.activeTurnPath,
+      captureStatePath: paths.trajectoryCaptureStatePath,
+      allowedRefsPath: paths.trajectoryAllowedRefsPath,
+      providerId: paths.providerId,
+      modelId: paths.modelId,
+    });
+  }
   const catalog = readJsonSync(paths.toolCatalogPath);
   for (const contract of catalog.tools) {
+    if (contract.name === "grid_record_decision") {
+      continue;
+    }
     pi.registerTool(createGridTool(contract, (payload) => runGridctl(payload, paths.workspacePath)));
   }
   pi.registerTool(createGuideTool(paths.guideIndexPath));
   if (paths.analysisContextViewPath !== undefined) {
     pi.registerTool(createAnalysisContextTool(paths.analysisContextViewPath));
+  }
+  if (paths.trajectoryAllowedRefsPath !== undefined && paths.activeTurnPath !== undefined) {
+    pi.registerTool(createRecordDecisionTool(paths.trajectoryAllowedRefsPath, paths.activeTurnPath));
   }
   pi.registerTool(createSubmitAnswerTool(paths.answerDraftPath, paths.activeTurnPath));
 }
@@ -194,6 +216,73 @@ function createAnalysisContextTool(analysisContextViewPath) {
   });
 }
 
+function createRecordDecisionTool(allowedRefsPath, activeTurnPath) {
+  return defineTool({
+    name: "grid_record_decision",
+    label: "grid_record_decision",
+    description: "Declare bounded agent intent. This is not simulator truth and creates no evidence.",
+    parameters: Type.Object(
+      {
+        intent: Type.String({ minLength: 1, maxLength: 500 }),
+        decision: Type.String({ minLength: 1, maxLength: 500 }),
+        next_action: Type.String({ minLength: 1, maxLength: 500 }),
+        refs: Type.Array(Type.String({ minLength: 1 }), { maxItems: 20 }),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_id, params) {
+      const invalid = decisionValidationError(params);
+      if (invalid !== undefined) {
+        return toolError(
+          { code: "invalid_decision", phase: "validate", message: invalid },
+          "grid_record_decision",
+        );
+      }
+      await readActiveTurn(activeTurnPath);
+      let known;
+      try {
+        known = await readAllowedRefs(allowedRefsPath);
+      } catch (error) {
+        return toolError(
+          {
+            code: "decision_state_invalid",
+            phase: "resolve",
+            message: error instanceof Error ? error.message : String(error),
+          },
+          "grid_record_decision",
+        );
+      }
+      if (params.refs.some((reference) => !known.has(reference))) {
+        return toolError(
+          {
+            code: "unknown_decision_ref",
+            phase: "resolve",
+            message: "decision refs must be known in the current run",
+          },
+          "grid_record_decision",
+        );
+      }
+      const result = {
+        intent: params.intent,
+        decision: params.decision,
+        next_action: params.next_action,
+        refs: [...params.refs],
+      };
+      const details = {
+        event: "tool_result",
+        capability: "grid_record_decision",
+        ok: true,
+        result,
+        evidence_refs: [],
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        details,
+      };
+    },
+  });
+}
+
 function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined) {
   return defineTool({
     name: "grid_submit_answer",
@@ -203,14 +292,34 @@ function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined) {
       answer_output: Type.String(),
       result_refs: Type.Array(Type.String()),
       claim_evidence_refs: Type.Array(Type.String()),
+      claims: Type.Array(
+        Type.Object(
+          {
+            statement: Type.String({ minLength: 1, maxLength: 1000 }),
+            category: Type.Union([
+              Type.Literal("topology"),
+              Type.Literal("constraint"),
+              Type.Literal("numerical_result"),
+              Type.Literal("risk_judgment"),
+              Type.Literal("offline_information"),
+            ]),
+            result_refs: Type.Array(Type.String(), { maxItems: 20 }),
+            evidence_refs: Type.Array(Type.String(), { maxItems: 20 }),
+          },
+          { additionalProperties: false },
+        ),
+        { maxItems: 50 },
+      ),
     }),
     async execute(_id, params) {
       const activeTurn = activeTurnPath === undefined ? {} : await readActiveTurn(activeTurnPath);
       const payload = {
         ...activeTurn,
+        submission_id: randomUUID(),
         answer_output: params.answer_output,
         result_refs: params.result_refs,
         claim_evidence_refs: params.claim_evidence_refs,
+        claims: params.claims,
       };
       await writeJsonAtomic(answerDraftPath, payload);
       return {
@@ -227,6 +336,38 @@ function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined) {
   });
 }
 
+function decisionValidationError(params) {
+  for (const name of ["intent", "decision", "next_action"]) {
+    if (
+      typeof params?.[name] !== "string" ||
+      params[name].length < 1 ||
+      params[name].length > 500
+    ) {
+      return `${name} must contain 1 to 500 characters`;
+    }
+  }
+  if (
+    !Array.isArray(params?.refs) ||
+    params.refs.length > 20 ||
+    !params.refs.every((reference) => typeof reference === "string" && reference.length > 0)
+  ) {
+    return "refs must contain at most 20 non-empty strings";
+  }
+  return undefined;
+}
+
+async function readAllowedRefs(path) {
+  const document = await readJson(path);
+  if (
+    !document ||
+    !Array.isArray(document.refs) ||
+    !document.refs.every((reference) => typeof reference === "string" && reference.length > 0)
+  ) {
+    throw new Error("trajectory allowed refs document is invalid");
+  }
+  return new Set(document.refs);
+}
+
 function runtimePaths(env) {
   const workspacePath = requiredExistingRealPath(env, "GRID_AGENT_WORKSPACE");
   const toolCatalogPath = requiredExistingRealPath(env, "GRID_AGENT_TOOL_CATALOG");
@@ -234,18 +375,66 @@ function runtimePaths(env) {
   const answerDraftPath = requiredWritableRealPath(env, "GRID_AGENT_ANSWER_DRAFT");
   const activeTurnPath = optionalWritableRealPath(env, "GRID_AGENT_ACTIVE_TURN");
   const analysisContextViewPath = optionalExistingRealPath(env, "GRID_AGENT_ANALYSIS_CONTEXT_VIEW");
+  const trajectoryRequestsPath = optionalExistingRealPath(env, "GRID_AGENT_TRAJECTORY_REQUESTS");
+  const trajectoryCaptureStatePath = optionalExistingRealPath(
+    env,
+    "GRID_AGENT_TRAJECTORY_CAPTURE_STATE",
+  );
+  const trajectoryAllowedRefsPath = optionalExistingRealPath(
+    env,
+    "GRID_AGENT_TRAJECTORY_ALLOWED_REFS",
+  );
+  const trajectoryPaths = [
+    trajectoryRequestsPath,
+    trajectoryCaptureStatePath,
+    trajectoryAllowedRefsPath,
+  ];
+  const trajectoryConfigured = trajectoryPaths.every((path) => path !== undefined);
+  if (trajectoryPaths.some((path) => path !== undefined) && !trajectoryConfigured) {
+    throw new Error("trajectory capture requires all three trajectory paths");
+  }
+  const providerId = trajectoryConfigured
+    ? requiredString(env, "GRID_AGENT_PROVIDER_ID")
+    : undefined;
+  const modelId = trajectoryConfigured ? requiredString(env, "GRID_AGENT_MODEL_ID") : undefined;
+  if (trajectoryConfigured && activeTurnPath === undefined) {
+    throw new Error("trajectory capture requires GRID_AGENT_ACTIVE_TURN");
+  }
   for (const [name, candidate] of [
     ["GRID_AGENT_TOOL_CATALOG", toolCatalogPath],
     ["GRID_AGENT_GUIDE_INDEX", guideIndexPath],
     ["GRID_AGENT_ANSWER_DRAFT", answerDraftPath],
     ["GRID_AGENT_ACTIVE_TURN", activeTurnPath],
     ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW", analysisContextViewPath],
+    ["GRID_AGENT_TRAJECTORY_REQUESTS", trajectoryRequestsPath],
+    ["GRID_AGENT_TRAJECTORY_CAPTURE_STATE", trajectoryCaptureStatePath],
+    ["GRID_AGENT_TRAJECTORY_ALLOWED_REFS", trajectoryAllowedRefsPath],
   ]) {
     if (candidate !== undefined && !isInside(candidate, workspacePath)) {
       throw new Error(`${name} resolved path ${candidate} is outside GRID_AGENT_WORKSPACE`);
     }
   }
-  return { workspacePath, toolCatalogPath, guideIndexPath, answerDraftPath, activeTurnPath, analysisContextViewPath };
+  return {
+    workspacePath,
+    toolCatalogPath,
+    guideIndexPath,
+    answerDraftPath,
+    activeTurnPath,
+    analysisContextViewPath,
+    trajectoryRequestsPath,
+    trajectoryCaptureStatePath,
+    trajectoryAllowedRefsPath,
+    providerId,
+    modelId,
+  };
+}
+
+function requiredString(env, name) {
+  const value = env[name];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+  return value;
 }
 
 function requiredAbsolutePath(env, name) {

@@ -42,6 +42,13 @@ class AnalysisWorkspace:
     context_snapshot_path: Path
     context_events_path: Path
     trace_path: Path
+    events_path: Path
+    requests_path: Path
+    projections_path: Path
+    agent_projection_path: Path
+    business_projection_path: Path
+    context_timeline_path: Path
+    artifact_index_path: Path
     turns_path: Path
     evidence_path: Path
     results_path: Path
@@ -51,6 +58,7 @@ class AnalysisWorkspace:
     active_turn_path: Path
     active_answer_draft_path: Path
     context_view_path: Path
+    trajectory_capture_state_path: Path
 
     @classmethod
     def create(cls, root: Path, analysis_id: str | None = None) -> AnalysisWorkspace:
@@ -62,6 +70,9 @@ class AnalysisWorkspace:
         output_path = root_path / "output"
         context_path = root_path / "context"
         trace_dir_path = root_path / "trace"
+        events_path = root_path / "events"
+        requests_path = root_path / "requests"
+        projections_path = root_path / "projections"
         turns_path = root_path / "turns"
         evidence_path = root_path / "evidence"
         results_path = evidence_path / "results"
@@ -74,6 +85,9 @@ class AnalysisWorkspace:
             output_path,
             context_path,
             trace_dir_path,
+            events_path,
+            requests_path,
+            projections_path,
             turns_path,
             evidence_path / "contexts",
             evidence_path / "network-facts",
@@ -95,6 +109,13 @@ class AnalysisWorkspace:
             context_snapshot_path=context_path / "analysis-context.json",
             context_events_path=context_path / "context-events.jsonl",
             trace_path=trace_dir_path / "events.jsonl",
+            events_path=events_path / "run-events.jsonl",
+            requests_path=requests_path,
+            projections_path=projections_path,
+            agent_projection_path=projections_path / "agent-trajectory.json",
+            business_projection_path=projections_path / "business-trajectory.json",
+            context_timeline_path=projections_path / "context-timeline.json",
+            artifact_index_path=projections_path / "artifact-index.json",
             turns_path=turns_path,
             evidence_path=evidence_path,
             results_path=results_path,
@@ -104,6 +125,7 @@ class AnalysisWorkspace:
             active_turn_path=root_path / "active-turn.json",
             active_answer_draft_path=root_path / "answer-draft.json",
             context_view_path=context_path / "analysis-context-view.json",
+            trajectory_capture_state_path=context_path / "trajectory-capture-state.json",
         )
 
     def turn_path(self, ordinal: int) -> Path:
