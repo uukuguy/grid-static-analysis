@@ -212,6 +212,28 @@ def test_execution_slice_uses_nested_source_sequences_without_nearest_fallback()
             ),
             {"capability": "grid.analyze", "ok": True},
         ),
+        Event(
+            27,
+            "tool.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-1",
+                request_id="request-1",
+                tool_call_id="48",
+            ),
+            {"capability": "provider_payload.numeric-id"},
+        ),
+        Event(
+            28,
+            "tool.completed",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-1",
+                request_id="request-1",
+                tool_call_id="48",
+            ),
+            {"capability": "provider_payload.numeric-id", "ok": True},
+        ),
         Event(23, "step.started", RunScope(turn_id="turn-1", step_id="step-unrelated")),
         Event(
             24,
@@ -256,6 +278,7 @@ def test_execution_slice_uses_nested_source_sequences_without_nearest_fallback()
 
     linked = execution_slice(projected, 22)
     turn_level = execution_slice(projected, 10)
+    numeric_id_only = execution_slice(projected, 48)
     missing = execution_slice(projected, 19)
 
     assert linked.turn is not None
@@ -268,5 +291,7 @@ def test_execution_slice_uses_nested_source_sequences_without_nearest_fallback()
     assert turn_level.turn is not None
     assert turn_level.turn.turn_id == "turn-1"
     assert turn_level.turn.steps == ()
+    assert numeric_id_only.turn is None
+    assert numeric_id_only.unavailable_reason == "no durable execution linkage is recorded"
     assert missing.turn is None
     assert missing.unavailable_reason == "no durable execution linkage is recorded"

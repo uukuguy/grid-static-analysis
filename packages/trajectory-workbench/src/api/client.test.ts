@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ExecutionSlice } from './types';
 import { ApiError, TrajectoryApiClient } from './client';
 
 describe('TrajectoryApiClient', () => {
@@ -57,5 +58,32 @@ describe('TrajectoryApiClient', () => {
         signal: controller.signal,
       }),
     );
+  });
+
+  it('accepts execution turns without the paged agent source_sequence scalar', async () => {
+    const responseBody: ExecutionSlice = {
+      analysis_id: 'analysis-test',
+      source_sequence: 48,
+      unavailable_reason: null,
+      turn: {
+        id: 'agent:analysis-test:t007',
+        source: 'observed',
+        source_sequences: [45],
+        rule_id: null,
+        status: 'completed',
+        unavailable_reason: null,
+        turn_id: 'analysis-test-t007',
+        ordinal: 7,
+        steps: [],
+      },
+    };
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(responseBody), { status: 200 }));
+    const client = new TrajectoryApiClient(fetcher);
+
+    const slice = await client.getExecutionSlice('analysis-test', 48);
+
+    expect(slice.turn?.turn_id).toBe('analysis-test-t007');
+    expect(slice.turn?.source_sequences).toEqual([45]);
+    expect(slice.turn?.source_sequence).toBeUndefined();
   });
 });

@@ -76,10 +76,15 @@ export interface AgentTurn extends ProjectionNode {
   steps: AgentStep[];
 }
 
+export type ExecutionAgentTurn = Omit<AgentTurn, 'source_sequence'> & {
+  /** Present on paged agent responses; absent on the backend execution-slice contract. */
+  source_sequence?: number;
+};
+
 export interface ExecutionSlice {
   analysis_id: string;
   source_sequence: number;
-  turn: AgentTurn | null;
+  turn: ExecutionAgentTurn | null;
   unavailable_reason: string | null;
 }
 

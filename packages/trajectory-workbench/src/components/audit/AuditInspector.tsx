@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from 'react';
 import { useState } from 'react';
-import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, ExecutionSlice, JsonValue, ModelRequest, ProjectionNode, ToolCall } from '../../api/types';
+import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, ExecutionAgentTurn, ExecutionSlice, JsonValue, ModelRequest, ProjectionNode, ToolCall } from '../../api/types';
 import type { AuditInspectorModel, AuditPanel } from '../../audit/inspector-model';
 import { AsyncState, type AsyncStateName } from '../common/AsyncState';
 import { SourceBadge } from '../common/SourceBadge';
@@ -209,11 +209,11 @@ function ExecutionPanel({ model, executionSlice }: { model: AuditInspectorModel;
   </div>;
 }
 
-function sourceSequence(turn: AgentTurn) {
+function sourceSequence(turn: AgentTurn | ExecutionAgentTurn) {
   return turn.source_sequence ?? Math.max(...turn.source_sequences);
 }
 
-function scopeTurn(turn: AgentTurn, sequence: number): AgentTurn | null {
+function scopeTurn(turn: ExecutionAgentTurn, sequence: number): ExecutionAgentTurn | null {
   const steps = turn.steps
     .map((step) => scopeStepForSequence(step, sequence))
     .filter((step): step is AgentStep => Boolean(step));
@@ -236,7 +236,7 @@ function scopeRequestForSequence(request: ModelRequest, sequence: number): Model
 }
 
 function nodeMatchesSequence(node: ProjectionNode, sequence: number) {
-  return node.source_sequences.includes(sequence) || node.id.split(':').includes(String(sequence));
+  return node.source_sequences.includes(sequence);
 }
 
 function StepCard({ step }: { step: AgentStep }) {

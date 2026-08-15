@@ -416,4 +416,4 @@ def _scope_request(request: ModelRequest, sequence: int) -> ModelRequest | None:
 
 
 def _node_matches_sequence(node: ProjectionNode, sequence: int) -> bool:
-    return sequence in node.source_sequences or str(sequence) in node.id.split(":")
+    return sequence in node.source_sequences

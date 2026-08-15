@@ -254,7 +254,14 @@ describe('AuditInspector', () => {
       source_sequence: 61,
       unavailable_reason: null,
       turn: {
-        ...turn,
+        id: 'agent-turn:7',
+        source: 'observed',
+        source_sequences: [45, 61],
+        rule_id: null,
+        status: 'completed',
+        unavailable_reason: null,
+        turn_id: 'turn-7',
+        ordinal: 7,
         steps: [
           {
             id: 'step:related',
@@ -305,15 +312,30 @@ describe('AuditInspector', () => {
                   duration_seconds: 1.25,
                 },
                 {
-                  id: 'tool:unrelated',
+                  id: 'tool:61',
                   source: 'observed',
                   source_sequences: [62],
                   rule_id: null,
                   status: 'completed',
                   unavailable_reason: null,
+                  tool_call_id: '61',
+                  capability: 'provider_payload.numeric-id',
+                  start_sequence: 62,
+                  end_sequence: null,
+                  artifact_ref: '/private/turns/provider_payload.json',
+                  ok: true,
+                  duration_seconds: 0.1,
+                },
+                {
+                  id: 'tool:unrelated',
+                  source: 'observed',
+                  source_sequences: [63],
+                  rule_id: null,
+                  status: 'completed',
+                  unavailable_reason: null,
                   tool_call_id: 'tool-unrelated',
                   capability: 'provider_payload.unrelated',
-                  start_sequence: 62,
+                  start_sequence: 63,
                   end_sequence: null,
                   artifact_ref: '/private/turns/provider_payload.json',
                   ok: true,
@@ -325,7 +347,7 @@ describe('AuditInspector', () => {
           {
             id: 'step:unrelated',
             source: 'observed',
-            source_sequences: [63],
+            source_sequences: [64],
             rule_id: null,
             status: 'completed',
             unavailable_reason: null,
@@ -333,7 +355,7 @@ describe('AuditInspector', () => {
             request: {
               id: 'request:unrelated',
               source: 'observed',
-              source_sequences: [64],
+              source_sequences: [65],
               rule_id: null,
               status: 'completed',
               unavailable_reason: null,
@@ -353,6 +375,7 @@ describe('AuditInspector', () => {
 
     expect(screen.getByText('request-related')).toBeVisible();
     expect(screen.getByText('grid.analyze')).toBeVisible();
+    expect(screen.queryByText('provider_payload.numeric-id')).not.toBeInTheDocument();
     expect(screen.queryByText('request-unrelated')).not.toBeInTheDocument();
     expect(screen.queryByText('provider_payload.unrelated')).not.toBeInTheDocument();
     expect(screen.queryByText('/private/turns/provider_payload.json')).not.toBeInTheDocument();
