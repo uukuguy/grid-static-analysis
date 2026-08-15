@@ -149,7 +149,6 @@ export function AgentView({
   const activate = (row: AgentEventRow) => {
     setActivatedId(row.id);
     onSelectNode(row.id);
-    if (sequenceNavigableKinds.has(row.kind)) onSelectSequence(row.source_sequence);
   };
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, row: AgentEventRow) => {
     const index = visible.findIndex((item) => item.row.id === row.id);
@@ -203,8 +202,10 @@ export function AgentView({
       </div>
     </header>
     <p className="agent-filter-summary" aria-live="polite">{rows.length} loaded events{rows.length > 0 ? ` · sequences ${Math.min(...rows.map((row) => row.source_sequence))}–${Math.max(...rows.map((row) => row.source_sequence))}` : ''}</p>
-    {activated && sequenceNavigableKinds.has(activated.kind) && !hasBusinessRelation
-      ? <p className="agent-relation-status" role="status">No recorded Business relationship exists at sequence {activated.source_sequence}.</p>
+    {activated && sequenceNavigableKinds.has(activated.kind)
+      ? hasBusinessRelation
+        ? <p className="agent-relation-status" role="status">Recorded Business relationship at sequence {activated.source_sequence}. <button type="button" onClick={() => onSelectSequence(activated.source_sequence)}>Go to recorded Business sequence {activated.source_sequence}</button></p>
+        : <p className="agent-relation-status" role="status">No recorded Business relationship exists at sequence {activated.source_sequence}.</p>
       : null}
     <div ref={(element) => { parentRef.current = element; setScrollElement(element); }} className="agent-virtual-scroll">
       <AgentPagination hasOlder={hasOlder} state={olderState} error={olderError} onLoad={onLoadOlder} onRetry={onRetryOlder} />
@@ -244,7 +245,9 @@ export function AgentView({
                 <span><strong>{row.title}</strong>{!sequenceNavigableKinds.has(row.kind) ? <small>{row.kind} · {row.turn_id} · {row.source}</small> : null}{row.kind === 'retry' && row.detail ? <small>{row.detail}</small> : null}{!item.parentPresent && row.parent_id ? <small className="truncated-parent">Parent {row.parent_id} is outside loaded history.</small> : null}</span>
               </span>
               <span role="gridcell" className={`agent-event-status status-${row.status}`}>{row.status}</span>
-              <span role="gridcell" className="agent-event-sequence">Sequence {row.source_sequence}</span>
+              <span role="gridcell" className="agent-event-sequence">{row.kind === 'tool' && row.start_sequence !== null
+                ? <>Lifecycle {row.start_sequence}{row.end_sequence === null ? ' · still open' : `–${row.end_sequence}`} · relation sequence {row.source_sequence}</>
+                : <>Sequence {row.source_sequence}</>}</span>
             </div>;
           })}
         </div>

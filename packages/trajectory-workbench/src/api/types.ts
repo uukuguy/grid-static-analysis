@@ -88,8 +88,12 @@ export interface AgentEventRow {
   kind: AgentEventKind;
   level: number;
   source_sequence: number;
+  start_sequence: number | null;
+  end_sequence: number | null;
+  related_refs: string[];
   source: NodeSource;
   status: LifecycleStatus;
+  unavailable_reason: string | null;
   title: string;
   detail: string | null;
 }
@@ -165,6 +169,8 @@ interface ContextFrameBase extends ProjectionNode {
   delta: ContextDelta;
   after_state: ContextState;
   max_sequence: number;
+  request_input_available: boolean;
+  request_input_unavailable_reason: string | null;
 }
 
 /** A native frame has the immutable request input captured by the backend. */
@@ -188,6 +194,7 @@ export interface ContextFrameSummary {
   after_revision: number;
   changed: boolean;
   request_input_available: boolean;
+  request_input_unavailable_reason: string | null;
   event_kind: string;
 }
 

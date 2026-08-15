@@ -11,7 +11,11 @@ function row(overrides: Partial<AgentEventRow> & Pick<AgentEventRow, 'id' | 'kin
     turn_id: turnId,
     source: 'observed',
     status: 'completed',
+    unavailable_reason: null,
     detail: null,
+    start_sequence: null,
+    end_sequence: null,
+    related_refs: [],
     ...overrides,
   };
 }
@@ -91,7 +95,7 @@ describe('AgentView', () => {
     expect(onRetryOlder).toHaveBeenCalledTimes(1);
   });
 
-  it('selects a tool and navigates only its recorded source sequence', () => {
+  it('selects a tool without replacing its identity with a sequence node', () => {
     const onSelectNode = vi.fn();
     const onSelectSequence = vi.fn();
     render(<AgentView {...defaults} rows={hierarchy} onSelectNode={onSelectNode} onSelectSequence={onSelectSequence} />);
@@ -99,8 +103,35 @@ describe('AgentView', () => {
     fireEvent.click(screen.getByRole('row', { name: /analysis.contingency.*completed.*sequence 74/i }));
 
     expect(onSelectNode).toHaveBeenCalledWith('tool:7');
-    expect(onSelectSequence).toHaveBeenCalledWith(74);
+    expect(onSelectSequence).not.toHaveBeenCalled();
     expect(screen.getByRole('status')).toHaveTextContent('No recorded Business relationship exists at sequence 74.');
+  });
+
+  it('offers only the recorded tool completion relation for Business navigation', () => {
+    const onSelectSequence = vi.fn();
+    const completedTool = row({
+      id: 'tool:recorded-relation',
+      parent_id: 'request:7',
+      kind: 'tool',
+      level: 4,
+      source_sequence: 49,
+      start_sequence: 48,
+      end_sequence: 49,
+      title: 'analysis.powerflow.ac.run',
+    });
+    render(<AgentView
+      {...defaults}
+      rows={[completedTool]}
+      businessSequences={[48, 49]}
+      onSelectSequence={onSelectSequence}
+    />);
+
+    fireEvent.click(screen.getByRole('row', { name: /analysis.powerflow.ac.run/i }));
+    expect(onSelectSequence).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to recorded Business sequence 49' }));
+    expect(onSelectSequence).toHaveBeenCalledWith(49);
+    expect(onSelectSequence).not.toHaveBeenCalledWith(48);
   });
 
   it('supports roving treegrid focus, expansion, and activation keys', () => {

@@ -86,15 +86,20 @@ function agentRow(
   sequence: number,
   overrides: Partial<AgentEventRow> = {},
 ): AgentEventRow {
+  const kind = overrides.kind ?? 'tool';
   return {
     id,
     parent_id: 'request:7',
     turn_id: 'analysis-test-t007',
-    kind: 'tool',
+    kind,
     level: 4,
     source_sequence: sequence,
+    start_sequence: kind === 'tool' ? sequence : null,
+    end_sequence: kind === 'tool' ? sequence : null,
+    related_refs: [],
     source: 'observed',
     status: 'completed',
+    unavailable_reason: null,
     title: 'gridctl',
     detail: null,
     ...overrides,
@@ -135,7 +140,7 @@ const contextFrame = {
   id: 'context:100000', source: 'observed', source_sequences: [100_000], rule_id: null, status: 'completed', unavailable_reason: null,
   source_sequence: 100_000, before_revision: 59, after_revision: 78, before_state_hash: 'before', after_state_hash: 'after',
   before_state: { scenario: 'base', limits: { x: 1 } }, delta: { scenario: 'line-17-out', mode: 'n1' }, after_state: { scenario: 'line-17-out', limits: { x: 2 }, mode: 'n1' },
-  max_sequence: 100_000, request_artifact_ref: 'artifact:request-input',
+  max_sequence: 100_000, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request-input',
 };
 
 function contextFrameAt(sequence: number) {
@@ -182,6 +187,7 @@ const contextPage = {
     after_revision: frame.after_revision,
     changed: true,
     request_input_available: true,
+    request_input_unavailable_reason: null,
     event_kind: frame.source_sequence === 99_999 ? 'tool-result' : 'model-request',
   })),
   older_cursor: null, newer_cursor: null,

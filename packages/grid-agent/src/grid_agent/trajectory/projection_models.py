@@ -139,10 +139,29 @@ class AgentEventRow(StrictFrozenModel):
     kind: str = Field(min_length=1, max_length=50)
     level: int = Field(ge=1)
     source_sequence: int = Field(ge=1)
+    start_sequence: int | None = Field(default=None, ge=1)
+    end_sequence: int | None = Field(default=None, ge=1)
+    related_refs: tuple[str, ...] = ()
     source: NodeSource
     status: LifecycleStatus
+    unavailable_reason: str | None = None
     title: str = Field(min_length=1, max_length=500)
     detail: str | None = Field(default=None, max_length=1_000)
+
+    @model_validator(mode="after")
+    def require_exact_tool_lifecycle_relation(self) -> "AgentEventRow":
+        if self.kind != "tool":
+            if self.start_sequence is not None or self.end_sequence is not None:
+                raise ValueError("only tool rows may expose lifecycle sequence fields")
+            return self
+        if self.start_sequence is None:
+            raise ValueError("tool row requires start_sequence")
+        if self.end_sequence is not None and self.end_sequence < self.start_sequence:
+            raise ValueError("tool row end_sequence must not precede start_sequence")
+        relation_sequence = self.end_sequence or self.start_sequence
+        if self.source_sequence != relation_sequence:
+            raise ValueError("tool row source_sequence must be its recorded lifecycle relation")
+        return self
 
 
 class ExecutionLineage(StrictFrozenModel):
@@ -308,7 +327,16 @@ class ContextFrameSummary(StrictFrozenModel):
     after_revision: int = Field(ge=0)
     changed: bool
     request_input_available: bool
+    request_input_unavailable_reason: str | None = None
     event_kind: str = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def require_request_input_availability_reason(self) -> "ContextFrameSummary":
+        if self.request_input_available and self.request_input_unavailable_reason is not None:
+            raise ValueError("available request input must not have an unavailable reason")
+        if not self.request_input_available and not self.request_input_unavailable_reason:
+            raise ValueError("unavailable request input requires a reason")
+        return self
 
 
 class ArtifactIndexRecord(ProjectionNode):

@@ -44,6 +44,7 @@ const turn: AgentTurn = {
 const selection: AuditSelection = {
   problem,
   node: problem.nodes[0],
+  agentRow: null,
   sequence: 61,
   turnId: 'turn-7',
   artifactRefs: ['evidence:line-17', 'result:pf-17'],
@@ -66,6 +67,8 @@ const matchingContext: ContextFrame = {
   delta: { selected: 'line-17' },
   after_state: { phase: 'after' },
   max_sequence: 99,
+  request_input_available: true,
+  request_input_unavailable_reason: null,
   request_artifact_ref: 'request:turn-7',
 };
 

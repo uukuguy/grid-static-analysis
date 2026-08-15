@@ -26,6 +26,7 @@ from grid_agent.trajectory.projection_models import (
     AgentTurn,
     ArtifactIndexRecord,
     AssistantResponse,
+    ContextFrame,
     ContextFrameSummary,
     LifecycleStatus,
     ModelRequest,
@@ -82,6 +83,10 @@ _PUBLIC_TOOL_CAPABILITIES = frozenset(
 )
 _UNAVAILABLE_ARTIFACT_PATH = "unavailable"
 _UNSAFE_ARTIFACT_PATH_REASON = "artifact path is unsafe for public display"
+_UNREGISTERED_REQUEST_INPUT_REASON = (
+    "model request input artifact is not registered in the artifact index"
+)
+_UNVERIFIED_REQUEST_INPUT_REASON = "model request input artifact is not verified"
 
 
 class ProjectionPageResponse(StrictFrozenModel):
@@ -311,20 +316,25 @@ def _agent_candidates(projected: ProjectedRun) -> tuple[_AgentCandidate, ...]:
             request = step.request
             if request is None:
                 continue
-            candidates.append(_AgentCandidate(_request_row(turn, step, request)))
+            candidates.append(
+                _AgentCandidate(_request_row(projected, turn, step, request))
+            )
             candidates.extend(
                 _AgentCandidate(_retry_row(turn, request, retry))
                 for retry in request.retries
             )
             candidates.extend(
                 _AgentCandidate(
-                    _tool_row(turn, request, tool), capability=tool.capability
+                    _tool_row(projected, turn, request, tool),
+                    capability=tool.capability,
                 )
                 for tool in request.tools
             )
             if request.response is not None:
                 candidates.append(
-                    _AgentCandidate(_response_row(turn, request, request.response))
+                    _AgentCandidate(
+                        _response_row(projected, turn, request, request.response)
+                    )
                 )
     return tuple(
         sorted(
@@ -351,7 +361,10 @@ def _step_row(turn: AgentTurn, step: AgentStep) -> AgentEventRow:
 
 
 def _request_row(
-    turn: AgentTurn, step: AgentStep, request: ModelRequest
+    projected: ProjectedRun,
+    turn: AgentTurn,
+    step: AgentStep,
+    request: ModelRequest,
 ) -> AgentEventRow:
     return _agent_row(
         request,
@@ -360,6 +373,7 @@ def _request_row(
         "request",
         3,
         f"Request {request.request_id}",
+        related_refs=_registered_refs(projected, (request.artifact_ref,)),
     )
 
 
@@ -383,7 +397,10 @@ def _retry_row(
 
 
 def _response_row(
-    turn: AgentTurn, request: ModelRequest, response: AssistantResponse
+    projected: ProjectedRun,
+    turn: AgentTurn,
+    request: ModelRequest,
+    response: AssistantResponse,
 ) -> AgentEventRow:
     facts: list[str] = []
     if response.input_tokens is not None:
@@ -400,11 +417,15 @@ def _response_row(
         4,
         "Assistant response",
         detail=" · ".join(facts) or None,
+        related_refs=_registered_refs(projected, (response.artifact_ref,)),
     )
 
 
 def _tool_row(
-    turn: AgentTurn, request: ModelRequest, tool: ToolCall
+    projected: ProjectedRun,
+    turn: AgentTurn,
+    request: ModelRequest,
+    tool: ToolCall,
 ) -> AgentEventRow:
     return _agent_row(
         tool,
@@ -416,6 +437,13 @@ def _tool_row(
             _bounded_public_text(tool.capability, fallback="Tool")
             if tool.capability in _PUBLIC_TOOL_CAPABILITIES
             else "Tool"
+        ),
+        source_sequence=tool.end_sequence or tool.start_sequence,
+        start_sequence=tool.start_sequence,
+        end_sequence=tool.end_sequence,
+        related_refs=_registered_refs(
+            projected,
+            (tool.artifact_ref, *tool.result_refs, *tool.evidence_refs),
         ),
     )
 
@@ -429,6 +457,10 @@ def _agent_row(
     title: str,
     *,
     detail: str | None = None,
+    source_sequence: int | None = None,
+    start_sequence: int | None = None,
+    end_sequence: int | None = None,
+    related_refs: tuple[str, ...] = (),
 ) -> AgentEventRow:
     return AgentEventRow(
         id=node.id,
@@ -436,9 +468,13 @@ def _agent_row(
         turn_id=turn_id,
         kind=kind,
         level=level,
-        source_sequence=min(node.source_sequences),
+        source_sequence=source_sequence or min(node.source_sequences),
+        start_sequence=start_sequence,
+        end_sequence=end_sequence,
+        related_refs=related_refs,
         source=node.source,
         status=node.status,
+        unavailable_reason=node.unavailable_reason,
         title=_bounded_public_text(title, fallback=kind.title()),
         detail=(
             _bounded_public_text(detail, fallback="", maximum=1_000)
@@ -446,6 +482,19 @@ def _agent_row(
             else None
         ),
     )
+
+
+def _registered_refs(
+    projected: ProjectedRun, references: tuple[str | None, ...]
+) -> tuple[str, ...]:
+    registered: list[str] = []
+    for reference in references:
+        if reference is None or reference in registered:
+            continue
+        record = projected.artifacts.records.get(reference)
+        if record is not None and record.reference == reference:
+            registered.append(reference)
+    return tuple(registered)
 
 
 def _bounded_public_text(
@@ -490,6 +539,9 @@ def _context_records(
     projected: ProjectedRun,
     filters: Mapping[str, str | int | bool],
 ) -> tuple[_ProjectionRecord, ...]:
+    public_frames = tuple(
+        public_context_frame(projected, frame) for frame in projected.context.frames
+    )
     summaries = tuple(
         summary
         for summary in (
@@ -500,9 +552,14 @@ def _context_records(
                 after_revision=frame.after_revision,
                 changed=frame.before_state_hash != frame.after_state_hash,
                 request_input_available=frame.request_artifact_ref is not None,
+                request_input_unavailable_reason=(
+                    None
+                    if frame.request_artifact_ref is not None
+                    else frame.unavailable_reason
+                ),
                 event_kind="context-frame",
             )
-            for frame in projected.context.frames
+            for frame in public_frames
         )
         if _context_matches(summary, filters)
     )
@@ -539,6 +596,37 @@ def _context_matches(
     ):
         return False
     return True
+
+
+def public_context_frame(
+    projected: ProjectedRun, frame: ContextFrame
+) -> ContextFrame:
+    """Expose a request input ref only when its artifact record is verified."""
+    reference = frame.request_artifact_ref
+    if reference is None:
+        if frame.unavailable_reason:
+            return frame
+        return frame.model_copy(
+            update={"unavailable_reason": _UNREGISTERED_REQUEST_INPUT_REASON}
+        )
+
+    record = projected.artifacts.records.get(reference)
+    if record is None or record.reference != reference:
+        reason = _UNREGISTERED_REQUEST_INPUT_REASON
+    else:
+        public_record = _public_evidence_record(record)
+        if (
+            public_record.verification_status == "verified"
+            and public_record.status != "unavailable"
+        ):
+            return frame
+        reason = public_record.unavailable_reason or _UNVERIFIED_REQUEST_INPUT_REASON
+    return frame.model_copy(
+        update={
+            "request_artifact_ref": None,
+            "unavailable_reason": reason,
+        }
+    )
 
 
 def _evidence_records(
@@ -649,4 +737,4 @@ def _evidence_sort_key(
     return (effective_sequence, record.reference)
 
 
-__all__ = ["ProjectionPageResponse", "projection_page"]
+__all__ = ["ProjectionPageResponse", "projection_page", "public_context_frame"]

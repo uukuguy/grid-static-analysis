@@ -8,10 +8,10 @@ const requestArtifact = 'artifact:request:7.2';
 
 const nativeFrame: ContextFrame = {
   id: 'context:78', source: 'observed', source_sequences: [78], rule_id: null, status: 'completed', unavailable_reason: null,
-  source_sequence: 78, before_revision: 77, after_revision: 78, before_state_hash: 'before', after_state_hash: 'after', before_state: { revision: 77 }, delta: { added: 'result' }, after_state: { revision: 78 }, max_sequence: 90, request_artifact_ref: requestArtifact,
+  source_sequence: 78, before_revision: 77, after_revision: 78, before_state_hash: 'before', after_state_hash: 'after', before_state: { revision: 77 }, delta: { added: 'result' }, after_state: { revision: 78 }, max_sequence: 90, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: requestArtifact,
 };
 
-const legacyFrame: ContextFrame = { ...nativeFrame, request_artifact_ref: null, unavailable_reason: 'Legacy source did not capture model request input' };
+const legacyFrame: ContextFrame = { ...nativeFrame, request_artifact_ref: null, unavailable_reason: 'Legacy source did not capture model request input', request_input_available: false, request_input_unavailable_reason: 'Legacy source did not capture model request input' };
 
 const verifiedEvidence: EvidenceRecord = { id: 'artifact:analysis-test:evidence:q7', source: 'observed', source_sequences: [75], rule_id: null, status: 'completed', unavailable_reason: null, reference: 'evidence:q7', kind: 'evidence', relative_path: 'evidence/analysis/q7.json', sha256: 'a'.repeat(64), verification_status: 'verified', producing_sequence: 75, consuming_sequences: [80], turn_id: null, step_id: null, request_id: null, tool_call_id: null, result_id: null, evidence_id: null, claim_id: null };
 

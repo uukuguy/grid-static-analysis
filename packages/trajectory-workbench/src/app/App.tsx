@@ -262,7 +262,7 @@ export function App({ client = api }: { client?: AppClient }) {
     return () => controller.abort();
   }, [client, pageAttempts.agent, state.activeView, state.pageFilters.agent, state.selectedRunId]);
 
-  const auditSelection = resolveAuditSelection(problems, agentTurns, state.selectedNodeId);
+  const auditSelection = resolveAuditSelection(problems, agentTurns, state.selectedNodeId, agentRows);
   const auditSequence = auditSelection?.sequence ?? null;
   const focusedProblem = problems.find((problem) => problem.id === state.focusedProblemId) ?? null;
   const selectedRun = runs.find((run) => run.analysis_id === state.selectedRunId) ?? null;

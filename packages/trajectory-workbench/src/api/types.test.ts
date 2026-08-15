@@ -18,6 +18,8 @@ describe('ContextFrame API contract', () => {
       before_state: { domain_state: { calculations: ['result:1'] } },
       delta: { domain_state: { calculations: { added: ['result:2'] } } },
       after_state: { domain_state: { calculations: ['result:1', 'result:2'] } },
+      request_input_available: true,
+      request_input_unavailable_reason: null,
       request_artifact_ref: 'artifact:request:13',
       max_sequence: 13,
     };
@@ -25,6 +27,8 @@ describe('ContextFrame API contract', () => {
       ...native,
       request_artifact_ref: null,
       unavailable_reason: 'legacy source did not capture model request input',
+      request_input_available: false,
+      request_input_unavailable_reason: 'legacy source did not capture model request input',
     };
 
     expectTypeOf(native.before_state).toEqualTypeOf<ContextState>();

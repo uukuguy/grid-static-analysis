@@ -119,8 +119,12 @@ function agentEventRow(
     kind: 'tool',
     level: 4,
     source_sequence: sequence,
+    start_sequence: null,
+    end_sequence: null,
+    related_refs: [],
     source: 'observed',
     status: 'completed',
+    unavailable_reason: null,
     title: `Tool ${sequence}`,
     detail: null,
     ...overrides,
@@ -349,10 +353,72 @@ describe('App shell', () => {
     }, expect.any(AbortSignal));
   });
 
+  it('keeps a flat Agent row selected while loading only its recorded relations', async () => {
+    const reference = 'evidence:tool-7';
+    const selectedRow = agentEventRow('agent:analysis-test:tool-7', 49, {
+      parent_id: 'agent:analysis-test:request-7',
+      start_sequence: 48,
+      end_sequence: 49,
+      related_refs: [reference],
+      title: 'analysis.powerflow.ac.run',
+    });
+    const relatedProblem: BusinessProblem = {
+      ...problems[0],
+      source_sequences: [49],
+      source_sequence: 49,
+      nodes: [{
+        ...problems[0].nodes[0],
+        id: 'business:sequence-49',
+        source_sequences: [49],
+        source_sequence: 49,
+        refs: [],
+      }],
+    };
+    const getAgentPage = vi.fn(async () => agentProjectionPage([selectedRow]));
+    const getContextFrame = vi.fn(async (_runId: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: 'No verified request input was recorded.', source_sequence: sequence,
+      before_revision: 8, after_revision: 9, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78,
+      request_input_available: false, request_input_unavailable_reason: 'No verified request input was recorded.', request_artifact_ref: null,
+    }));
+    const getExecutionSlice = vi.fn(async (_runId: string, sequence: number): Promise<ExecutionSlice> => ({
+      analysis_id: 'analysis-test', source_sequence: sequence, turn: null, lineage: null,
+      unavailable_reason: 'no durable execution linkage is recorded',
+    }));
+    const getEvidencePage = vi.fn(async (): Promise<ProjectionPage<EvidenceRecord>> => ({
+      analysis_id: 'analysis-test', items: [evidenceRecord(reference, 49)], older_cursor: null,
+      newer_cursor: null, first_sequence: 49, last_sequence: 49, has_older: false, encoded_bytes: 100,
+    }));
+    render(<App client={{
+      listRuns: async () => run,
+      getBusinessPage: async () => businessProjectionPage([relatedProblem]),
+      getAgentPage,
+      getContextFrame,
+      getExecutionSlice,
+      getEvidencePage,
+      artifactUrl: (_runId, ref) => `/artifact/${ref}`,
+    }} />);
+
+    fireEvent.click(viewTab('Agent'));
+    fireEvent.click(await screen.findByRole('row', { name: /analysis.powerflow.ac.run.*sequence 49/i }));
+
+    const inspector = screen.getByRole('complementary', { name: 'Trajectory inspector' });
+    expect(new URLSearchParams(window.location.search).get('node')).toBe(selectedRow.id);
+    expect(within(inspector).getByText(selectedRow.id)).toBeVisible();
+    expect(within(inspector).getByText('analysis.powerflow.ac.run')).toBeVisible();
+    expect(within(inspector).queryByText('business:sequence-49')).not.toBeInTheDocument();
+    await waitFor(() => expect(getContextFrame).toHaveBeenCalledWith('analysis-test', 49, expect.any(AbortSignal)));
+    await waitFor(() => expect(getExecutionSlice).toHaveBeenCalledWith('analysis-test', 49, expect.any(AbortSignal)));
+    await waitFor(() => expect(getEvidencePage).toHaveBeenCalledWith('analysis-test', {
+      filters: { relevant_ref: reference },
+    }, expect.any(AbortSignal)));
+  });
+
   it('pages Context summaries and fetches exact detail only after selecting a frame', async () => {
     const summaries: ContextFrameSummary[] = [{
       id: 'context:42', source_sequence: 42, before_revision: 8, after_revision: 9,
-      changed: true, request_input_available: true, event_kind: 'tool-result',
+      changed: true, request_input_available: true, request_input_unavailable_reason: null, event_kind: 'tool-result',
     }];
     const getContextPage = vi.fn(async (): Promise<ProjectionPage<ContextFrameSummary>> => ({
       analysis_id: 'analysis-test', items: summaries, older_cursor: null, newer_cursor: null,
@@ -363,7 +429,7 @@ describe('App shell', () => {
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: 8, after_revision: 9, before_state_hash: 'before', after_state_hash: 'after',
       before_state: { revision: 8 }, delta: { revision: 9 }, after_state: { revision: 9 },
-      max_sequence: 78, request_artifact_ref: 'artifact:request',
+      max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
     render(<App client={{ ...fixtureClient(), getContextPage, getContextFrame }} />);
 
@@ -379,7 +445,7 @@ describe('App shell', () => {
   it('ignores an exact Context detail that resolves after its summary filters change', async () => {
     const summary: ContextFrameSummary = {
       id: 'context:42', source_sequence: 42, before_revision: 8, after_revision: 9,
-      changed: true, request_input_available: true, event_kind: 'tool-result',
+      changed: true, request_input_available: true, request_input_unavailable_reason: null, event_kind: 'tool-result',
     };
     const getContextPage = vi.fn(async (): Promise<ProjectionPage<ContextFrameSummary>> => ({
       analysis_id: 'analysis-test', items: [summary], older_cursor: null, newer_cursor: null,
@@ -406,7 +472,7 @@ describe('App shell', () => {
       status: 'completed', unavailable_reason: null, source_sequence: 42,
       before_revision: 8, after_revision: 9, before_state_hash: 'before', after_state_hash: 'after',
       before_state: { filter: 'old' }, delta: {}, after_state: { filter: 'old' },
-      max_sequence: 78, request_artifact_ref: 'artifact:request',
+      max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
 
     expect(screen.queryByRole('heading', { name: 'Authoritative state at sequence 42' })).not.toBeInTheDocument();
@@ -418,7 +484,7 @@ describe('App shell', () => {
     let olderAttempts = 0;
     const summary = (sequence: number): ContextFrameSummary => ({
       id: `context:${sequence}`, source_sequence: sequence, before_revision: sequence - 1,
-      after_revision: sequence, changed: true, request_input_available: true, event_kind: 'context-frame',
+      after_revision: sequence, changed: true, request_input_available: true, request_input_unavailable_reason: null, event_kind: 'context-frame',
     });
     const getContextPage = vi.fn(async (_runId: string, request?: { cursor?: string; filters: object }): Promise<ProjectionPage<ContextFrameSummary>> => {
       if (request?.cursor) {
@@ -500,7 +566,7 @@ describe('App shell', () => {
       id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
-      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
     const getEvidenceIndex = vi.fn(async (): Promise<EvidenceIndex> => ({ analysis_id: 'analysis-test', records: {
       'evidence:nested': { id: 'artifact:nested', source: 'observed', source_sequences: [61], rule_id: null, status: 'completed', unavailable_reason: null, reference: 'evidence:nested', kind: 'evidence', relative_path: 'evidence/nested.json', sha256: 'a'.repeat(64), verification_status: 'verified', producing_sequence: 61, consuming_sequences: [], turn_id: null, step_id: null, request_id: null, tool_call_id: null, result_id: null, evidence_id: null, claim_id: null },
@@ -767,7 +833,7 @@ describe('App shell', () => {
       id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
-      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
     window.history.replaceState({}, '', '/?node=context:42');
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
@@ -861,7 +927,7 @@ describe('App shell', () => {
       id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
-      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
 
@@ -879,7 +945,7 @@ describe('App shell', () => {
       id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
-      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
 
@@ -898,7 +964,7 @@ describe('App shell', () => {
       id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
-      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
     render(<App client={{ ...fixtureClient(), getContextFrame }} />);
 
@@ -972,7 +1038,7 @@ describe('App shell', () => {
       id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
-      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_artifact_ref: 'artifact:request',
+      before_state: {}, delta: {}, after_state: {}, max_sequence: 78, request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     });
     await act(async () => {
       pending[1].resolve(frame(61));
@@ -997,7 +1063,7 @@ describe('App shell', () => {
       status: 'completed', unavailable_reason: null, source_sequence: sequence,
       before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
       before_state: { runId }, delta: {}, after_state: { runId }, max_sequence: sequence,
-      request_artifact_ref: 'artifact:request',
+      request_input_available: true, request_input_unavailable_reason: null, request_artifact_ref: 'artifact:request',
     }));
     render(<App client={{ ...fixtureClient(), getContextPage, getContextFrame }} />);
 
@@ -1009,7 +1075,7 @@ describe('App shell', () => {
 
     const page = (analysisId: string, id: string, sequence: number): ProjectionPage<ContextFrameSummary> => ({
       analysis_id: analysisId,
-      items: [{ id, source_sequence: sequence, before_revision: sequence - 1, after_revision: sequence, changed: true, request_input_available: true, event_kind: 'context-frame' }],
+      items: [{ id, source_sequence: sequence, before_revision: sequence - 1, after_revision: sequence, changed: true, request_input_available: true, request_input_unavailable_reason: null, event_kind: 'context-frame' }],
       older_cursor: null, newer_cursor: null, first_sequence: sequence, last_sequence: sequence,
       has_older: false, encoded_bytes: 100,
     });

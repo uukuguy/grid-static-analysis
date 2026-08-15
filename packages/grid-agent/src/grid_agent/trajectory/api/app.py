@@ -20,6 +20,7 @@ from grid_agent.trajectory.api.paging import ProjectionPager, ProjectionRecordTo
 from grid_agent.trajectory.api.projection_pages import (
     ProjectionPageResponse,
     projection_page,
+    public_context_frame,
 )
 from grid_agent.trajectory.agent_projection import execution_slice
 from grid_agent.trajectory.business_projection import business_causal_rows
@@ -329,8 +330,14 @@ def _reject_unknown_or_repeated_query(
 
 
 def _context_detail(projected: ProjectedRun, at_sequence: int) -> dict[str, Any]:
-    frame = projected.context.at_sequence(at_sequence)
+    frame = public_context_frame(
+        projected, projected.context.at_sequence(at_sequence)
+    )
     value = frame.model_dump(mode="json")
+    value["request_input_available"] = frame.request_artifact_ref is not None
+    value["request_input_unavailable_reason"] = (
+        None if frame.request_artifact_ref is not None else frame.unavailable_reason
+    )
     value["max_sequence"] = max(
         (item.source_sequence for item in projected.context.frames), default=0
     )

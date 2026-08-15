@@ -200,6 +200,9 @@ export function ContextView({
                 >
                   <strong>Sequence {summary.source_sequence}</strong><span>{summary.event_kind}</span>
                   <small>r{summary.before_revision} → r{summary.after_revision} · {summary.changed ? 'changed' : 'unchanged'} · request {summary.request_input_available ? 'available' : 'unavailable'}</small>
+                  {!summary.request_input_available && summary.request_input_unavailable_reason
+                    ? <small className="unavailable">{summary.request_input_unavailable_reason}</small>
+                    : null}
                 </button>
               </div>;
             })}
@@ -226,7 +229,7 @@ export function ContextView({
                 <section role="tabpanel" aria-label={`${active} context state`} className="context-panel">
                   {stateValue === null ? null : <StructuredState key={`${frame.id}:${active}`} label={active} value={stateValue} />}
                 </section>
-                <section className="request-input" aria-label="Model-visible request input"><h2>Model-visible request input</h2>{frame.request_artifact_ref ? <a href={artifactUrl(frame.request_artifact_ref)} download>{frame.request_artifact_ref}</a> : <p className="unavailable">{frame.unavailable_reason || 'No following model request'}</p>}</section>
+                <section className="request-input" aria-label="Model-visible request input"><h2>Model-visible request input</h2>{frame.request_input_available && frame.request_artifact_ref ? <a href={artifactUrl(frame.request_artifact_ref)} download>{frame.request_artifact_ref}</a> : <p className="unavailable">{frame.request_input_unavailable_reason || frame.unavailable_reason || 'No following model request'}</p>}</section>
               </>}
       </section>
     </div>

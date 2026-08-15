@@ -46,6 +46,7 @@ const turn: AgentTurn = {
 const selection: AuditSelection = {
   problem,
   node: problem.nodes[0],
+  agentRow: null,
   sequence: 61,
   turnId: 'turn-7',
   artifactRefs: ['evidence:line-17'],
@@ -68,6 +69,8 @@ const legacyContext: ContextFrame = {
   delta: { change: 'line-17' },
   after_state: { selected: 'after' },
   max_sequence: 99,
+  request_input_available: false,
+  request_input_unavailable_reason: 'Request input is unavailable for legacy imported runs.',
   request_artifact_ref: null,
 };
 
@@ -94,6 +97,34 @@ describe('AuditInspector', () => {
 
     expect(screen.getByText(/request input is unavailable for legacy imported runs/i)).toBeVisible();
     expect(screen.queryByText(/raw sidecar/i)).not.toBeInTheDocument();
+  });
+
+  it('suppresses an unverified context request ref and shows its persisted reason', () => {
+    const artifactUrl = vi.fn((ref: string) => `/artifact/${ref}`);
+    const context = {
+      ...legacyContext,
+      request_artifact_ref: 'artifact:unverified-request',
+      unavailable_reason: null,
+      request_input_available: false,
+      request_input_unavailable_reason: 'request input digest mismatch',
+    } as ContextFrame & {
+      request_input_available: boolean;
+      request_input_unavailable_reason: string;
+    };
+    const model: AuditInspectorModel = {
+      selection,
+      evidence: [],
+      context,
+      execution: turn,
+      unavailable: {},
+    };
+
+    render(<AuditInspector model={model} artifactUrl={artifactUrl} onSelectSequence={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Context' }));
+
+    expect(screen.getByText('request input digest mismatch')).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'artifact:unverified-request' })).not.toBeInTheDocument();
+    expect(artifactUrl).not.toHaveBeenCalled();
   });
 
   it('uses producer sequence buttons instead of inert JSON placeholders', () => {

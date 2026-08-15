@@ -4,8 +4,8 @@ import type { ContextFrame, ContextFrameSummary } from '../api/types';
 import { ContextView } from './ContextView';
 
 const summaries: ContextFrameSummary[] = [
-  { id: 'context:40', source_sequence: 40, before_revision: 10, after_revision: 11, changed: true, request_input_available: true, event_kind: 'tool-result' },
-  { id: 'context:50', source_sequence: 50, before_revision: 11, after_revision: 12, changed: true, request_input_available: false, event_kind: 'model-request' },
+  { id: 'context:40', source_sequence: 40, before_revision: 10, after_revision: 11, changed: true, request_input_available: true, request_input_unavailable_reason: null, event_kind: 'tool-result' },
+  { id: 'context:50', source_sequence: 50, before_revision: 11, after_revision: 12, changed: true, request_input_available: false, request_input_unavailable_reason: 'request input digest mismatch', event_kind: 'model-request' },
 ];
 
 function frame(sequence: number, before: ContextFrame['before_state'], after: ContextFrame['after_state']): ContextFrame {
@@ -14,6 +14,7 @@ function frame(sequence: number, before: ContextFrame['before_state'], after: Co
     status: 'completed', unavailable_reason: null, source_sequence: sequence,
     before_revision: sequence - 1, after_revision: sequence, before_state_hash: 'before', after_state_hash: 'after',
     before_state: before, delta: {}, after_state: after, max_sequence: 90,
+    request_input_available: true, request_input_unavailable_reason: null,
     request_artifact_ref: 'artifact:request',
   };
 }
@@ -46,10 +47,29 @@ describe('ContextView', () => {
 
     expect(screen.getByRole('list', { name: 'Loaded context frames' })).toBeVisible();
     expect(screen.getByRole('button', { name: /sequence 40.*tool-result/i })).toBeVisible();
+    expect(screen.getByText('request input digest mismatch')).toBeVisible();
     expect(screen.queryByText(/Authoritative state at sequence/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /sequence 40.*tool-result/i }));
     expect(onSelectSequence).toHaveBeenCalledWith(40);
+  });
+
+  it('suppresses an unverified request input ref and renders its persisted reason', () => {
+    const artifactUrl = vi.fn((ref: string) => `/artifact/${ref}`);
+    const unverified = {
+      ...frame(50, {}, {}),
+      request_input_available: false,
+      request_input_unavailable_reason: 'request input digest mismatch',
+    } as ContextFrame & {
+      request_input_available: boolean;
+      request_input_unavailable_reason: string;
+    };
+
+    render(<ContextView {...baseProps} selectedSequence={50} frame={unverified} detailState="ready" artifactUrl={artifactUrl} />);
+
+    expect(screen.getAllByText('request input digest mismatch').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('link', { name: 'artifact:request' })).not.toBeInTheDocument();
+    expect(artifactUrl).not.toHaveBeenCalled();
   });
 
   it('filters summaries and exposes exact older-page retry controls', () => {

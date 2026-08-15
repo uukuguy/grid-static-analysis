@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentTurn, BusinessProblem } from '../api/types';
+import type { AgentEventRow, AgentTurn, BusinessProblem } from '../api/types';
 import { resolveAuditSelection } from './selection';
 
 const problem: BusinessProblem = {
@@ -49,6 +49,35 @@ describe('resolveAuditSelection', () => {
       turnId: 'analysis-t007',
       artifactRefs: ['evidence:line-17', 'result:contingency-17'],
       agentTurn: turn,
+    });
+  });
+
+  it('keeps a flat agent event as the selected inspector identity', () => {
+    const row: AgentEventRow = {
+      id: 'agent:analysis-test:tool-17',
+      parent_id: 'agent:analysis-test:request-2',
+      turn_id: 'analysis-t007',
+      kind: 'tool',
+      level: 4,
+      source_sequence: 49,
+      start_sequence: 47,
+      end_sequence: 49,
+      related_refs: ['evidence:line-17'],
+      source: 'observed',
+      status: 'completed',
+      unavailable_reason: null,
+      title: 'analysis.powerflow.ac.run',
+      detail: null,
+    };
+
+    expect(resolveAuditSelection([problem], [], row.id, [row])).toMatchObject({
+      problem: null,
+      node: null,
+      agentRow: row,
+      sequence: 49,
+      turnId: 'analysis-t007',
+      artifactRefs: ['evidence:line-17'],
+      agentTurn: null,
     });
   });
 });

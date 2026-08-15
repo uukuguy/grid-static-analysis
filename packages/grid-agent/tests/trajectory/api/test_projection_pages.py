@@ -152,6 +152,35 @@ def test_agent_page_applies_turn_status_capability_and_text_filters(
     ]
 
 
+def test_agent_tool_row_preserves_recorded_completion_relation(tmp_path: Path) -> None:
+    app, _, _ = create_test_app(tmp_path)
+
+    response = TestClient(app).get(
+        "/api/runs/analysis-test/agent",
+        params={"kind": "tool", "q": "grid.analyze"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "id": "agent:analysis-test:tool-7",
+            "parent_id": "agent:analysis-test:request-7",
+            "turn_id": "analysis-test-t007",
+            "kind": "tool",
+            "level": 4,
+            "source_sequence": 49,
+            "start_sequence": 48,
+            "end_sequence": 49,
+            "related_refs": [],
+            "source": "observed",
+            "status": "completed",
+            "unavailable_reason": None,
+            "title": "Tool",
+            "detail": None,
+        }
+    ]
+
+
 def test_agent_page_never_echoes_internal_capabilities_or_artifact_paths(
     tmp_path: Path,
 ) -> None:
@@ -181,6 +210,7 @@ def test_context_page_is_summary_only_and_detail_remains_exact(tmp_path: Path) -
             "after_revision": 2,
             "changed": True,
             "request_input_available": False,
+            "request_input_unavailable_reason": "No following model request",
             "event_kind": "context-frame",
         }
     ]
@@ -242,6 +272,66 @@ def test_context_filters_ranges_change_and_request_input(tmp_path: Path) -> None
     assert [row["source_sequence"] for row in changed.json()["items"]] == [900]
     assert unchanged.status_code == 200
     assert [row["source_sequence"] for row in unchanged.json()["items"]] == [901]
+
+
+def test_context_request_input_requires_verified_artifact_registration(
+    tmp_path: Path,
+) -> None:
+    app, catalog, _ = create_test_app(tmp_path)
+    request_ref = "artifact:unverified-request"
+    persisted_reason = "request input digest did not match the registered artifact"
+    frame = ContextFrame(
+        id="context:analysis-test:901",
+        source_sequences=(901,),
+        rule_id="context-state-delta/v1",
+        source_sequence=901,
+        before_revision=2,
+        after_revision=3,
+        before_state_hash="b" * 64,
+        after_state_hash="c" * 64,
+        before_state={"model": "before"},
+        delta={"model": "changed"},
+        after_state={"model": "after"},
+        request_artifact_ref=request_ref,
+    )
+    unverified = ArtifactIndexRecord(
+        id="artifact:analysis-test:unverified-request",
+        source="observed",
+        source_sequences=(901,),
+        status="unavailable",
+        unavailable_reason=persisted_reason,
+        reference=request_ref,
+        kind="model-request",
+        relative_path="unavailable",
+        sha256="unavailable",
+        verification_status="unavailable",
+        producing_sequence=901,
+    )
+    catalog.projected = catalog.projected.model_copy(
+        update={
+            "context": ContextTimeline(
+                analysis_id="analysis-test",
+                frames=(frame,),
+            ),
+            "artifacts": ArtifactIndex(
+                analysis_id="analysis-test",
+                records={request_ref: unverified},
+            ),
+        }
+    )
+    client = TestClient(app)
+
+    summary = client.get("/api/runs/analysis-test/context").json()["items"][0]
+    detail = client.get(
+        "/api/runs/analysis-test/context", params={"at_sequence": 901}
+    ).json()
+
+    assert summary["request_input_available"] is False
+    assert summary["request_input_unavailable_reason"] == persisted_reason
+    assert detail["request_input_available"] is False
+    assert detail["request_input_unavailable_reason"] == persisted_reason
+    assert detail["request_artifact_ref"] is None
+    assert detail["unavailable_reason"] == persisted_reason
 
 
 def test_evidence_page_maps_public_metadata_without_content(tmp_path: Path) -> None:

@@ -119,20 +119,27 @@ function PanelContent({
 }
 
 function OverviewPanel({ model, onSelectSequence }: { model: AuditInspectorModel; onSelectSequence: (sequence: number) => void }) {
-  const selected = model.selection.node ?? model.selection.problem;
+  const selected = model.selection.agentRow ?? model.selection.node ?? model.selection.problem;
+  if (!selected) return <p className="unavailable">The selected record is unavailable.</p>;
   const node = model.selection.node;
+  const agentRow = model.selection.agentRow;
   return <div className="audit-panel-stack">
     <dl>
       <dt>Selected ID</dt><dd>{selected.id}</dd>
       <dt>Turn</dt><dd>{model.selection.turnId}</dd>
-      <dt>Sequence</dt><dd><button type="button" className="sequence-link" onClick={() => onSelectSequence(model.selection.sequence)}>Go to sequence {model.selection.sequence}</button></dd>
+      <dt>Sequence</dt><dd>{agentRow ? `Recorded relation ${model.selection.sequence}` : <button type="button" className="sequence-link" onClick={() => onSelectSequence(model.selection.sequence)}>Go to sequence {model.selection.sequence}</button>}</dd>
       <dt>Source</dt><dd><SourceBadge source={selected.source} /></dd>
       <dt>Status</dt><dd>{selected.status}</dd>
-      <dt>Problem</dt><dd>{model.selection.problem.title}</dd>
+      <dt>Problem</dt><dd>{model.selection.problem?.title ?? 'No exact Business relationship is selected.'}</dd>
       {node ? <><dt>Kind</dt><dd>{node.kind}</dd><dt>Title</dt><dd>{node.title}</dd></> : null}
       {node?.detail ? <><dt>Detail</dt><dd>{node.detail}</dd></> : null}
-      <dt>Parent</dt><dd>{node ? model.selection.problem.id : 'Run business trajectory'}</dd>
-      <dt>Children</dt><dd>{node ? 'No child business nodes are recorded.' : `${model.selection.problem.nodes.length} business nodes`}</dd>
+      {agentRow ? <><dt>Kind</dt><dd>{agentRow.kind}</dd><dt>Title</dt><dd>{agentRow.title}</dd></> : null}
+      {agentRow?.detail ? <><dt>Detail</dt><dd>{agentRow.detail}</dd></> : null}
+      {agentRow?.start_sequence !== null && agentRow?.start_sequence !== undefined
+        ? <><dt>Lifecycle</dt><dd>{agentRow.start_sequence}{agentRow.end_sequence === null ? ' · still open' : `–${agentRow.end_sequence}`}</dd></>
+        : null}
+      <dt>Parent</dt><dd>{agentRow ? agentRow.parent_id ?? 'No recorded parent' : node ? model.selection.problem?.id : 'Run business trajectory'}</dd>
+      <dt>Children</dt><dd>{agentRow ? 'Only typed loaded parent/child rows define Agent hierarchy.' : node ? 'No child business nodes are recorded.' : `${model.selection.problem?.nodes.length ?? 0} business nodes`}</dd>
     </dl>
     {selected.unavailable_reason ? <p className="unavailable">{selected.unavailable_reason}</p> : null}
   </div>;
@@ -176,9 +183,9 @@ function ContextPanel({ model, artifactUrl, onSelectSequence }: { model: AuditIn
     <StateBlock title="After" value={frame.after_state} />
     <section className="request-input" aria-label="Model-visible request input">
       <h3>Model-visible request input</h3>
-      {frame.request_artifact_ref
+      {frame.request_input_available && frame.request_artifact_ref
         ? <a href={artifactUrl(frame.request_artifact_ref)} download>{frame.request_artifact_ref}</a>
-        : <p className="unavailable">{frame.unavailable_reason || 'Request input is unavailable for this event.'}</p>}
+        : <p className="unavailable">{frame.request_input_unavailable_reason || frame.unavailable_reason || 'Request input is unavailable for this event.'}</p>}
     </section>
   </div>;
 }
