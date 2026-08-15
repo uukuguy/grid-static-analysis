@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type TrajectoryApiClient } from '../api/client';
-import type { AgentTurn, BusinessCausalRow, BusinessNode, BusinessProblem, ContextFrame, ContextFrameSummary, EvidenceIndex, EvidencePageRequest, EvidenceRecord, ExecutionSlice, ProjectionPage, RunListResponse } from '../api/types';
+import type { AgentEventRow, AgentPageRequest, AgentTurn, BusinessCausalRow, BusinessNode, BusinessProblem, ContextFrame, ContextFrameSummary, EvidenceIndex, EvidencePageRequest, EvidenceRecord, ExecutionSlice, ProjectionPage, RunListResponse } from '../api/types';
 import { App } from './App';
 
 const run: RunListResponse = {
@@ -104,6 +104,43 @@ function evidenceRecord(reference: string, sequence: number): EvidenceRecord {
     relative_path: `evidence/${reference}.json`, sha256: 'a'.repeat(64), verification_status: 'verified',
     producing_sequence: sequence, consuming_sequences: [], turn_id: null, step_id: null,
     request_id: null, tool_call_id: null, result_id: null, evidence_id: reference, claim_id: null,
+  };
+}
+
+function agentEventRow(
+  id: string,
+  sequence: number,
+  overrides: Partial<AgentEventRow> = {},
+): AgentEventRow {
+  return {
+    id,
+    parent_id: null,
+    turn_id: 'analysis-test-t007',
+    kind: 'tool',
+    level: 4,
+    source_sequence: sequence,
+    source: 'observed',
+    status: 'completed',
+    title: `Tool ${sequence}`,
+    detail: null,
+    ...overrides,
+  };
+}
+
+function agentProjectionPage(
+  items: AgentEventRow[],
+  olderCursor: string | null = null,
+  hasOlder = false,
+): ProjectionPage<AgentEventRow> {
+  return {
+    analysis_id: 'analysis-test',
+    items,
+    older_cursor: olderCursor,
+    newer_cursor: null,
+    first_sequence: items[0]?.source_sequence ?? null,
+    last_sequence: items.at(-1)?.source_sequence ?? null,
+    has_older: hasOlder,
+    encoded_bytes: 100,
   };
 }
 
@@ -277,6 +314,39 @@ describe('App shell', () => {
     fireEvent.keyDown(business, { key: 'ArrowRight' });
 
     expect(viewTab('Agent')).toHaveFocus();
+  });
+
+  it('renders flat Agent rows, applies filters, and retries the exact failed older cursor', async () => {
+    let olderAttempts = 0;
+    const current = agentEventRow('tool:current', 74, { title: 'Current gridctl tool' });
+    const older = agentEventRow('tool:older', 44, { title: 'Older gridctl tool' });
+    const getAgentPage = vi.fn(async (_runId: string, request: AgentPageRequest = { filters: {} }): Promise<ProjectionPage<AgentEventRow>> => {
+      if (request.cursor) {
+        olderAttempts += 1;
+        if (olderAttempts === 1) throw new Error('older agent cursor unavailable');
+        return agentProjectionPage([older]);
+      }
+      return agentProjectionPage([current], 'opaque/agent-cursor', true);
+    });
+    render(<App client={{ ...fixtureClient(), getAgentPage }} />);
+
+    fireEvent.click(viewTab('Agent'));
+    expect(await screen.findByText('Current gridctl tool')).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Agent capability'), { target: { value: 'gridctl' } });
+    await waitFor(() => expect(getAgentPage).toHaveBeenCalledWith('analysis-test', {
+      filters: { capability: 'gridctl' },
+    }, expect.any(AbortSignal)));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load older agent history' }));
+    expect(await screen.findByText('older agent cursor unavailable')).toBeVisible();
+    expect(screen.getByText('Current gridctl tool')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry older agent history' }));
+
+    expect(await screen.findByText('Older gridctl tool')).toBeVisible();
+    expect(getAgentPage).toHaveBeenNthCalledWith(4, 'analysis-test', {
+      cursor: 'opaque/agent-cursor',
+      filters: { capability: 'gridctl' },
+    }, expect.any(AbortSignal));
   });
 
   it('activates the Q7 overview segment with Enter and Space', async () => {

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import type { BusinessNode, BusinessProblemSummary } from '../src/api/types';
+import type { AgentEventRow, BusinessNode, BusinessProblemSummary } from '../src/api/types';
 
 export type Scenario = 'ready' | 'loading' | 'empty' | 'partial' | 'corrupt' | 'unsupported' | 'network-error';
 
@@ -12,6 +12,7 @@ const run = {
 const claimSequence = 99_997;
 const newestBusinessCursor = 'b3BhcXVlLWJ1c2luZXNzLWJlZm9yZS05OTUwMQ';
 const olderBusinessCursor = 'b3BhcXVlLWJ1c2luZXNzLWJlZm9yZS05OTAwMQ';
+const newestAgentCursor = 'b3BhcXVlLWFnZW50LWJlZm9yZS05OTUwMQ';
 
 function node(sequence: number): BusinessNode {
   const isClaim = sequence === claimSequence;
@@ -79,22 +80,55 @@ function encodedBytes(items: unknown[]) {
   return items.reduce((total, item) => total + new TextEncoder().encode(JSON.stringify(item)).length + 1, 0);
 }
 
-const agentPage = {
-  analysis_id: 'analysis-test',
-  items: [{
-    id: 'turn:7', source: 'observed', source_sequences: [99_700, 100_000], rule_id: null, status: 'completed', unavailable_reason: null,
-    source_sequence: 99_700, turn_id: 'analysis-test-t007', ordinal: 7, steps: [{
-      id: 'step:7:1', source: 'observed', source_sequences: [99_701], rule_id: null, status: 'completed', unavailable_reason: null,
-      step_id: 'analysis-test-t007-s001', request: {
-        id: 'request:7', source: 'observed', source_sequences: [99_702], rule_id: null, status: 'completed', unavailable_reason: null,
-        request_id: 'request:7', artifact_ref: 'artifact:request-input', retries: [{
-          id: 'retry:7:1', source: 'observed', source_sequences: [99_703], rule_id: null, status: 'completed', unavailable_reason: null,
-          attempt: 1, max_attempts: 2, delay_seconds: 0.5, message: 'Retry after timeout',
-        }], tools: [], response: null,
-      },
-    }],
-  }], older_cursor: null, newer_cursor: null, first_sequence: 99_700, last_sequence: 100_000, has_older: false, encoded_bytes: 100,
-};
+function agentRow(
+  id: string,
+  sequence: number,
+  overrides: Partial<AgentEventRow> = {},
+): AgentEventRow {
+  return {
+    id,
+    parent_id: 'request:7',
+    turn_id: 'analysis-test-t007',
+    kind: 'tool',
+    level: 4,
+    source_sequence: sequence,
+    source: 'observed',
+    status: 'completed',
+    title: 'gridctl',
+    detail: null,
+    ...overrides,
+  };
+}
+
+function agentPage() {
+  const hierarchy = [
+    agentRow('turn:7', 99_501, { parent_id: null, kind: 'turn', level: 1, title: 'Turn 7' }),
+    agentRow('step:7', 99_502, { parent_id: 'turn:7', kind: 'step', level: 2, title: 'Step 7.1' }),
+    agentRow('request:7', 99_503, { parent_id: 'step:7', kind: 'request', level: 3, title: 'Request 7.1' }),
+    agentRow('retry:7', 99_504, { kind: 'retry', title: 'Retry 1 of 2', detail: 'Delay 0.5 seconds' }),
+    agentRow('tool:7', 99_505, { title: 'analysis.contingency.n_minus_one.run' }),
+  ];
+  const items = [
+    ...hierarchy,
+    ...Array.from({ length: 495 }, (_, index) => agentRow(`tool:paged:${index}`, 99_506 + index)),
+  ];
+  return {
+    analysis_id: 'analysis-test', items,
+    older_cursor: newestAgentCursor, newer_cursor: null,
+    first_sequence: 99_501, last_sequence: 100_000,
+    has_older: true, encoded_bytes: encodedBytes(items),
+  };
+}
+
+function olderAgentPage() {
+  const items = Array.from({ length: 500 }, (_, index) => agentRow(`tool:older:${index}`, 99_001 + index));
+  return {
+    analysis_id: 'analysis-test', items,
+    older_cursor: null, newer_cursor: null,
+    first_sequence: 99_001, last_sequence: 99_500,
+    has_older: false, encoded_bytes: encodedBytes(items),
+  };
+}
 
 const contextFrame = {
   id: 'context:100000', source: 'observed', source_sequences: [100_000], rule_id: null, status: 'completed', unavailable_reason: null,
@@ -115,6 +149,31 @@ const evidenceIndex = { analysis_id: 'analysis-test', records: {
     tool_call_id: 'call:17', result_id: 'result:17', evidence_id: 'evidence:line-17', claim_id: 'claim:17',
   },
 } };
+
+const contextPage = {
+  analysis_id: 'analysis-test',
+  items: [{
+    id: contextFrame.id,
+    source_sequence: contextFrame.source_sequence,
+    before_revision: contextFrame.before_revision,
+    after_revision: contextFrame.after_revision,
+    changed: true,
+    request_input_available: true,
+    event_kind: 'context-frame',
+  }],
+  older_cursor: null, newer_cursor: null,
+  first_sequence: contextFrame.source_sequence,
+  last_sequence: contextFrame.source_sequence,
+  has_older: false, encoded_bytes: 100,
+};
+
+const evidencePage = {
+  analysis_id: 'analysis-test',
+  items: Object.values(evidenceIndex.records),
+  older_cursor: null, newer_cursor: null,
+  first_sequence: claimSequence, last_sequence: claimSequence,
+  has_older: false, encoded_bytes: 100,
+};
 
 function executionSliceAt(sequence: number) {
   return {
@@ -145,6 +204,7 @@ function executionSliceAt(sequence: number) {
 
 export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready', count = 1) {
   let olderBusinessAttempts = 0;
+  let olderAgentAttempts = 0;
   // Match the API root, not source modules such as `/src/api/client.ts`.
   await page.route((url) => url.pathname.startsWith('/api/runs'), async (route) => {
     const url = new URL(route.request().url());
@@ -167,10 +227,19 @@ export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready',
       }
       return route.fulfill({ json: scenario === 'empty' ? { ...businessPage(0), items: [] } : businessPage(count) });
     }
-    if (path.endsWith('/agent')) return route.fulfill({ json: agentPage });
-    if (path.includes('/context')) return route.fulfill({ json: contextFrameAt(Number(url.searchParams.get('at_sequence') ?? run.last_sequence)) });
+    if (path.endsWith('/agent')) {
+      if (url.searchParams.has('cursor')) {
+        olderAgentAttempts += 1;
+        if (olderAgentAttempts === 1) return route.fulfill({ status: 503, json: { code: 'cursor_failed', message: 'older agent cursor unavailable' } });
+        return route.fulfill({ json: olderAgentPage() });
+      }
+      return route.fulfill({ json: agentPage() });
+    }
+    if (path.includes('/context')) return route.fulfill({ json: url.searchParams.has('at_sequence')
+      ? contextFrameAt(Number(url.searchParams.get('at_sequence')))
+      : contextPage });
     if (path.endsWith('/execution')) return route.fulfill({ json: executionSliceAt(Number(url.searchParams.get('at_sequence') ?? run.last_sequence)) });
-    if (path.endsWith('/evidence')) return route.fulfill({ json: evidenceIndex });
+    if (path.endsWith('/evidence')) return route.fulfill({ json: evidencePage });
     return route.fulfill({ status: 404, json: { code: 'not_found', message: 'not found' } });
   });
 }

@@ -62,3 +62,47 @@ test('API-only e2e never requests a mutating endpoint', async ({ page }) => {
   expect(methods).not.toContain('PATCH');
   expect(methods).not.toContain('DELETE');
 });
+
+test('agent operational paging filters and retries the exact opaque cursor', async ({ page }) => {
+  const requests: URL[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/agent')) requests.push(url);
+  });
+  await mockWorkbenchApi(page);
+  await page.goto('/');
+  await page.getByLabel('Trajectory views').getByRole('tab', { name: 'Agent' }).click();
+  await expect(page.getByRole('treegrid', { name: 'Agent execution events' })).toBeVisible();
+
+  await page.getByLabel('Agent capability').fill('gridctl');
+  await expect.poll(() => requests.filter((url) => url.searchParams.get('capability') === 'gridctl').length).toBe(1);
+  expect(await page.getByRole('row').count()).toBeLessThanOrEqual(120);
+
+  await page.getByRole('button', { name: 'Load older agent history' }).click();
+  await expect(page.getByText('older agent cursor unavailable')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry older agent history' }).click();
+
+  await expect(page.getByText(/1000 loaded events/i)).toBeVisible();
+  const olderRequests = requests.filter((url) => url.searchParams.has('cursor'));
+  expect(olderRequests).toHaveLength(2);
+  expect(olderRequests[0].searchParams.get('cursor')).toBe(olderRequests[1].searchParams.get('cursor'));
+  expect(olderRequests.every((url) => url.searchParams.get('capability') === 'gridctl')).toBeTruthy();
+  expect(await page.getByRole('row').count()).toBeLessThanOrEqual(120);
+});
+
+test('agent keyboard tree preserves typed hierarchy actions', async ({ page }) => {
+  await mockWorkbenchApi(page);
+  await page.goto('/');
+  await page.getByLabel('Trajectory views').getByRole('tab', { name: 'Agent' }).click();
+  const turn = page.getByRole('row', { name: /Turn 7.*completed.*Sequence 99501/i });
+  await expect(turn).toBeVisible();
+
+  await turn.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(turn).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('ArrowRight');
+  await expect(turn).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('ArrowRight');
+
+  await expect(page.getByRole('row', { name: /Step 7.1/ })).toBeFocused();
+});

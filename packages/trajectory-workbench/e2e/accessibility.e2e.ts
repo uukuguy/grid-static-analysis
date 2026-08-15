@@ -44,8 +44,8 @@ test('keyboard-only tab and agent-tree navigation remain operable', async ({ pag
   await page.keyboard.press('ArrowRight');
   await expect(viewTabs.getByRole('tab', { name: 'Agent' })).toBeFocused();
   await page.keyboard.press('Enter');
-  const treeItem = page.getByRole('treeitem').first();
-  await treeItem.focus();
+  const turn = page.getByRole('row', { name: /Turn 7/ });
+  await turn.focus();
   await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('treeitem').nth(1)).toBeFocused();
+  await expect(page.getByRole('row', { name: /Step 7.1/ })).toBeFocused();
 });

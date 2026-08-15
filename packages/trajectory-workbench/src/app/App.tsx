@@ -53,6 +53,9 @@ export function App({ client = api }: { client?: AppClient }) {
   const [agentPageState, setAgentPageState] = useState<OperationalPageState<AgentEventRow | AgentTurn>>({
     items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey: '',
   });
+  const agentRows = useMemo(() => agentPageState.page?.analysis_id === state.selectedRunId
+    ? agentPageState.items.filter((item): item is AgentEventRow => 'parent_id' in item && 'kind' in item)
+    : [], [agentPageState, state.selectedRunId]);
   const agentTurns = useMemo(() => agentPageState.page?.analysis_id === state.selectedRunId
     ? agentPageState.items.filter((item): item is AgentTurn => 'steps' in item && 'source_sequences' in item)
     : [], [agentPageState, state.selectedRunId]);
@@ -695,8 +698,7 @@ export function App({ client = api }: { client?: AppClient }) {
     context: state.pageError.context,
     execution: executionSliceDiagnostic,
   };
-  const activeOperationalPageState = state.activeView === 'agent' ? agentPageState
-    : state.activeView === 'context' ? contextPageState
+  const activeOperationalPageState = state.activeView === 'context' ? contextPageState
       : state.activeView === 'evidence' ? evidencePageState : null;
   const operationalPaging = activeOperationalPageState ? <div className="operational-paging" aria-live="polite">
     {activeOperationalPageState.olderState === 'failed' ? <>
@@ -727,7 +729,25 @@ export function App({ client = api }: { client?: AppClient }) {
         if (cursor) loadOlder(cursor);
       }}
     />
-      : state.activeView === 'agent' ? <AgentView trajectory={agentTurns} selectedNodeId={state.selectedNodeId} onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })} artifactUrl={artifactUrl} />
+      : state.activeView === 'agent' ? <AgentView
+        rows={agentRows}
+        filters={state.pageFilters.agent}
+        onFiltersChange={(filters) => dispatch({ type: 'page/filtersChanged', view: 'agent', filters })}
+        hasOlder={agentPageState.page?.has_older ?? false}
+        olderState={agentPageState.olderState}
+        olderError={agentPageState.olderError}
+        onLoadOlder={() => {
+          const cursor = agentPageState.page?.older_cursor;
+          if (cursor) loadOlderOperational('agent', cursor);
+        }}
+        onRetryOlder={() => {
+          if (agentPageState.failedCursor) loadOlderOperational('agent', agentPageState.failedCursor);
+        }}
+        selectedNodeId={state.selectedNodeId}
+        businessSequences={problems.flatMap((problem) => [problem.source_sequence, ...problem.nodes.map((node) => node.source_sequence)])}
+        onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })}
+        onSelectSequence={selectSequence}
+      />
         : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
           : <EvidenceView index={evidenceIndex} selectedRefs={auditSelection?.artifactRefs ?? (state.selectedNodeId ? [state.selectedNodeId] : [])} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
     {operationalPaging}
