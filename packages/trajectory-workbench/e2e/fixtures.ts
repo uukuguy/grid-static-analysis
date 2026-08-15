@@ -133,12 +133,23 @@ function olderAgentPage() {
 const contextFrame = {
   id: 'context:100000', source: 'observed', source_sequences: [100_000], rule_id: null, status: 'completed', unavailable_reason: null,
   source_sequence: 100_000, before_revision: 59, after_revision: 78, before_state_hash: 'before', after_state_hash: 'after',
-  before_state: { scenario: 'base' }, delta: { scenario: 'line-17-out' }, after_state: { scenario: 'line-17-out' },
+  before_state: { scenario: 'base', limits: { x: 1 } }, delta: { scenario: 'line-17-out', mode: 'n1' }, after_state: { scenario: 'line-17-out', limits: { x: 2 }, mode: 'n1' },
   max_sequence: 100_000, request_artifact_ref: 'artifact:request-input',
 };
 
 function contextFrameAt(sequence: number) {
-  return { ...contextFrame, id: `context:${sequence}`, source_sequences: [sequence], source_sequence: sequence, max_sequence: sequence };
+  if (sequence === 99_999) return {
+    ...contextFrame,
+    id: `context:${sequence}`,
+    source_sequences: [sequence],
+    source_sequence: sequence,
+    before_revision: 58,
+    after_revision: 59,
+    before_state: { scenario: 'initial', limits: { x: 1 } },
+    delta: { scenario: 'base' },
+    after_state: { scenario: 'base', limits: { x: 1 } },
+  };
+  return { ...contextFrame, id: `context:${sequence}`, source_sequences: [sequence], source_sequence: sequence };
 }
 
 const evidenceIndex = { analysis_id: 'analysis-test', records: {
@@ -152,17 +163,17 @@ const evidenceIndex = { analysis_id: 'analysis-test', records: {
 
 const contextPage = {
   analysis_id: 'analysis-test',
-  items: [{
-    id: contextFrame.id,
-    source_sequence: contextFrame.source_sequence,
-    before_revision: contextFrame.before_revision,
-    after_revision: contextFrame.after_revision,
+  items: [contextFrameAt(99_999), contextFrameAt(100_000)].map((frame) => ({
+    id: frame.id,
+    source_sequence: frame.source_sequence,
+    before_revision: frame.before_revision,
+    after_revision: frame.after_revision,
     changed: true,
     request_input_available: true,
-    event_kind: 'context-frame',
-  }],
+    event_kind: frame.source_sequence === 99_999 ? 'tool-result' : 'model-request',
+  })),
   older_cursor: null, newer_cursor: null,
-  first_sequence: contextFrame.source_sequence,
+  first_sequence: 99_999,
   last_sequence: contextFrame.source_sequence,
   has_older: false, encoded_bytes: 100,
 };

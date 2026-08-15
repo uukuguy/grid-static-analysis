@@ -49,3 +49,39 @@ test('keyboard-only tab and agent-tree navigation remain operable', async ({ pag
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('row', { name: /Step 7.1/ })).toBeFocused();
 });
+
+test('context replay selects only loaded authoritative frames without accessibility violations', async ({ page }) => {
+  await mockWorkbenchApi(page);
+  await page.goto('/');
+  await page.getByLabel('Trajectory views').getByRole('tab', { name: 'Context' }).click();
+
+  const older = page.getByRole('button', { name: /Sequence 99999.*tool-result/i });
+  await expect(older).toBeVisible();
+  await older.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Authoritative state at sequence 99999' })).toBeVisible();
+  await page.getByRole('button', { name: 'Next loaded frame' }).click();
+  await expect(page.getByRole('heading', { name: 'Authoritative state at sequence 100000' })).toBeVisible();
+
+  const results = await new AxeBuilder({ page }).include('[aria-label="Context time travel"]').analyze();
+  expect(results.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([]);
+});
+
+test('context comparison pins two exact recorded frames without accessibility violations', async ({ page }) => {
+  await mockWorkbenchApi(page);
+  await page.goto('/');
+  await page.getByLabel('Trajectory views').getByRole('tab', { name: 'Context' }).click();
+
+  await page.getByRole('button', { name: /Sequence 99999.*tool-result/i }).click();
+  await page.getByRole('button', { name: 'Pin sequence 99999 as frame A' }).click();
+  await page.getByRole('button', { name: /Sequence 100000.*model-request/i }).click();
+  await page.getByRole('button', { name: 'Pin sequence 100000 as frame B' }).click();
+
+  const comparison = page.getByRole('region', { name: 'Pinned frame comparison' });
+  await expect(comparison).toContainText('A · sequence 99999');
+  await expect(comparison).toContainText('B · sequence 100000');
+  await expect(comparison).toContainText('mode');
+  await expect(comparison).toContainText('limits.x');
+  const results = await new AxeBuilder({ page }).include('[aria-label="Pinned frame comparison"]').analyze();
+  expect(results.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([]);
+});

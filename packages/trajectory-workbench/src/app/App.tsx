@@ -62,8 +62,13 @@ export function App({ client = api }: { client?: AppClient }) {
   const [contextPageState, setContextPageState] = useState<OperationalPageState<ContextFrameSummary>>({
     items: [], page: null, olderState: 'idle', olderError: null, failedCursor: null, requestKey: '',
   });
+  const contextSummaries = useMemo(() => contextPageState.page?.analysis_id === state.selectedRunId
+    ? contextPageState.items : [], [contextPageState, state.selectedRunId]);
   const [contextFrame, setContextFrame] = useState<ContextFrame | null>(null);
   const [contextSequence, setContextSequence] = useState<number | null>(null);
+  const [contextDetailState, setContextDetailState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [contextDetailError, setContextDetailError] = useState<string | null>(null);
+  const [contextDetailAttempt, setContextDetailAttempt] = useState(0);
   const [executionSlice, setExecutionSlice] = useState<ExecutionSlice | null>(null);
   const [executionSliceState, setExecutionSliceState] = useState<AsyncStateName>('idle');
   const [executionSliceDiagnostic, setExecutionSliceDiagnostic] = useState<string | null>(null);
@@ -359,7 +364,7 @@ export function App({ client = api }: { client?: AppClient }) {
     const requestKey = pageRequestKey(requestedRunId, 'context', { filters: { ...filters } });
     const isNewIdentity = operationalBaseRequestKeyRef.current.context !== requestKey;
     const showInitialLoading = isNewIdentity || contextPageState.page === null;
-    const chooseDefaultSequence = !hasAuditSelection && !state.selectedNodeId?.startsWith('context:');
+    const preserveExactSequence = hasAuditSelection || state.selectedNodeId?.startsWith('context:');
     const controller = new AbortController();
     operationalBaseRequestKeyRef.current.context = requestKey;
     operationalRequestKeyRef.current.context = requestKey;
@@ -368,7 +373,9 @@ export function App({ client = api }: { client?: AppClient }) {
       : { ...current, olderState: 'idle', olderError: null, failedCursor: null, requestKey });
     if (isNewIdentity) {
       setContextFrame(null);
-      if (chooseDefaultSequence) setContextSequence(null);
+      setContextDetailState('idle');
+      setContextDetailError(null);
+      if (!preserveExactSequence) setContextSequence(null);
     }
     setPageErrors((errors) => ({ ...errors, context: null }));
     if (showInitialLoading) dispatch({ type: 'page/requested', view: 'context' });
@@ -384,9 +391,6 @@ export function App({ client = api }: { client?: AppClient }) {
         olderState: 'idle', olderError: null, failedCursor: null, requestKey,
       }));
       if (showInitialLoading) dispatch({ type: 'page/loaded', view: 'context', page: pageMetadata(page) });
-      if (chooseDefaultSequence) {
-        setContextSequence(page.items.at(-1)?.source_sequence ?? null);
-      }
     }).catch((error: unknown) => {
       if (controller.signal.aborted || operationalRequestKeyRef.current.context !== requestKey) return;
       setPageErrors((errors) => ({ ...errors, context: error }));
@@ -397,25 +401,39 @@ export function App({ client = api }: { client?: AppClient }) {
 
   useEffect(() => {
     const needsContext = state.activeView === 'context' || hasAuditSelection;
-    if (!needsContext || !state.selectedRunId || !client.getContextFrame) return;
+    if (!needsContext || !state.selectedRunId || !client.getContextFrame) {
+      contextDetailRequestKeyRef.current = '';
+      return;
+    }
     const requestedRunId = state.selectedRunId;
     const sequence = contextSequence;
-    if (!sequence || sequence < 1) return;
+    if (!sequence || sequence < 1) {
+      contextDetailRequestKeyRef.current = '';
+      setContextFrame(null);
+      setContextDetailState('idle');
+      setContextDetailError(null);
+      return;
+    }
     const requestedSequence = sequence;
     const requestKey = pageRequestKey(requestedRunId, 'context', { filters: { at_sequence: requestedSequence } });
     const detailOwnsPageStatus = state.activeView !== 'context' || !client.getContextPage;
     const controller = new AbortController();
     contextDetailRequestKeyRef.current = requestKey;
     setContextFrame(null);
-    setPageErrors((errors) => ({ ...errors, context: null }));
+    setContextDetailState('loading');
+    setContextDetailError(null);
+    if (detailOwnsPageStatus) setPageErrors((errors) => ({ ...errors, context: null }));
     if (detailOwnsPageStatus) dispatch({ type: 'page/requested', view: 'context' });
     void client.getContextFrame(requestedRunId, requestedSequence, controller.signal).then((frame) => {
       if (
         controller.signal.aborted
         || contextDetailRequestKeyRef.current !== requestKey
+        || selectedRunIdRef.current !== requestedRunId
         || frame.source_sequence !== requestedSequence
       ) return;
       setContextFrame(frame);
+      setContextDetailState('ready');
+      setContextDetailError(null);
       if (detailOwnsPageStatus) {
         dispatch({ type: 'page/loaded', view: 'context', page: { firstSequence: frame.source_sequence, lastSequence: frame.source_sequence, hasOlder: false } });
       }
@@ -425,11 +443,15 @@ export function App({ client = api }: { client?: AppClient }) {
         || contextDetailRequestKeyRef.current !== requestKey
       ) return;
       setContextFrame(null);
-      setPageErrors((errors) => ({ ...errors, context: error }));
-      dispatch({ type: 'page/failed', view: 'context', message: pageErrorMessage(error, 'Unable to load context frame.') });
+      setContextDetailState('failed');
+      setContextDetailError(pageErrorMessage(error, 'Unable to load context frame.'));
+      if (detailOwnsPageStatus) {
+        setPageErrors((errors) => ({ ...errors, context: error }));
+        dispatch({ type: 'page/failed', view: 'context', message: pageErrorMessage(error, 'Unable to load context frame.') });
+      }
     });
     return () => controller.abort();
-  }, [client, contextSequence, hasAuditSelection, pageAttempts.context, state.activeView, state.selectedRunId]);
+  }, [client, contextDetailAttempt, contextSequence, hasAuditSelection, pageAttempts.context, state.activeView, state.selectedRunId]);
 
   useEffect(() => {
     const needsEvidence = state.activeView === 'evidence'
@@ -698,8 +720,7 @@ export function App({ client = api }: { client?: AppClient }) {
     context: state.pageError.context,
     execution: executionSliceDiagnostic,
   };
-  const activeOperationalPageState = state.activeView === 'context' ? contextPageState
-      : state.activeView === 'evidence' ? evidencePageState : null;
+  const activeOperationalPageState = state.activeView === 'evidence' ? evidencePageState : null;
   const operationalPaging = activeOperationalPageState ? <div className="operational-paging" aria-live="polite">
     {activeOperationalPageState.olderState === 'failed' ? <>
       <p role="alert">{activeOperationalPageState.olderError}</p>
@@ -748,7 +769,29 @@ export function App({ client = api }: { client?: AppClient }) {
         onSelectNode={(nodeId) => dispatch({ type: 'node/selected', nodeId })}
         onSelectSequence={selectSequence}
       />
-        : state.activeView === 'context' ? <ContextView frame={contextFrame} onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }} artifactUrl={artifactUrl} />
+        : state.activeView === 'context' ? <ContextView
+          summaries={contextSummaries}
+          filters={state.pageFilters.context}
+          onFiltersChange={(filters) => dispatch({ type: 'page/filtersChanged', view: 'context', filters })}
+          hasOlder={contextPageState.page?.has_older ?? false}
+          olderState={contextPageState.olderState}
+          olderError={contextPageState.olderError}
+          onLoadOlder={() => {
+            const cursor = contextPageState.page?.older_cursor;
+            if (cursor) loadOlderOperational('context', cursor);
+          }}
+          onRetryOlder={() => {
+            if (contextPageState.failedCursor) loadOlderOperational('context', contextPageState.failedCursor);
+          }}
+          selectedSequence={contextSequence}
+          frame={contextFrame}
+          detailState={contextDetailState}
+          detailError={contextDetailError}
+          onRetryDetail={() => setContextDetailAttempt((attempt) => attempt + 1)}
+          onSelectSequence={(sequence) => { setContextSequence(sequence); dispatch({ type: 'node/selected', nodeId: `context:${sequence}` }); }}
+          artifactUrl={artifactUrl}
+          comparisonIdentity={pageRequestKey(state.selectedRunId ?? '', 'context', { filters: { ...state.pageFilters.context } })}
+        />
           : <EvidenceView index={evidenceIndex} selectedRefs={auditSelection?.artifactRefs ?? (state.selectedNodeId ? [state.selectedNodeId] : [])} onSelectRef={(ref) => dispatch({ type: 'node/selected', nodeId: ref })} artifactUrl={artifactUrl} />}
     {operationalPaging}
     </>

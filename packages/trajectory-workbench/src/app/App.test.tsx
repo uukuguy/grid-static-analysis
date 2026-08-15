@@ -349,6 +349,62 @@ describe('App shell', () => {
     }, expect.any(AbortSignal));
   });
 
+  it('pages Context summaries and fetches exact detail only after selecting a frame', async () => {
+    const summaries: ContextFrameSummary[] = [{
+      id: 'context:42', source_sequence: 42, before_revision: 8, after_revision: 9,
+      changed: true, request_input_available: true, event_kind: 'tool-result',
+    }];
+    const getContextPage = vi.fn(async (): Promise<ProjectionPage<ContextFrameSummary>> => ({
+      analysis_id: 'analysis-test', items: summaries, older_cursor: null, newer_cursor: null,
+      first_sequence: 42, last_sequence: 42, has_older: false, encoded_bytes: 80,
+    }));
+    const getContextFrame = vi.fn(async (_runId: string, sequence: number): Promise<ContextFrame> => ({
+      id: `context:${sequence}`, source: 'observed', source_sequences: [sequence], rule_id: null,
+      status: 'completed', unavailable_reason: null, source_sequence: sequence,
+      before_revision: 8, after_revision: 9, before_state_hash: 'before', after_state_hash: 'after',
+      before_state: { revision: 8 }, delta: { revision: 9 }, after_state: { revision: 9 },
+      max_sequence: 78, request_artifact_ref: 'artifact:request',
+    }));
+    render(<App client={{ ...fixtureClient(), getContextPage, getContextFrame }} />);
+
+    fireEvent.click(viewTab('Context'));
+    expect(await screen.findByRole('button', { name: /sequence 42.*tool-result/i })).toBeVisible();
+    expect(getContextFrame).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /sequence 42.*tool-result/i }));
+    await waitFor(() => expect(getContextFrame).toHaveBeenCalledWith('analysis-test', 42, expect.any(AbortSignal)));
+    expect(await screen.findByText(/Authoritative state at sequence 42/i)).toBeVisible();
+  });
+
+  it('retains Context summaries and retries the identical failed opaque cursor', async () => {
+    let olderAttempts = 0;
+    const summary = (sequence: number): ContextFrameSummary => ({
+      id: `context:${sequence}`, source_sequence: sequence, before_revision: sequence - 1,
+      after_revision: sequence, changed: true, request_input_available: true, event_kind: 'context-frame',
+    });
+    const getContextPage = vi.fn(async (_runId: string, request?: { cursor?: string; filters: object }): Promise<ProjectionPage<ContextFrameSummary>> => {
+      if (request?.cursor) {
+        olderAttempts += 1;
+        if (olderAttempts === 1) throw new Error('older context cursor unavailable');
+        return { analysis_id: 'analysis-test', items: [summary(41)], older_cursor: null, newer_cursor: null, first_sequence: 41, last_sequence: 41, has_older: false, encoded_bytes: 80 };
+      }
+      return { analysis_id: 'analysis-test', items: [summary(42)], older_cursor: 'opaque/context-cursor', newer_cursor: null, first_sequence: 42, last_sequence: 42, has_older: true, encoded_bytes: 80 };
+    });
+    render(<App client={{ ...fixtureClient(), getContextPage }} />);
+
+    fireEvent.click(viewTab('Context'));
+    expect(await screen.findByRole('button', { name: /sequence 42/i })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Load older context history' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('older context cursor unavailable');
+    expect(screen.getByRole('button', { name: /sequence 42/i })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry older context history' }));
+
+    expect(await screen.findByRole('button', { name: /sequence 41/i })).toBeVisible();
+    expect(getContextPage).toHaveBeenLastCalledWith('analysis-test', {
+      cursor: 'opaque/context-cursor', filters: {},
+    }, expect.any(AbortSignal));
+  });
+
   it('activates the Q7 overview segment with Enter and Space', async () => {
     render(<App client={fixtureClient()} />);
     const segment = await screen.findByRole('button', { name: /Q7.*overview segment/i });
@@ -924,6 +980,10 @@ describe('App shell', () => {
       pending[0].resolve(page('analysis-test', 'context:stale', 77));
     });
 
+    const fresh = await screen.findByRole('button', { name: /sequence 33/i });
+    expect(screen.queryByRole('button', { name: /sequence 77/i })).not.toBeInTheDocument();
+    expect(getContextFrame).not.toHaveBeenCalled();
+    fireEvent.click(fresh);
     await waitFor(() => expect(getContextFrame).toHaveBeenCalledWith('analysis-partial', 33, expect.any(AbortSignal)));
     expect(getContextFrame).not.toHaveBeenCalledWith('analysis-test', 77, expect.anything());
     expect(await screen.findByText(/state at sequence 33/i)).toBeVisible();
