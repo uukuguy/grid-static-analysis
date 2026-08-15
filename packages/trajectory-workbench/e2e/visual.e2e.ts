@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { mockWorkbenchApi } from './fixtures';
 
-async function ready(page: Parameters<typeof mockWorkbenchApi>[0], width: number, colorScheme: 'dark' | 'light' = 'dark') {
-  await mockWorkbenchApi(page);
+async function ready(page: Parameters<typeof mockWorkbenchApi>[0], width: number, colorScheme: 'dark' | 'light' = 'dark', count = 1) {
+  await mockWorkbenchApi(page, 'ready', count);
   await page.setViewportSize({ width, height: 1000 });
   await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
   await page.goto('/');
-  await expect(page.getByRole('tab', { name: 'Business' })).toBeVisible();
+  await expect(page.getByLabel('Trajectory views').getByRole('tab', { name: 'Business' })).toBeVisible();
 }
 
 test('approved wide dark business workbench', async ({ page }) => {
@@ -23,6 +23,17 @@ test('approved wide light business workbench', async ({ page }) => {
   await expect(page).toHaveScreenshot('business-light-wide.png', { animations: 'disabled', fullPage: true });
 });
 
+test('all four audit inspector panels have reviewed wide baselines', async ({ page }) => {
+  await ready(page, 1600, 'dark', 10);
+  await page.getByTestId('causal-node-claim:7').click();
+  const inspector = page.getByTestId('audit-inspector');
+  for (const panel of ['Overview', 'Evidence', 'Context', 'Execution']) {
+    await inspector.getByRole('tab', { name: panel }).click();
+    await expect(page.getByTestId(`audit-panel-${panel.toLowerCase()}`)).toBeVisible();
+    await expect(page).toHaveScreenshot(`audit-inspector-${panel.toLowerCase()}.png`, { animations: 'disabled', fullPage: true });
+  }
+});
+
 test('dark medium layout keeps a resizable right inspector without page overflow', async ({ page }) => {
   await ready(page, 1024);
   await expect(page.getByRole('complementary', { name: 'Trajectory inspector' })).toBeVisible();
@@ -33,7 +44,7 @@ test('dark medium layout keeps a resizable right inspector without page overflow
   const handle = page.getByRole('separator', { name: 'Resize trajectory inspector' });
   const initialWidth = await inspector.evaluate((element) => element.getBoundingClientRect().width);
   await handle.press('ArrowLeft');
-  await expect(page.locator('.workbench-shell')).toHaveCSS('--inspector-width', '454px');
+  await expect(page.locator('.workbench-shell')).toHaveCSS('--inspector-width', '372px');
   await expect.poll(() => inspector.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(initialWidth);
   const handleBox = await handle.boundingBox();
   if (!handleBox) throw new Error('Inspector resize handle has no bounding box');
@@ -57,13 +68,14 @@ test('narrow workbench opens the inspector as a bottom sheet without horizontal 
 
 test('agent retry, context delta, and evidence tree preserve drill-down density', async ({ page }) => {
   await ready(page, 1600);
-  await page.getByRole('tab', { name: 'Agent' }).click();
+  const viewTabs = page.getByLabel('Trajectory views');
+  await viewTabs.getByRole('tab', { name: 'Agent' }).click();
   await expect(page.getByText('Retry 1 of 2')).toBeVisible();
   await expect(page).toHaveScreenshot('agent-retry.png', { animations: 'disabled', fullPage: true });
-  await page.getByRole('tab', { name: 'Context', exact: true }).click();
+  await viewTabs.getByRole('tab', { name: 'Context', exact: true }).click();
   await expect(page.getByText('scenario')).toBeVisible();
   await expect(page).toHaveScreenshot('context-delta.png', { animations: 'disabled', fullPage: true });
-  await page.getByRole('tab', { name: 'Evidence' }).click();
+  await viewTabs.getByRole('tab', { name: 'Evidence' }).click();
   await expect(page.getByRole('treegrid', { name: 'Evidence artifacts' })).toBeVisible();
   await expect(page).toHaveScreenshot('evidence-tree.png', { animations: 'disabled', fullPage: true });
 });

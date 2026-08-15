@@ -121,7 +121,7 @@ runs/analysis-20260814T081822Z
 
 ### Inspector 与移动设备
 
-- 宽屏：右侧 Inspector 显示节点身份、输入、输出、时序、上下文 delta、引用和工件。
+- 宽屏：左侧运行 rail、中央因果轨迹和右侧 Inspector 同屏显示；Inspector 的 **Overview / Evidence / Context / Execution** 四个页签分别显示节点身份、证据链、上下文 delta 和有界执行切片。
 - 800–1199px：Inspector 为可调整宽度的右栏；拖动分隔线或聚焦分隔线后使用方向键调整。
 - 小于 800px：点击 **Open inspector** 打开底部 sheet；`Escape` 或 **Close inspector** 关闭，焦点会返回触发按钮。
 
@@ -150,7 +150,8 @@ curl 'http://127.0.0.1:8765/api/runs/<analysis_id>/context?at_sequence=42'
 | 浏览器无法打开 | 确认命令仍在运行，并使用 `http://127.0.0.1:<PORT>/`，不要使用公网地址。 |
 | 显示 `corrupt` | 不要依据该 run 输出结论；检查其事件链和诊断，必要时重新执行分析。 |
 | Evidence 链接被拒绝 | 这是预期安全行为：路径、未登记引用、符号链接逃逸或摘要不匹配都会被拒绝。 |
-| 前端开发验证缺少浏览器 | 安装 Playwright Chromium：`npx playwright install chromium --prefix packages/trajectory-workbench`。 |
+| 前端开发验证缺少浏览器 | 默认使用 Playwright 固定版本 Chromium：`npx playwright install chromium --prefix packages/trajectory-workbench`。只有在固定浏览器档案不可用且明确接受本机差异时，才临时设置 `TRAJECTORY_WORKBENCH_BROWSER_CHANNEL=chrome` 使用系统 Chrome。 |
+| 需要复用已启动的本地 Vite 服务 | 默认测试会启动独立 loopback 服务以保持验证可重复；仅在本地排障时设置 `TRAJECTORY_WORKBENCH_REUSE_SERVER=1`。 |
 
 ## 7. 验证与维护
 
@@ -169,7 +170,11 @@ npm run test:e2e --prefix packages/trajectory-workbench
 浏览视觉基线时额外执行：
 
 ```sh
+npx playwright install chromium --prefix packages/trajectory-workbench
+npm run test:visual --prefix packages/trajectory-workbench -- --update-snapshots
 npm run test:visual --prefix packages/trajectory-workbench
 ```
+
+更新视觉基线前先确认功能测试通过；更新后检查宽屏深色、宽屏浅色、1024px 可调整 Inspector、768px 底部 sheet、所有异步状态，以及 Inspector 的 Overview / Evidence / Context / Execution 四个面板。正文应保持 13px、元数据保持 11px、普通标题不超过 16px。
 
 `make validate-provider` 会实际调用配置的模型，可能计费；只有在明确需要时才运行。

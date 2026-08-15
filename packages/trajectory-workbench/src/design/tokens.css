@@ -14,14 +14,17 @@
   --wb-gold: #f1c96c;
   --wb-violet: #bfa1ff;
   --wb-danger: #ff9da1;
-  --wb-space-1: 4px;
+  --wb-space-1: 8px;
   --wb-space-2: 8px;
-  --wb-space-3: 12px;
+  --wb-space-3: 16px;
   --wb-space-4: 16px;
   --wb-space-5: 24px;
   --wb-space-6: 32px;
   --wb-radius: 12px;
   --wb-radius-small: 8px;
+  --wb-font-body: 13px;
+  --wb-font-meta: 11px;
+  --wb-font-title: 16px;
   --wb-font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --wb-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --wb-shadow-1: 0 1px 2px rgb(0 0 0 / 18%);
@@ -40,7 +43,7 @@
   --wb-line-strong: rgb(29 43 61 / 22%);
   --wb-text: #152131;
   --wb-muted: #536276;
-  --wb-dim: #66768b;
+  --wb-dim: #4f5f73;
   --wb-accent: #08785c;
   --wb-accent-soft: #d7f2e9;
   --wb-blue: #1766b5;

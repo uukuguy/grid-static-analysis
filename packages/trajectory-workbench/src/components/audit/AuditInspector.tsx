@@ -46,7 +46,7 @@ export function AuditInspector({
     document.getElementById(`audit-inspector-tab-${tabs[next].id}`)?.focus();
   };
 
-  return <div className="inspector-content audit-inspector">
+  return <div className="inspector-content audit-inspector" data-testid="audit-inspector">
     {runStatus === 'partial' ? <InspectorRunNotice kind="partial" diagnostic={runDiagnostic} /> : null}
     <div role="tablist" aria-label="Audit inspector details" className="inspector-tabs">
       {tabs.map((tab, index) => <button
@@ -63,7 +63,7 @@ export function AuditInspector({
         {tab.label}
       </button>)}
     </div>
-    <section id={`audit-inspector-panel-${active}`} role="tabpanel" aria-label={tabs[activeIndex]?.label ?? 'Audit inspector'} className="inspector-panel audit-inspector-panel">
+    <section id={`audit-inspector-panel-${active}`} role="tabpanel" aria-label={tabs[activeIndex]?.label ?? 'Audit inspector'} className="inspector-panel audit-inspector-panel" data-testid={`audit-panel-${active}`}>
       {runStatus === 'corrupt'
         ? <InspectorRunNotice kind="corrupt" diagnostic={runDiagnostic} />
         : <PanelContent

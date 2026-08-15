@@ -65,4 +65,19 @@ describe('WorkbenchShell mobile inspector', () => {
     expect(screen.queryByRole('button', { name: 'Open inspector' })).not.toBeInTheDocument();
     expect(screen.getByRole('separator', { name: 'Resize trajectory inspector' })).toBeVisible();
   });
+
+  it('marks the desktop audit rail and inspector as stable audit regions', () => {
+    renderShell('none');
+
+    expect(screen.getByTestId('audit-rail')).toBeVisible();
+    expect(screen.getByTestId('audit-inspector')).toBeVisible();
+  });
+
+  it('does not duplicate inspector content in the mobile DOM before the sheet opens', () => {
+    renderMobileShell(<button type="button">Inspector-only action</button>);
+
+    expect(screen.queryByRole('button', { name: 'Inspector-only action' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
+    expect(screen.getAllByRole('button', { name: 'Inspector-only action' })).toHaveLength(1);
+  });
 });

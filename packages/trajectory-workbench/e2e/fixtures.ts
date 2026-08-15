@@ -8,12 +8,15 @@ const run = {
   replay_trusted_through: 100_000, diagnostic: null,
 };
 
+const claimSequence = 99_997;
+
 function node(sequence: number) {
+  const isClaim = sequence === claimSequence;
   return {
-    id: `business:${sequence}`, source: sequence % 3 === 0 ? 'agent-declared' : 'observed', source_sequences: [sequence], rule_id: null,
-    status: 'completed', unavailable_reason: null, source_sequence: sequence, kind: sequence === 99_750 ? 'claim' : 'tool',
-    title: sequence === 99_750 ? 'N-1 conclusion for line 17' : `Recorded business event ${sequence}`,
-    detail: 'Recorded deterministic projection detail.', refs: sequence === 99_750 ? ['evidence:line-17'] : [],
+    id: isClaim ? 'claim:7' : `business:${sequence}`, source: sequence % 3 === 0 ? 'agent-declared' : 'observed', source_sequences: [sequence], rule_id: null,
+    status: 'completed', unavailable_reason: null, source_sequence: sequence, kind: isClaim ? 'claim' : 'tool',
+    title: isClaim ? 'N-1 conclusion for line 17' : `Recorded business event ${sequence}`,
+    detail: 'Recorded deterministic projection detail.', refs: isClaim ? ['evidence:line-17'] : [],
   };
 }
 
@@ -68,14 +71,38 @@ const contextFrame = {
   max_sequence: 100_000, request_artifact_ref: 'artifact:request-input',
 };
 
+function contextFrameAt(sequence: number) {
+  return { ...contextFrame, id: `context:${sequence}`, source_sequences: [sequence], source_sequence: sequence, max_sequence: sequence };
+}
+
 const evidenceIndex = { analysis_id: 'analysis-test', records: {
   'evidence:line-17': {
-    id: 'evidence:line-17', source: 'observed', source_sequences: [99_750], rule_id: null, status: 'completed', unavailable_reason: null,
+    id: 'evidence:line-17', source: 'observed', source_sequences: [claimSequence], rule_id: null, status: 'completed', unavailable_reason: null,
     reference: 'evidence:line-17', kind: 'gridctl result', relative_path: 'evidence/line-17.json', sha256: 'a'.repeat(64), verification_status: 'verified',
-    producing_sequence: 99_750, consuming_sequences: [100_000], turn_id: 'analysis-test-t007', step_id: null, request_id: null,
+    producing_sequence: claimSequence, consuming_sequences: [100_000], turn_id: 'analysis-test-t007', step_id: null, request_id: null,
     tool_call_id: 'call:17', result_id: 'result:17', evidence_id: 'evidence:line-17', claim_id: 'claim:17',
   },
 } };
+
+function executionSliceAt(sequence: number) {
+  return {
+    analysis_id: 'analysis-test', source_sequence: sequence, unavailable_reason: null,
+    turn: {
+      id: 'turn:7', source: 'observed', source_sequences: [sequence], rule_id: null, status: 'completed', unavailable_reason: null,
+      turn_id: 'analysis-test-t007', ordinal: 7, steps: [{
+        id: 'step:7:claim', source: 'observed', source_sequences: [sequence], rule_id: null, status: 'completed', unavailable_reason: null,
+        step_id: 'analysis-test-t007-s002', request: {
+          id: 'request:7:claim', source: 'observed', source_sequences: [sequence], rule_id: null, status: 'completed', unavailable_reason: null,
+          request_id: 'request:7:claim', artifact_ref: 'artifact:request-input', retries: [], tools: [{
+            id: 'tool:line-17', source: 'observed', source_sequences: [sequence], rule_id: null, status: 'completed', unavailable_reason: null,
+            tool_call_id: 'call:17', capability: 'gridctl.contingency', start_sequence: sequence, end_sequence: sequence,
+            ok: true, duration_seconds: 0.42, artifact_ref: 'evidence:line-17', result_id: 'result:17', evidence_ref: 'evidence:line-17',
+          }], response: null,
+        },
+      }],
+    },
+  };
+}
 
 export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready', count = 1) {
   let olderBusinessAttempts = 0;
@@ -102,7 +129,8 @@ export async function mockWorkbenchApi(page: Page, scenario: Scenario = 'ready',
       return route.fulfill({ json: scenario === 'empty' ? { ...businessPage(0), items: [] } : businessPage(count) });
     }
     if (path.endsWith('/agent')) return route.fulfill({ json: agentPage });
-    if (path.includes('/context')) return route.fulfill({ json: contextFrame });
+    if (path.includes('/context')) return route.fulfill({ json: contextFrameAt(Number(url.searchParams.get('at_sequence') ?? run.last_sequence)) });
+    if (path.endsWith('/execution')) return route.fulfill({ json: executionSliceAt(Number(url.searchParams.get('at_sequence') ?? run.last_sequence)) });
     if (path.endsWith('/evidence')) return route.fulfill({ json: evidenceIndex });
     return route.fulfill({ status: 404, json: { code: 'not_found', message: 'not found' } });
   });

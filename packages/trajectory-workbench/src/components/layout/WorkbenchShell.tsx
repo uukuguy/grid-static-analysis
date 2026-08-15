@@ -68,14 +68,14 @@ export function WorkbenchShell({ explorer, header, timeline, content, inspector,
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const currentWidth = inspectorWidth ?? window.innerWidth * 0.42;
+    const currentWidth = inspectorWidth ?? window.innerWidth * 0.34;
     setInspectorWidth(clampInspectorWidth(currentWidth + (event.key === 'ArrowLeft' ? 24 : -24)));
   };
 
   const shellStyle = isMedium && inspectorWidth !== null ? { '--inspector-width': `${inspectorWidth}px` } as CSSProperties : undefined;
   return <div className="workbench-shell" style={shellStyle}>
     <header className="topbar">{header}</header>
-    <aside className="run-rail">{explorer}</aside>
+    <aside className="run-rail" data-testid="audit-rail">{explorer}</aside>
     <section className="timeline-region" aria-label="Run overview timeline" data-focused-turn={focusedTurnId ?? undefined}>{timeline}</section>
     <main className="trajectory-main">{content}</main>
     {isMobile ? <>
@@ -88,7 +88,7 @@ export function WorkbenchShell({ explorer, header, timeline, content, inspector,
       </div> : null}
     </> : <>
       {isMedium ? <div className="inspector-resize-handle" role="separator" aria-label="Resize trajectory inspector" aria-orientation="vertical" tabIndex={0} onPointerDown={resizeInspector} onKeyDown={resizeWithKeyboard} /> : null}
-      <aside className="inspector" aria-label="Trajectory inspector">{inspector}</aside>
+      <aside className="inspector" aria-label="Trajectory inspector" data-testid="audit-inspector-region">{inspector}</aside>
     </>}
   </div>;
 }

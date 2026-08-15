@@ -1,6 +1,29 @@
 import { expect, test } from '@playwright/test';
 import { mockWorkbenchApi } from './fixtures';
 
+test('desktop audit density shows ten causal rows and all three audit regions at 1440px', async ({ page }) => {
+  await mockWorkbenchApi(page, 'ready', 10);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/');
+
+  await expect(page.getByTestId('audit-rail')).toBeVisible();
+  await expect(page.locator('[data-testid^="causal-node-"]')).toHaveCount(10);
+  await expect(page.getByTestId('audit-inspector')).toBeVisible();
+});
+
+test('claim investigation reaches evidence, context, and execution without a route reload', async ({ page }) => {
+  await mockWorkbenchApi(page, 'ready', 10);
+  await page.goto('/');
+  const initialNavigationEntries = await page.evaluate(() => performance.getEntriesByType('navigation').length);
+
+  await page.getByTestId('causal-node-claim:7').click();
+  for (const panel of ['Evidence', 'Context', 'Execution']) {
+    await page.getByTestId('audit-inspector').getByRole('tab', { name: panel }).click();
+    await expect(page.getByTestId(`audit-panel-${panel.toLowerCase()}`)).toBeVisible();
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByType('navigation').length)).toBe(initialNavigationEntries);
+  }
+});
+
 test('100k trajectory remains cursor-paginated and mounts a bounded row window', async ({ page }) => {
   const requests: string[] = [];
   page.on('request', (request) => { if (new URL(request.url()).pathname.startsWith('/api/')) requests.push(request.url()); });
@@ -32,7 +55,7 @@ test('API-only e2e never requests a mutating endpoint', async ({ page }) => {
   page.on('request', (request) => { if (new URL(request.url()).pathname.startsWith('/api/')) methods.push(request.method()); });
   await mockWorkbenchApi(page);
   await page.goto('/');
-  await page.getByRole('tab', { name: 'Evidence' }).click();
+  await page.getByLabel('Trajectory views').getByRole('tab', { name: 'Evidence' }).click();
   await expect(page.getByRole('treegrid', { name: 'Evidence artifacts' })).toBeVisible();
   expect(methods).not.toContain('POST');
   expect(methods).not.toContain('PUT');

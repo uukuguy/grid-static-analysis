@@ -3,6 +3,8 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
+const browserChannel = process.env.TRAJECTORY_WORKBENCH_BROWSER_CHANNEL === 'chrome' ? 'chrome' : undefined;
+const reuseExistingServer = process.env.TRAJECTORY_WORKBENCH_REUSE_SERVER === '1';
 
 // The operator environment may proxy HTTP generally; a test server must never
 // leave the host, and Playwright's readiness probe must bypass that proxy too.
@@ -16,9 +18,9 @@ export default defineConfig({
   fullyParallel: false,
   use: {
     baseURL: 'http://127.0.0.1:4174',
-    // Local fallback while the Playwright Chromium archive is unavailable.
-    // Clean environments still install the pinned Playwright Chromium first.
-    channel: 'chrome',
+    // Default to Playwright's pinned Chromium. Operators may opt into the
+    // system Chrome channel only with TRAJECTORY_WORKBENCH_BROWSER_CHANNEL=chrome.
+    ...(browserChannel ? { channel: browserChannel } : {}),
     launchOptions: { args: ['--no-proxy-server'] },
     viewport: { width: 1440, height: 960 },
     trace: 'retain-on-failure',
@@ -26,9 +28,8 @@ export default defineConfig({
   webServer: {
     command: `node ./node_modules/vite/bin/vite.js "${packageRoot}" --host 127.0.0.1 --port 4174 --strictPort`,
     url: 'http://127.0.0.1:4174',
-    // Workbench validation is intentionally loopback-only; reusing an already
-    // running local Vite instance keeps focused reruns deterministic as well.
-    reuseExistingServer: true,
+    // Reuse only when explicitly requested so CI and release validation stay hermetic.
+    reuseExistingServer,
     timeout: 30_000,
     cwd: packageRoot,
   },
