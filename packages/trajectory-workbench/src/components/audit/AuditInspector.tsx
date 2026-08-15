@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from 'react';
 import { useState } from 'react';
-import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, ExecutionSlice, JsonValue, ModelRequest, ToolCall } from '../../api/types';
+import type { AgentStep, AgentTurn, AssistantResponse, ContextFrame, EvidenceRecord, ExecutionSlice, JsonValue, ModelRequest, ProjectionNode, ToolCall } from '../../api/types';
 import type { AuditInspectorModel, AuditPanel } from '../../audit/inspector-model';
 import { AsyncState, type AsyncStateName } from '../common/AsyncState';
 import { SourceBadge } from '../common/SourceBadge';
@@ -189,7 +189,8 @@ function StateBlock({ title, value }: { title: string; value: JsonValue }) {
 
 function ExecutionPanel({ model, executionSlice }: { model: AuditInspectorModel; executionSlice?: ExecutionSlice | null }) {
   const staleSlice = executionSlice !== undefined && executionSlice !== null && executionSlice.source_sequence !== model.selection.sequence;
-  const turn = executionSlice === undefined ? model.execution : staleSlice ? null : executionSlice?.turn ?? null;
+  const rawTurn = executionSlice === undefined ? model.execution : staleSlice ? null : executionSlice?.turn ?? null;
+  const turn = executionSlice === undefined ? rawTurn : rawTurn ? scopeTurn(rawTurn, model.selection.sequence) : null;
   const unavailable = executionSlice === undefined
     ? model.unavailable.execution
     : staleSlice
@@ -210,6 +211,32 @@ function ExecutionPanel({ model, executionSlice }: { model: AuditInspectorModel;
 
 function sourceSequence(turn: AgentTurn) {
   return turn.source_sequence ?? Math.max(...turn.source_sequences);
+}
+
+function scopeTurn(turn: AgentTurn, sequence: number): AgentTurn | null {
+  const steps = turn.steps
+    .map((step) => scopeStepForSequence(step, sequence))
+    .filter((step): step is AgentStep => Boolean(step));
+  if (!nodeMatchesSequence(turn, sequence) && steps.length === 0) return null;
+  return { ...turn, steps };
+}
+
+function scopeStepForSequence(step: AgentStep, sequence: number): AgentStep | null {
+  const request = step.request ? scopeRequestForSequence(step.request, sequence) : null;
+  if (!nodeMatchesSequence(step, sequence) && !request) return null;
+  return { ...step, request };
+}
+
+function scopeRequestForSequence(request: ModelRequest, sequence: number): ModelRequest | null {
+  const retries = request.retries.filter((retry) => nodeMatchesSequence(retry, sequence));
+  const response = request.response && nodeMatchesSequence(request.response, sequence) ? request.response : null;
+  const tools = request.tools.filter((tool) => nodeMatchesSequence(tool, sequence));
+  if (!nodeMatchesSequence(request, sequence) && retries.length === 0 && !response && tools.length === 0) return null;
+  return { ...request, retries, response, tools };
+}
+
+function nodeMatchesSequence(node: ProjectionNode, sequence: number) {
+  return node.source_sequences.includes(sequence) || node.id.split(':').includes(String(sequence));
 }
 
 function StepCard({ step }: { step: AgentStep }) {

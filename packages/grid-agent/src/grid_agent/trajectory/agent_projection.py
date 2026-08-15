@@ -16,6 +16,7 @@ from grid_agent.trajectory.projection_models import (
     LifecycleStatus,
     ModelRequest,
     ProjectedRun,
+    ProjectionNode,
     ToolCall,
 )
 from grid_agent.trajectory.replay import ReplayEventLike
@@ -360,11 +361,12 @@ def project_agent(events: Sequence[ReplayEventLike]) -> AgentTrajectory:
 def execution_slice(projected: ProjectedRun, sequence: int) -> ExecutionSlice:
     """Return the owning turn only when a typed agent node records the sequence."""
     for turn in projected.agent.turns:
-        if _turn_contains_sequence(turn, sequence):
+        scoped = _scope_turn(turn, sequence)
+        if scoped is not None:
             return ExecutionSlice(
                 analysis_id=projected.analysis_id,
                 source_sequence=sequence,
-                turn=turn,
+                turn=scoped,
                 unavailable_reason=None,
             )
     return ExecutionSlice(
@@ -375,26 +377,43 @@ def execution_slice(projected: ProjectedRun, sequence: int) -> ExecutionSlice:
     )
 
 
-def _turn_contains_sequence(turn: AgentTurn, sequence: int) -> bool:
-    if sequence in turn.source_sequences:
-        return True
-    for step in turn.steps:
-        if _step_contains_sequence(step, sequence):
-            return True
-    return False
+def _scope_turn(turn: AgentTurn, sequence: int) -> AgentTurn | None:
+    steps = tuple(
+        scoped for step in turn.steps if (scoped := _scope_step(step, sequence)) is not None
+    )
+    if not _node_matches_sequence(turn, sequence) and not steps:
+        return None
+    return turn.model_copy(update={"steps": steps})
 
 
-def _step_contains_sequence(step: AgentStep, sequence: int) -> bool:
-    if sequence in step.source_sequences:
-        return True
-    return step.request is not None and _request_contains_sequence(step.request, sequence)
+def _scope_step(step: AgentStep, sequence: int) -> AgentStep | None:
+    request = _scope_request(step.request, sequence) if step.request is not None else None
+    if not _node_matches_sequence(step, sequence) and request is None:
+        return None
+    return step.model_copy(update={"request": request})
 
 
-def _request_contains_sequence(request: ModelRequest, sequence: int) -> bool:
-    if sequence in request.source_sequences:
-        return True
-    if any(sequence in retry.source_sequences for retry in request.retries):
-        return True
-    if request.response is not None and sequence in request.response.source_sequences:
-        return True
-    return any(sequence in tool.source_sequences for tool in request.tools)
+def _scope_request(request: ModelRequest, sequence: int) -> ModelRequest | None:
+    retries = tuple(
+        retry for retry in request.retries if _node_matches_sequence(retry, sequence)
+    )
+    response = (
+        request.response
+        if request.response is not None and _node_matches_sequence(request.response, sequence)
+        else None
+    )
+    tools = tuple(tool for tool in request.tools if _node_matches_sequence(tool, sequence))
+    if (
+        not _node_matches_sequence(request, sequence)
+        and not retries
+        and response is None
+        and not tools
+    ):
+        return None
+    return request.model_copy(
+        update={"retries": retries, "response": response, "tools": tools}
+    )
+
+
+def _node_matches_sequence(node: ProjectionNode, sequence: int) -> bool:
+    return sequence in node.source_sequences or str(sequence) in node.id.split(":")

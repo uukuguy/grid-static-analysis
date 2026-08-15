@@ -98,6 +98,47 @@ class StubCatalog:
                                 end_sequence=49,
                                 ok=True,
                             ),
+                            ToolCall(
+                                id="agent:analysis-test:unrelated-tool",
+                                source="observed",
+                                source_sequences=(50, 51),
+                                status="completed",
+                                tool_call_id="unrelated-tool",
+                                capability="provider_payload.unrelated",
+                                start_sequence=50,
+                                end_sequence=51,
+                                artifact_ref="/private/turns/provider_payload.json",
+                                ok=True,
+                            ),
+                        ),
+                    ),
+                ),
+                AgentStep(
+                    id="agent:analysis-test:unrelated-step",
+                    source="observed",
+                    source_sequences=(52,),
+                    status="completed",
+                    step_id="unrelated-step",
+                    request=ModelRequest(
+                        id="agent:analysis-test:unrelated-request",
+                        source="observed",
+                        source_sequences=(53,),
+                        status="completed",
+                        request_id="unrelated-request",
+                        artifact_ref="/private/turns/provider_payload.json",
+                        tools=(
+                            ToolCall(
+                                id="agent:analysis-test:unrelated-step-tool",
+                                source="observed",
+                                source_sequences=(54, 55),
+                                status="completed",
+                                tool_call_id="unrelated-step-tool",
+                                capability="provider_payload.step",
+                                start_sequence=54,
+                                end_sequence=55,
+                                artifact_ref="/private/turns/provider_payload.json",
+                                ok=True,
+                            ),
                         ),
                     ),
                 ),
@@ -317,6 +358,10 @@ def test_execution_slice_returns_only_agent_records_causally_bound_to_sequence(t
 
     assert response.status_code == 200
     assert response.json()["turn"]["turn_id"] == "analysis-test-t007"
+    assert response.json()["turn"]["steps"][0]["step_id"] == "step-7"
+    assert response.json()["turn"]["steps"][0]["request"]["tools"][0]["tool_call_id"] == "tool-7"
+    assert len(response.json()["turn"]["steps"]) == 1
+    assert len(response.json()["turn"]["steps"][0]["request"]["tools"]) == 1
     assert response.json()["source_sequence"] == 48
     assert response.json()["unavailable_reason"] is None
     assert "provider_payload" not in response.text

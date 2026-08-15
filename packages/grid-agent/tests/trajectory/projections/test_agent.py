@@ -212,6 +212,38 @@ def test_execution_slice_uses_nested_source_sequences_without_nearest_fallback()
             ),
             {"capability": "grid.analyze", "ok": True},
         ),
+        Event(23, "step.started", RunScope(turn_id="turn-1", step_id="step-unrelated")),
+        Event(
+            24,
+            "model.request.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-unrelated",
+                request_id="request-unrelated",
+            ),
+        ),
+        Event(
+            25,
+            "tool.started",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-unrelated",
+                request_id="request-unrelated",
+                tool_call_id="tool-unrelated",
+            ),
+            {"capability": "provider_payload.unrelated"},
+        ),
+        Event(
+            26,
+            "tool.completed",
+            RunScope(
+                turn_id="turn-1",
+                step_id="step-unrelated",
+                request_id="request-unrelated",
+                tool_call_id="tool-unrelated",
+            ),
+            {"capability": "provider_payload.unrelated", "ok": True},
+        ),
     )
     projected = ProjectedRun(
         analysis_id="analysis-1",
@@ -223,9 +255,18 @@ def test_execution_slice_uses_nested_source_sequences_without_nearest_fallback()
     )
 
     linked = execution_slice(projected, 22)
+    turn_level = execution_slice(projected, 10)
     missing = execution_slice(projected, 19)
 
     assert linked.turn is not None
     assert linked.turn.turn_id == "turn-1"
+    assert [step.step_id for step in linked.turn.steps] == ["step-1"]
+    assert linked.turn.steps[0].request is not None
+    assert [tool.tool_call_id for tool in linked.turn.steps[0].request.tools] == [
+        "tool-1"
+    ]
+    assert turn_level.turn is not None
+    assert turn_level.turn.turn_id == "turn-1"
+    assert turn_level.turn.steps == ()
     assert missing.turn is None
     assert missing.unavailable_reason == "no durable execution linkage is recorded"

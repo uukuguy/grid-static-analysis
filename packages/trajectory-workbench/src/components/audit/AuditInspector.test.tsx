@@ -240,4 +240,121 @@ describe('AuditInspector', () => {
     expect(screen.getByText('no durable execution linkage is recorded')).toBeVisible();
     expect(screen.queryByText('turn-7')).not.toBeInTheDocument();
   });
+
+  it('renders only execution-slice descendants linked to the selected sequence', () => {
+    const model: AuditInspectorModel = {
+      selection,
+      evidence: [],
+      context: null,
+      execution: null,
+      unavailable: {},
+    };
+    const executionSlice: ExecutionSlice = {
+      analysis_id: 'analysis-test',
+      source_sequence: 61,
+      unavailable_reason: null,
+      turn: {
+        ...turn,
+        steps: [
+          {
+            id: 'step:related',
+            source: 'observed',
+            source_sequences: [60],
+            rule_id: null,
+            status: 'completed',
+            unavailable_reason: null,
+            step_id: 'step-related',
+            request: {
+              id: 'request:related',
+              source: 'observed',
+              source_sequences: [60],
+              rule_id: null,
+              status: 'completed',
+              unavailable_reason: null,
+              request_id: 'request-related',
+              artifact_ref: 'artifact:request',
+              retries: [],
+              response: {
+                id: 'response:related',
+                source: 'observed',
+                source_sequences: [61],
+                rule_id: null,
+                status: 'completed',
+                unavailable_reason: null,
+                artifact_ref: 'artifact:response',
+                stop_reason: 'stop',
+                input_tokens: 120,
+                output_tokens: 45,
+                ttft_seconds: 0.2,
+                duration_seconds: 1.4,
+              },
+              tools: [
+                {
+                  id: 'tool:related',
+                  source: 'observed',
+                  source_sequences: [61],
+                  rule_id: null,
+                  status: 'completed',
+                  unavailable_reason: null,
+                  tool_call_id: 'tool-related',
+                  capability: 'grid.analyze',
+                  start_sequence: 61,
+                  end_sequence: null,
+                  artifact_ref: 'artifact:tool',
+                  ok: true,
+                  duration_seconds: 1.25,
+                },
+                {
+                  id: 'tool:unrelated',
+                  source: 'observed',
+                  source_sequences: [62],
+                  rule_id: null,
+                  status: 'completed',
+                  unavailable_reason: null,
+                  tool_call_id: 'tool-unrelated',
+                  capability: 'provider_payload.unrelated',
+                  start_sequence: 62,
+                  end_sequence: null,
+                  artifact_ref: '/private/turns/provider_payload.json',
+                  ok: true,
+                  duration_seconds: 0.1,
+                },
+              ],
+            },
+          },
+          {
+            id: 'step:unrelated',
+            source: 'observed',
+            source_sequences: [63],
+            rule_id: null,
+            status: 'completed',
+            unavailable_reason: null,
+            step_id: 'step-unrelated',
+            request: {
+              id: 'request:unrelated',
+              source: 'observed',
+              source_sequences: [64],
+              rule_id: null,
+              status: 'completed',
+              unavailable_reason: null,
+              request_id: 'request-unrelated',
+              artifact_ref: '/private/turns/provider_payload.json',
+              retries: [],
+              response: null,
+              tools: [],
+            },
+          },
+        ],
+      },
+    };
+
+    render(<AuditInspector model={model} executionSlice={executionSlice} artifactUrl={() => '#'} onSelectSequence={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Execution' }));
+
+    expect(screen.getByText('request-related')).toBeVisible();
+    expect(screen.getByText('grid.analyze')).toBeVisible();
+    expect(screen.queryByText('request-unrelated')).not.toBeInTheDocument();
+    expect(screen.queryByText('provider_payload.unrelated')).not.toBeInTheDocument();
+    expect(screen.queryByText('/private/turns/provider_payload.json')).not.toBeInTheDocument();
+  });
 });
