@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from fastapi.exceptions import RequestValidationError
@@ -79,6 +80,8 @@ _PUBLIC_TOOL_CAPABILITIES = frozenset(
         "topology.components.get",
     }
 )
+_UNAVAILABLE_ARTIFACT_PATH = "unavailable"
+_UNSAFE_ARTIFACT_PATH_REASON = "artifact path is unsafe for public display"
 
 
 class ProjectionPageResponse(StrictFrozenModel):
@@ -542,9 +545,13 @@ def _evidence_records(
     projected: ProjectedRun,
     filters: Mapping[str, str | int | bool],
 ) -> tuple[_ProjectionRecord, ...]:
+    public_records = tuple(
+        _public_evidence_record(record)
+        for record in projected.artifacts.records.values()
+    )
     selected = tuple(
         record
-        for record in projected.artifacts.records.values()
+        for record in public_records
         if _evidence_matches(record, filters)
     )
     sort = filters.get("sort", "producer_sequence")
@@ -556,6 +563,33 @@ def _evidence_records(
         _ProjectionRecord(sequence=position, item=record.model_dump(mode="json"))
         for position, record in enumerate(ordered, start=1)
     )
+
+
+def _public_evidence_record(record: ArtifactIndexRecord) -> ArtifactIndexRecord:
+    if _is_safe_public_artifact_path(record):
+        return record
+    return record.model_copy(
+        update={
+            "status": "unavailable",
+            "unavailable_reason": _UNSAFE_ARTIFACT_PATH_REASON,
+            "relative_path": _UNAVAILABLE_ARTIFACT_PATH,
+            "sha256": "unavailable",
+            "verification_status": "unavailable",
+        }
+    )
+
+
+def _is_safe_public_artifact_path(record: ArtifactIndexRecord) -> bool:
+    value = record.relative_path
+    if value == _UNAVAILABLE_ARTIFACT_PATH:
+        return (
+            record.status == "unavailable"
+            and record.verification_status == "unavailable"
+        )
+    if not value or "\\" in value or any(ord(character) < 32 for character in value):
+        return False
+    path = PurePosixPath(value)
+    return bool(path.parts) and not path.is_absolute() and ".." not in path.parts
 
 
 def _evidence_matches(

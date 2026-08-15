@@ -263,6 +263,55 @@ def test_evidence_page_maps_public_metadata_without_content(tmp_path: Path) -> N
     assert "# Answer" not in response.text
 
 
+def test_evidence_page_downgrades_unsafe_relative_paths_before_filtering(
+    tmp_path: Path,
+) -> None:
+    app, catalog, _ = create_test_app(tmp_path)
+    unsafe = ArtifactIndexRecord(
+        id="artifact:analysis-test:unsafe-path",
+        source_sequences=(901,),
+        reference="artifact:unsafe-path",
+        kind="answer",
+        relative_path="../outside.json",
+        sha256="c" * 64,
+        verification_status="verified",
+    )
+    catalog.projected = catalog.projected.model_copy(
+        update={
+            "artifacts": ArtifactIndex(
+                analysis_id="analysis-test", records={unsafe.reference: unsafe}
+            )
+        }
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/runs/analysis-test/evidence")
+
+    assert response.status_code == 200
+    assert "../outside.json" not in response.text
+    assert response.json()["items"] == [
+        unsafe.model_dump(mode="json")
+        | {
+            "status": "unavailable",
+            "unavailable_reason": "artifact path is unsafe for public display",
+            "relative_path": "unavailable",
+            "sha256": "unavailable",
+            "verification_status": "unavailable",
+        }
+    ]
+    assert client.get(
+        "/api/runs/analysis-test/evidence",
+        params={"verification_status": "verified"},
+    ).json()["items"] == []
+    unavailable = client.get(
+        "/api/runs/analysis-test/evidence",
+        params={"verification_status": "unavailable"},
+    )
+    assert [record["reference"] for record in unavailable.json()["items"]] == [
+        unsafe.reference
+    ]
+
+
 def test_evidence_filters_lineage_sequence_and_sort(tmp_path: Path) -> None:
     app, catalog, _ = create_test_app(tmp_path)
     relevant = ArtifactIndexRecord(
