@@ -60,9 +60,23 @@ class _NativeArtifacts:
             return ArtifactPointer(ref=reference, kind=kind, relative_path=relative, sha256=digest, size_bytes=path.stat().st_size)
         raise RuntimeError("native artifact digest is unavailable")
 
-    def verify(self, reference: str) -> SimpleNamespace:
-        self.verify_reference(reference)
-        return SimpleNamespace(authority="gridctl", integrity="verified")
+    def verify(self, reference: str | ArtifactPointer) -> Path:
+        pointer = self.verify_reference(reference) if isinstance(reference, str) else reference
+        if not isinstance(pointer, ArtifactPointer):
+            raise RuntimeError("native artifact pointer is unavailable")
+        if pointer.ref != f"artifact:sha256:{pointer.sha256}":
+            raise RuntimeError("native artifact pointer has an invalid reference")
+        path = self.run_root / pointer.relative_path
+        try:
+            path.resolve(strict=True).relative_to(self.run_root.resolve(strict=True))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("native artifact pointer escapes the run root") from exc
+        value = path.read_bytes()
+        if len(value) != pointer.size_bytes:
+            raise RuntimeError("native artifact size does not match its pointer")
+        if hashlib.sha256(value).hexdigest() != pointer.sha256:
+            raise RuntimeError("native artifact digest does not match its pointer")
+        return path
 
 
 class ProjectionService:

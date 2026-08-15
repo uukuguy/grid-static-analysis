@@ -15,7 +15,8 @@ from grid_agent.trajectory.projection_models import (
     ProjectionDiagnostic,
 )
 from grid_agent.trajectory.replay import ImportedRunEvent, SourceCoordinate
-from grid_agent.trajectory.service import ProjectionService
+from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.service import ProjectionService, _NativeArtifacts
 
 
 def test_imported_event_keeps_null_time_and_importer_integrity_label() -> None:
@@ -51,6 +52,21 @@ def test_projection_service_opens_legacy_run_without_writing_source(tmp_path) ->
     projected = ProjectionService(tmp_path / ".grid-agent/trajectory-cache").open_run(run)
     assert projected.analysis_id == "analysis-old"
     assert _digests(run) == before
+
+
+def test_native_artifact_verifier_accepts_replayed_artifact_pointer(tmp_path) -> None:
+    run_root = tmp_path / "runs/analysis-native"
+    registry = ImmutableArtifactRegistry(run_root)
+    pointer = registry.write_json(
+        "context-view",
+        "analysis-native-r001",
+        {"analysis_id": "analysis-native", "revision": 1, "state_hash": "sha256:" + "a" * 64},
+    )
+    verifier = _NativeArtifacts(run_root)
+
+    replayed_pointer = verifier.verify_reference(pointer.ref)
+
+    assert verifier.verify(replayed_pointer) == run_root / pointer.relative_path
 
 
 def test_imported_event_rejects_native_integrity_claim() -> None:

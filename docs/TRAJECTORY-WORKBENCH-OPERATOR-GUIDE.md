@@ -150,7 +150,7 @@ curl 'http://127.0.0.1:8765/api/runs/<analysis_id>/context?at_sequence=42'
 | 浏览器无法打开 | 确认命令仍在运行，并使用 `http://127.0.0.1:<PORT>/`，不要使用公网地址。 |
 | 显示 `corrupt` | 不要依据该 run 输出结论；检查其事件链和诊断，必要时重新执行分析。 |
 | Evidence 链接被拒绝 | 这是预期安全行为：路径、未登记引用、符号链接逃逸或摘要不匹配都会被拒绝。 |
-| 前端开发验证缺少浏览器 | 默认使用 Playwright 固定版本 Chromium：`npx playwright install chromium --prefix packages/trajectory-workbench`。只有在固定浏览器档案不可用且明确接受本机差异时，才临时设置 `TRAJECTORY_WORKBENCH_BROWSER_CHANNEL=chrome` 使用系统 Chrome。 |
+| 前端开发验证缺少浏览器 | 默认使用 Playwright 固定版本 Chromium：`npm exec --prefix packages/trajectory-workbench -- playwright install chromium`。只有在固定浏览器档案不可用且明确接受本机差异时，才临时设置 `TRAJECTORY_WORKBENCH_BROWSER_CHANNEL=chrome` 使用系统 Chrome。 |
 | 需要复用已启动的本地 Vite 服务 | 默认测试会启动独立 loopback 服务以保持验证可重复；仅在本地排障时设置 `TRAJECTORY_WORKBENCH_REUSE_SERVER=1`。 |
 
 ## 7. 验证与维护
@@ -170,7 +170,7 @@ npm run test:e2e --prefix packages/trajectory-workbench
 浏览视觉基线时额外执行：
 
 ```sh
-npx playwright install chromium --prefix packages/trajectory-workbench
+npm exec --prefix packages/trajectory-workbench -- playwright install chromium
 npm run test:visual --prefix packages/trajectory-workbench -- --update-snapshots
 npm run test:visual --prefix packages/trajectory-workbench
 ```

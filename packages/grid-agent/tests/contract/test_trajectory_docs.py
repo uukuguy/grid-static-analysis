@@ -22,3 +22,11 @@ def test_trajectory_docs_allow_unknown_context_revisions() -> None:
 
     assert "null/unknown" in text
     assert "authoritative surrounding state" in text
+
+
+def test_trajectory_workbench_operator_guide_uses_working_playwright_install_command() -> None:
+    root = Path(__file__).resolve().parents[4]
+    text = (root / "docs/TRAJECTORY-WORKBENCH-OPERATOR-GUIDE.md").read_text(encoding="utf-8")
+
+    assert "npm exec --prefix packages/trajectory-workbench -- playwright install chromium" in text
+    assert "npx playwright install chromium --prefix packages/trajectory-workbench" not in text
