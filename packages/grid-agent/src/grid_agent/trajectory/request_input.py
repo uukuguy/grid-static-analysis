@@ -41,28 +41,6 @@ _NUMERIC_OPTION_KEYS = frozenset(
         "maxRetryDelayMs",
     }
 )
-_PROHIBITED_KEY_TOKENS = frozenset(
-    {
-        "accesstoken",
-        "apikey",
-        "authorization",
-        "chainofthought",
-        "clientsecret",
-        "credential",
-        "credentials",
-        "gridagenttrajectoryacks",
-        "hiddenreasoning",
-        "password",
-        "private",
-        "providerpayload",
-        "reasoningcontent",
-        "refreshtoken",
-        "secret",
-        "signature",
-        "thinkingsignature",
-        "token",
-    }
-)
 
 
 class CanonicalRequestValidationError(ValueError):
@@ -202,7 +180,6 @@ def _validate_runtime(value: object) -> None:
 def _semantic_request(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise CanonicalRequestValidationError("semantic_request must be an object")
-    _reject_prohibited_fields(value, "semantic_request")
     if set(value) != {"model", "context", "options"}:
         raise CanonicalRequestValidationError("semantic_request shape is invalid")
     _semantic_model(value.get("model"))
@@ -468,38 +445,9 @@ def _validate_public_json_leaf(value: object, path: str) -> None:
                 raise CanonicalRequestValidationError(
                     f"{path} contains a non-string key"
                 )
-            if _is_prohibited_key(key):
-                raise CanonicalRequestValidationError(
-                    f"{path} contains prohibited private field"
-                )
             _validate_public_json_leaf(item, f"{path}.{key}")
         return
     raise CanonicalRequestValidationError(f"{path} contains a non-JSON value")
-
-
-def _reject_prohibited_fields(value: object, path: str) -> None:
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise CanonicalRequestValidationError(
-                    f"{path} contains a non-string key"
-                )
-            if _is_prohibited_key(key):
-                raise CanonicalRequestValidationError(
-                    f"{path} contains prohibited private field"
-                )
-            _reject_prohibited_fields(item, f"{path}.{key}")
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            _reject_prohibited_fields(item, f"{path}[{index}]")
-
-
-def _is_prohibited_key(key: str) -> bool:
-    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
-    for token in _PROHIBITED_KEY_TOKENS:
-        if normalized == token or (len(token) > 5 and token in normalized):
-            return True
-    return False
 
 
 def _nonnegative_number(value: object, name: str) -> None:
