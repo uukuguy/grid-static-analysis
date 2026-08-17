@@ -151,6 +151,67 @@ test("rejects unknown pi-ai roles and content variants before creating a request
   }
 });
 
+test("rejects unknown and malformed public options before creating a request document", async () => {
+  for (const options of [
+    { apiKey: "secret-not-public" },
+    { headers: { Authorization: "Bearer secret" } },
+    { onPayload: () => undefined },
+    { reasoning: "verbose" },
+    { transport: "http" },
+    { cacheRetention: "forever" },
+    { thinkingBudgets: { medium: 2048, xhigh: 4096 } },
+    { thinkingBudgets: { medium: -1 } },
+    { thinkingBudgets: { medium: Number.POSITIVE_INFINITY } },
+    { thinkingBudgets: [] },
+    { temperature: Number.NaN },
+    { maxTokens: -1 },
+    { timeoutMs: "1234" },
+    { websocketConnectTimeoutMs: Number.POSITIVE_INFINITY },
+    { maxRetries: -1 },
+    { maxRetryDelayMs: Number.NaN },
+  ]) {
+    const root = await makeModelRequestFixture();
+    const failures = [];
+    const handlers = new Map();
+    configureModelRequestCapture(
+      { on: (name, handler) => handlers.set(name, handler) },
+      fixturePaths(root),
+      fatalCollector(failures),
+    );
+
+    await assert.rejects(
+      handlers.get("before_model_request")(modelRequestEvent({ options })),
+      /fatal-86/,
+    );
+    assert.match(failures[0], /canonical model request contract/);
+    await assert.rejects(access(join(root, "requests/analysis-test-t007-r001/input.json")));
+  }
+});
+
+test("schema closes and types public model options", async () => {
+  const schema = JSON.parse(
+    await readFile(new URL("../../../schemas/grid-model-request-input-v2.schema.json", import.meta.url), "utf8"),
+  );
+  const options = schema.$defs.options;
+  const budgets = schema.$defs.thinking_budgets;
+
+  assert.equal(options.additionalProperties, false);
+  assert.deepEqual(options.properties.reasoning.enum, ["minimal", "low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(options.properties.transport.enum, ["sse", "websocket", "websocket-cached", "auto"]);
+  assert.deepEqual(options.properties.cacheRetention.enum, ["none", "short", "long"]);
+  for (const key of ["temperature", "maxTokens", "timeoutMs", "websocketConnectTimeoutMs", "maxRetries", "maxRetryDelayMs"]) {
+    assert.equal(options.properties[key].type, "number");
+    assert.equal(options.properties[key].minimum, 0);
+  }
+  assert.equal(options.properties.thinkingBudgets.$ref, "#/$defs/thinking_budgets");
+  assert.equal(budgets.additionalProperties, false);
+  assert.deepEqual(Object.keys(budgets.properties).sort(), ["high", "low", "medium", "minimal"]);
+  for (const property of Object.values(budgets.properties)) {
+    assert.equal(property.type, "number");
+    assert.equal(property.minimum, 0);
+  }
+});
+
 test("capture refuses to replace an existing request document", async () => {
   const root = await makeModelRequestFixture();
   const requestPath = join(root, "requests/analysis-test-t007-r001/input.json");
@@ -247,9 +308,6 @@ function modelRequestEvent(overrides = {}) {
       websocketConnectTimeoutMs: 2345,
       maxRetries: 2,
       maxRetryDelayMs: 3000,
-      apiKey: "secret-not-public",
-      headers: { Authorization: "Bearer secret" },
-      onPayload: () => undefined,
     },
     ...overrides,
   };

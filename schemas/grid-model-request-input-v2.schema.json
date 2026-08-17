@@ -103,20 +103,30 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "reasoning": { "type": "string" },
-        "thinkingBudgets": { "$ref": "#/$defs/json_object" },
-        "temperature": { "type": "number" },
-        "maxTokens": { "type": "integer", "minimum": 0 },
+        "reasoning": { "enum": ["minimal", "low", "medium", "high", "xhigh", "max"] },
+        "thinkingBudgets": { "$ref": "#/$defs/thinking_budgets" },
+        "temperature": { "type": "number", "minimum": 0 },
+        "maxTokens": { "type": "number", "minimum": 0 },
         "transport": {
           "enum": ["sse", "websocket", "websocket-cached", "auto"]
         },
         "cacheRetention": {
           "enum": ["none", "short", "long"]
         },
-        "timeoutMs": { "type": "integer", "minimum": 0 },
-        "websocketConnectTimeoutMs": { "type": "integer", "minimum": 0 },
-        "maxRetries": { "type": "integer", "minimum": 0 },
-        "maxRetryDelayMs": { "type": "integer", "minimum": 0 }
+        "timeoutMs": { "type": "number", "minimum": 0 },
+        "websocketConnectTimeoutMs": { "type": "number", "minimum": 0 },
+        "maxRetries": { "type": "number", "minimum": 0 },
+        "maxRetryDelayMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "thinking_budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimal": { "type": "number", "minimum": 0 },
+        "low": { "type": "number", "minimum": 0 },
+        "medium": { "type": "number", "minimum": 0 },
+        "high": { "type": "number", "minimum": 0 }
       }
     },
     "message": {

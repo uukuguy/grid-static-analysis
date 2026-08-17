@@ -17,6 +17,20 @@ const PUBLIC_OPTION_KEYS = [
   "maxRetries",
   "maxRetryDelayMs",
 ];
+const PUBLIC_OPTION_KEY_SET = new Set(PUBLIC_OPTION_KEYS);
+const REASONING_VALUES = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+const TRANSPORT_VALUES = new Set(["sse", "websocket", "websocket-cached", "auto"]);
+const CACHE_RETENTION_VALUES = new Set(["none", "short", "long"]);
+const THINKING_BUDGET_KEYS = ["minimal", "low", "medium", "high"];
+const THINKING_BUDGET_KEY_SET = new Set(THINKING_BUDGET_KEYS);
+const NUMERIC_OPTION_KEYS = new Set([
+  "temperature",
+  "maxTokens",
+  "timeoutMs",
+  "websocketConnectTimeoutMs",
+  "maxRetries",
+  "maxRetryDelayMs",
+]);
 
 export class CanonicalRequestContractError extends Error {
   constructor(message) {
@@ -176,10 +190,51 @@ function canonicalOptions(options) {
   if (!isPlainObject(options)) {
     throw new CanonicalRequestContractError("options must be an object");
   }
+  for (const key of Object.keys(options)) {
+    if (!PUBLIC_OPTION_KEY_SET.has(key)) {
+      throw new CanonicalRequestContractError(`unknown option: ${key}`);
+    }
+  }
   const projected = {};
   for (const key of PUBLIC_OPTION_KEYS) {
     if (options[key] !== undefined) {
-      projected[key] = validateJsonLeaf(options[key], `options.${key}`);
+      projected[key] = canonicalOptionValue(key, options[key]);
+    }
+  }
+  return projected;
+}
+
+function canonicalOptionValue(key, value) {
+  switch (key) {
+    case "reasoning":
+      return requireEnum(value, "options.reasoning", REASONING_VALUES);
+    case "thinkingBudgets":
+      return canonicalThinkingBudgets(value);
+    case "transport":
+      return requireEnum(value, "options.transport", TRANSPORT_VALUES);
+    case "cacheRetention":
+      return requireEnum(value, "options.cacheRetention", CACHE_RETENTION_VALUES);
+    default:
+      if (NUMERIC_OPTION_KEYS.has(key)) {
+        return requireNonNegativeFiniteNumber(value, `options.${key}`);
+      }
+      throw new CanonicalRequestContractError(`unknown option: ${key}`);
+  }
+}
+
+function canonicalThinkingBudgets(value) {
+  if (!isPlainObject(value)) {
+    throw new CanonicalRequestContractError("options.thinkingBudgets must be an object");
+  }
+  for (const key of Object.keys(value)) {
+    if (!THINKING_BUDGET_KEY_SET.has(key)) {
+      throw new CanonicalRequestContractError(`unknown thinking budget: ${key}`);
+    }
+  }
+  const projected = {};
+  for (const key of THINKING_BUDGET_KEYS) {
+    if (value[key] !== undefined) {
+      projected[key] = requireNonNegativeFiniteNumber(value[key], `options.thinkingBudgets.${key}`);
     }
   }
   return projected;
@@ -281,6 +336,20 @@ function requireString(value, name) {
 function requireBoolean(value, name) {
   if (typeof value !== "boolean") {
     throw new CanonicalRequestContractError(`${name} must be a boolean`);
+  }
+  return value;
+}
+
+function requireEnum(value, name, allowed) {
+  if (typeof value !== "string" || !allowed.has(value)) {
+    throw new CanonicalRequestContractError(`${name} must be a supported value`);
+  }
+  return value;
+}
+
+function requireNonNegativeFiniteNumber(value, name) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new CanonicalRequestContractError(`${name} must be a finite non-negative number`);
   }
   return value;
 }
