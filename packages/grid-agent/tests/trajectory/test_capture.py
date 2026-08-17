@@ -447,6 +447,32 @@ def test_stream_deltas_only_update_ttft_and_never_persist_hidden_reasoning(
     assert "private reasoning" not in json.dumps(response_document)
 
 
+def test_capture_does_not_double_settle_error_response_on_agent_end(tmp_path: Path) -> None:
+    recorder, adapter, _workspace = capture_with_active_request(tmp_path)
+    adapter.on_raw_event(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "usage": {"input": 0, "output": 0},
+                "stopReason": "error",
+            },
+        }
+    )
+    adapter.on_raw_event(
+        {
+            "type": "agent_end",
+            "messages": [
+                {"role": "assistant", "stopReason": "error", "errorMessage": "invalid key"}
+            ],
+        }
+    )
+
+    assert [event.event_type for event in events(recorder)].count("model.response.completed") == 1
+    assert "model.response.failed" not in [event.event_type for event in events(recorder)]
+
+
 def test_capture_maps_prompt_provider_retry_and_interruption_events(
     tmp_path: Path,
 ) -> None:

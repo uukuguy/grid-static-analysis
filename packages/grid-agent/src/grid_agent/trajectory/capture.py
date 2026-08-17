@@ -234,7 +234,9 @@ class NativeCaptureAdapter:
             return
         if event_type == "agent_end":
             provider_error = _provider_error(event)
-            if provider_error is not None:
+            if provider_error is not None and (
+                self._current_request is None or not self._current_request.settled
+            ):
                 self._fail_response("provider_error", provider_error)
             return
         if event_type == "auto_retry_start":
