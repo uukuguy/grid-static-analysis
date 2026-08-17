@@ -174,7 +174,7 @@ def acknowledgement(workspace: AnalysisWorkspace, request_id: str) -> dict[str, 
     return json.loads(acknowledgement_path(workspace, request_id).read_text(encoding="utf-8"))
 
 
-def test_model_request_commit_ack_recomputes_digest_after_event_append(
+def test_model_request_commit_ack_uses_verified_declared_digest_after_event_append(
     tmp_path: Path,
 ) -> None:
     workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
@@ -201,7 +201,6 @@ def test_model_request_commit_ack_recomputes_digest_after_event_append(
         index=1,
         source_event_sequences=[11, 13],
         semantic_request=semantic,
-        semantic_request_sha256="f" * 64,
     )
 
     adapter.drain_model_requests()
@@ -238,6 +237,26 @@ def test_model_request_commit_ack_recomputes_digest_after_event_append(
     )
     assert response["provider"] == "deepseek"
     assert response["model"] == "deepseek-v4"
+
+
+def test_model_request_digest_mismatch_does_not_ack_or_advance_state(
+    tmp_path: Path,
+) -> None:
+    recorder, adapter, workspace = native_capture_fixture(tmp_path)
+    request_id = "analysis-test-t001-r001"
+    adapter.begin_turn("analysis-test-t001")
+    write_request_input(
+        workspace,
+        request_id=request_id,
+        index=1,
+        semantic_request_sha256="f" * 64,
+    )
+
+    with pytest.raises(CaptureIntegrityError, match="semantic_request_sha256"):
+        adapter.drain_model_requests()
+
+    assert not acknowledgement_path(workspace, request_id).exists()
+    assert events(recorder) == ()
 
 
 def test_malformed_model_request_does_not_ack_or_advance_state(

@@ -32,6 +32,10 @@ from grid_agent.trajectory.projection_models import (
     NodeSource,
     ProjectedRun,
 )
+from grid_agent.trajectory.request_input import (
+    CanonicalRequestValidationError,
+    canonical_request_preview,
+)
 
 
 SECURITY_HEADERS = {
@@ -377,23 +381,10 @@ def _canonical_request_preview(
         return None
     if not isinstance(document, dict):
         return None
-    if document.get("schema_version") != "grid-model-request-input/2.0":
+    try:
+        return canonical_request_preview(document)
+    except CanonicalRequestValidationError:
         return None
-    preview_keys = (
-        "request_id",
-        "request_index",
-        "turn_id",
-        "captured_at",
-        "source_event_sequences",
-        "context_revision",
-        "context_state_hash",
-        "runtime",
-        "semantic_request",
-        "semantic_request_sha256",
-    )
-    if not all(key in document for key in preview_keys):
-        return None
-    return {key: document[key] for key in preview_keys}
 
 
 def _packaged_static_root() -> Path:

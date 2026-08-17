@@ -21,6 +21,24 @@ from grid_agent.trajectory.projection_models import (
 from .test_app import create_test_app
 
 
+def _sha256_canonical_sorted(value: object) -> str:
+    encoded = json.dumps(
+        _sort_json(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _sort_json(value: object) -> object:
+    if isinstance(value, list):
+        return [_sort_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sort_json(value[key]) for key in sorted(value)}
+    return value
+
+
 def _large_agent_turn() -> AgentTurn:
     request = ModelRequest(
         id="agent:analysis-test:request-large",
@@ -339,52 +357,13 @@ def test_context_request_input_requires_verified_artifact_registration(
     assert detail["unavailable_reason"] == persisted_reason
 
 
-def test_context_detail_exposes_only_canonical_request_preview(tmp_path: Path) -> None:
+def _context_detail_for_request_document(
+    tmp_path: Path, request_document: dict[str, object]
+) -> tuple[TestClient, dict[str, object]]:
     app, catalog, _ = create_test_app(tmp_path)
     run_root = catalog.runs_root / "analysis-test"
     request_path = run_root / "requests/request-canonical/input.json"
     request_path.parent.mkdir(parents=True)
-    request_document = {
-        "schema_version": "grid-model-request-input/2.0",
-        "request_id": "request-canonical",
-        "request_index": 1,
-        "turn_id": "analysis-test-t001",
-        "captured_at": "2026-08-17T00:00:00Z",
-        "source_event_sequences": [10, 20],
-        "context_revision": 3,
-        "context_state_hash": "a" * 64,
-        "runtime": {
-            "pi_coding_agent_version": "0.80.6",
-            "pi_ai_version": "0.80.6",
-            "pi_source_commit": "1" * 40,
-            "pi_patch_set_sha256": "2" * 64,
-        },
-        "semantic_request": {
-            "model": {
-                "provider": "openai",
-                "api": "openai-responses",
-                "id": "gpt-5.5",
-            },
-            "context": {
-                "system_prompt": "final system",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": "question"}],
-                    }
-                ],
-                "tools": [
-                    {
-                        "name": "grid_context_open",
-                        "description": "Open a context.",
-                        "parameters": {"type": "object"},
-                    }
-                ],
-            },
-            "options": {"transport": "sse", "temperature": 0},
-        },
-        "semantic_request_sha256": "b" * 64,
-    }
     request_path.write_text(json.dumps(request_document), encoding="utf-8")
     request_ref = "artifact:sha256:" + sha256(request_path.read_bytes()).hexdigest()
     frame = ContextFrame(
@@ -423,8 +402,60 @@ def test_context_detail_exposes_only_canonical_request_preview(tmp_path: Path) -
             ),
         }
     )
+    return TestClient(app), request_document
 
-    response = TestClient(app).get(
+
+def _canonical_request_document() -> dict[str, object]:
+    semantic_request = {
+        "model": {
+            "provider": "openai",
+            "api": "openai-responses",
+            "id": "gpt-5.5",
+        },
+        "context": {
+            "system_prompt": "final system",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "question"}],
+                }
+            ],
+            "tools": [
+                {
+                    "name": "grid_context_open",
+                    "description": "Open a context.",
+                    "parameters": {"type": "object"},
+                }
+            ],
+        },
+        "options": {"transport": "sse", "temperature": 0},
+    }
+    return {
+        "schema_version": "grid-model-request-input/2.0",
+        "request_id": "request-canonical",
+        "request_index": 1,
+        "turn_id": "analysis-test-t001",
+        "captured_at": "2026-08-17T00:00:00Z",
+        "source_event_sequences": [10, 20],
+        "context_revision": 3,
+        "context_state_hash": "a" * 64,
+        "runtime": {
+            "pi_coding_agent_version": "0.80.6",
+            "pi_ai_version": "0.80.6",
+            "pi_source_commit": "1" * 40,
+            "pi_patch_set_sha256": "2" * 64,
+        },
+        "semantic_request": semantic_request,
+        "semantic_request_sha256": _sha256_canonical_sorted(semantic_request),
+    }
+
+
+def test_context_detail_exposes_only_canonical_request_preview(tmp_path: Path) -> None:
+    client, request_document = _context_detail_for_request_document(
+        tmp_path, _canonical_request_document()
+    )
+
+    response = client.get(
         "/api/runs/analysis-test/context", params={"at_sequence": 901}
     )
 
@@ -440,8 +471,61 @@ def test_context_detail_exposes_only_canonical_request_preview(tmp_path: Path) -
         "context_state_hash": "a" * 64,
         "runtime": request_document["runtime"],
         "semantic_request": request_document["semantic_request"],
-        "semantic_request_sha256": "b" * 64,
+        "semantic_request_sha256": request_document["semantic_request_sha256"],
     }
+    assert "provider_payload" not in response.text
+    assert "reasoning_content" not in response.text
+    assert "thinkingSignature" not in response.text
+    assert "GRID_AGENT_TRAJECTORY_ACKS" not in response.text
+
+
+def test_context_detail_hides_request_preview_when_semantic_digest_mismatches(
+    tmp_path: Path,
+) -> None:
+    request_document = _canonical_request_document()
+    request_document["semantic_request_sha256"] = "f" * 64
+    client, _ = _context_detail_for_request_document(tmp_path, request_document)
+
+    response = client.get(
+        "/api/runs/analysis-test/context", params={"at_sequence": 901}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request_input"] is None
+
+
+def test_context_detail_hides_hash_verified_request_with_private_semantic_fields(
+    tmp_path: Path,
+) -> None:
+    request_document = _canonical_request_document()
+    semantic_request = request_document["semantic_request"]
+    assert isinstance(semantic_request, dict)
+    context = semantic_request["context"]
+    assert isinstance(context, dict)
+    messages = context["messages"]
+    assert isinstance(messages, list)
+    message = messages[0]
+    assert isinstance(message, dict)
+    content = message["content"]
+    assert isinstance(content, list)
+    block = content[0]
+    assert isinstance(block, dict)
+    block["provider_payload"] = {
+        "reasoning_content": "private trace",
+        "thinkingSignature": "secret-signature",
+        "GRID_AGENT_TRAJECTORY_ACKS": "/tmp/private/acks",
+    }
+    request_document["semantic_request_sha256"] = _sha256_canonical_sorted(
+        semantic_request
+    )
+    client, _ = _context_detail_for_request_document(tmp_path, request_document)
+
+    response = client.get(
+        "/api/runs/analysis-test/context", params={"at_sequence": 901}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request_input"] is None
     assert "provider_payload" not in response.text
     assert "reasoning_content" not in response.text
     assert "thinkingSignature" not in response.text

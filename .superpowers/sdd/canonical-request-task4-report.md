@@ -39,3 +39,36 @@ Did not remove old provider capture symbols wholesale; legacy provider-payload r
 - `grid-agent run` does not launch native request capture, so the semantic-path script remains capture-optional. When request capture env exists, it writes v2 and waits for commit ack; otherwise it preserves the existing non-capture behavior.
 - Continuous analysis exports the project `.grid-agent/trajectory-acks/<analysis_id>/` path to Pi and now passes the same path into `NativeCaptureAdapter`, avoiding mismatched ack roots for custom artifact roots.
 - Scripted producers now write request artifacts via atomic temp-file replacement to avoid capture reading partial JSON.
+
+## Review Follow-up
+
+- HIGH fixed: Context API request preview now reuses the shared v2 canonical
+  request validator before exposing any preview fields. A hash-verified v2
+  artifact is still hidden when its `semantic_request` shape is not exact, its
+  declared `semantic_request_sha256` does not match the canonical semantic
+  digest, or nested semantic JSON contains prohibited private/provider
+  payload, reasoning, signature, acknowledgement, or credential fields.
+- MEDIUM fixed: Native current-run capture now rejects a mismatched declared
+  `semantic_request_sha256` before appending `model.request.started` or writing
+  the commit acknowledgement.
+- TDD RED evidence:
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_capture.py::test_model_request_digest_mismatch_does_not_ack_or_advance_state -q`
+  - Result before fix: failed because `CaptureIntegrityError` was not raised.
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/api/test_projection_pages.py::test_context_detail_hides_request_preview_when_semantic_digest_mismatches packages/grid-agent/tests/trajectory/api/test_projection_pages.py::test_context_detail_hides_hash_verified_request_with_private_semantic_fields -q`
+  - Result before fix: both failed because invalid request previews were exposed.
+- TDD GREEN evidence:
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_capture.py::test_model_request_digest_mismatch_does_not_ack_or_advance_state packages/grid-agent/tests/trajectory/test_capture.py::test_model_request_commit_ack_uses_verified_declared_digest_after_event_append -q`
+  - Result: 2 passed.
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/api/test_projection_pages.py::test_context_detail_exposes_only_canonical_request_preview packages/grid-agent/tests/trajectory/api/test_projection_pages.py::test_context_detail_hides_request_preview_when_semantic_digest_mismatches packages/grid-agent/tests/trajectory/api/test_projection_pages.py::test_context_detail_hides_hash_verified_request_with_private_semantic_fields -q`
+  - Result: 3 passed, 1 warning.
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_capture.py -q`
+  - Result: 15 passed.
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/api/test_projection_pages.py packages/grid-agent/tests/trajectory/api/test_app.py -q`
+  - Result: 36 passed, 1 warning.
+  - `uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory packages/grid-agent/tests/e2e/test_semantic_pi_path.py packages/grid-agent/tests/e2e/test_continuous_analysis.py -q`
+  - Result: 242 passed, 1 warning.
+- Diagnostics:
+  - `uv run --project packages/grid-agent python -m py_compile packages/grid-agent/src/grid_agent/trajectory/request_input.py packages/grid-agent/src/grid_agent/trajectory/capture.py packages/grid-agent/src/grid_agent/trajectory/api/app.py packages/grid-agent/tests/trajectory/test_capture.py packages/grid-agent/tests/trajectory/api/test_projection_pages.py`
+  - Result: passed.
+  - `git diff --check -- packages/grid-agent/src/grid_agent/trajectory/request_input.py packages/grid-agent/src/grid_agent/trajectory/capture.py packages/grid-agent/src/grid_agent/trajectory/api/app.py packages/grid-agent/tests/trajectory/test_capture.py packages/grid-agent/tests/trajectory/api/test_projection_pages.py`
+  - Result: passed.

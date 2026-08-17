@@ -25,6 +25,11 @@ from grid_agent.trajectory.events import (
     RunScope,
 )
 from grid_agent.trajectory.recorder import RunEventRecorder
+from grid_agent.trajectory.request_input import (
+    CanonicalModelRequestDocument,
+    CanonicalRequestValidationError,
+    validate_canonical_model_request_document,
+)
 
 
 SEMANTIC_EVENT_MAP: Mapping[str, EventType] = {
@@ -92,17 +97,6 @@ class _RequestState:
     model: str
     first_token_at: float | None = None
     settled: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class CanonicalModelRequestDocument:
-    request_id: str
-    turn_id: str
-    request_index: int
-    source_event_sequences: tuple[int, ...]
-    provider: str
-    model: str
-    semantic_request_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -623,51 +617,10 @@ class NativeCaptureAdapter:
             raise CaptureIntegrityError(f"model request is not readable JSON: {path}") from exc
         if not isinstance(document, Mapping):
             raise CaptureIntegrityError("model request must be a JSON object")
-        if document.get("schema_version") != "grid-model-request-input/2.0":
-            raise CaptureIntegrityError("model request schema_version is invalid")
-        expected_keys = {
-            "schema_version",
-            "request_id",
-            "request_index",
-            "turn_id",
-            "captured_at",
-            "source_event_sequences",
-            "context_revision",
-            "context_state_hash",
-            "runtime",
-            "semantic_request",
-            "semantic_request_sha256",
-        }
-        if set(document) != expected_keys:
-            raise CaptureIntegrityError("model request has unexpected fields")
-        captured_at = document.get("captured_at")
-        if not isinstance(captured_at, str) or not captured_at:
-            raise CaptureIntegrityError("captured_at must be a non-empty string")
-        context_revision = document.get("context_revision")
-        if (
-            not isinstance(context_revision, int)
-            or isinstance(context_revision, bool)
-            or context_revision < 0
-        ):
-            raise CaptureIntegrityError("context_revision must be a nonnegative integer")
-        context_hash = document.get("context_state_hash")
-        if not isinstance(context_hash, str) or not _SHA256_PATTERN.fullmatch(context_hash):
-            raise CaptureIntegrityError("context_state_hash must be a sha256 digest")
-        self._validate_runtime(document.get("runtime"))
-        semantic_request = self._semantic_request(document.get("semantic_request"))
-        supplied_digest = document.get("semantic_request_sha256")
-        if not isinstance(supplied_digest, str) or not _SHA256_PATTERN.fullmatch(supplied_digest):
-            raise CaptureIntegrityError("semantic_request_sha256 must be a sha256 digest")
-        model = semantic_request["model"]
-        return CanonicalModelRequestDocument(
-            request_id=self._required_string(document, "request_id"),
-            turn_id=self._required_string(document, "turn_id"),
-            request_index=self._required_positive_int(document, "request_index"),
-            source_event_sequences=self._source_sequences(document),
-            provider=self._required_string(model, "provider"),
-            model=self._required_string(model, "id"),
-            semantic_request_sha256=_sha256_canonical_sorted(semantic_request),
-        )
+        try:
+            return validate_canonical_model_request_document(document)
+        except CanonicalRequestValidationError as exc:
+            raise CaptureIntegrityError(str(exc)) from exc
 
     def _write_commit_acknowledgement(
         self,
