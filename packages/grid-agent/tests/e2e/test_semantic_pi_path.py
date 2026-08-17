@@ -25,6 +25,9 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         "from pathlib import Path\n"
         "prompt=json.loads(input())\n"
         "requests_path=os.environ.get('GRID_AGENT_TRAJECTORY_REQUESTS')\n"
+        "def mark(name):\n"
+        " order_path=Path(os.environ['GRID_AGENT_WORKSPACE'])/'scripted-canonical-order.jsonl'\n"
+        " with order_path.open('a',encoding='utf-8') as f: f.write(json.dumps({'marker':name})+'\\n')\n"
         "if requests_path:\n"
         " turn=json.load(open(os.environ['GRID_AGENT_ACTIVE_TURN'],encoding='utf-8'))\n"
         " state=json.load(open(os.environ['GRID_AGENT_TRAJECTORY_CAPTURE_STATE'],encoding='utf-8'))\n"
@@ -33,8 +36,10 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         " request_path.parent.mkdir()\n"
         " request={'schema_version':'grid-model-request-input/1.0','request_id':request_id,'request_index':1,'turn_id':turn['turn_id'],'provider':os.environ['GRID_AGENT_PROVIDER_ID'],'model':os.environ['GRID_AGENT_MODEL_ID'],'captured_at':datetime.now(timezone.utc).isoformat(),'source_event_sequences':state['source_event_sequences'],'context_revision':state['context_revision'],'context_state_hash':state['context_state_hash'],'provider_payload':{'model':os.environ['GRID_AGENT_MODEL_ID'],'messages':[{'role':'user','content':prompt}],'tools':[]}}\n"
         " request_path.write_text(json.dumps(request,ensure_ascii=False),encoding='utf-8')\n"
+        "mark('before_model_request')\n"
         "catalog=json.load(open(os.environ['GRID_AGENT_TOOL_CATALOG'],encoding='utf-8'))\n"
         "by_cap={tool['capability']:tool['name'] for tool in catalog['tools']}\n"
+        "mark('provider_enter')\n"
         "def emit(payload): print(json.dumps(payload), flush=True)\n"
         "def grid(capability,args):\n"
         " name=by_cap[capability]\n"
@@ -128,6 +133,9 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         ]
         digest = evidence_ref.removeprefix("evidence:sha256:")
         assert (runs_path / "evidence/network-facts" / f"network-fact-{digest}.json").is_file()
+        order_path = runs_path / "scripted-canonical-order.jsonl"
+        order = [json.loads(line)["marker"] for line in order_path.read_text(encoding="utf-8").splitlines()]
+        assert order[:2] == ["before_model_request", "provider_enter"]
 
         questions = tmp_path / "questions.txt"
         questions.write_text("IEEE-39节点系统中线路11连接哪两个母线?\n", encoding="utf-8")
