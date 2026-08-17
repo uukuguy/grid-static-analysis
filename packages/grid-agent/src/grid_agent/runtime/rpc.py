@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
@@ -28,7 +29,8 @@ TRACEABLE_RPC_TYPES = frozenset(
     }
 )
 CAPTURE_FATAL_EXIT_CODE = 86
-CAPTURE_FATAL_MARKER = "trajectory request capture failed"
+CAPTURE_FATAL_MARKER = "trajectory model request commit failed"
+_CAPTURE_POLL_SECONDS = 0.025
 _STDERR_CAPTURE_LIMIT = 64 * 1024
 
 
@@ -82,16 +84,30 @@ class PiRpcClient:
         self.process.stdin.flush()
         if self._stdout_lines is None:
             raise PiProtocolError("Pi RPC stdout reader is not started")
+        if capture is not None:
+            capture.drain_model_requests()
         lines = self._stdout_lines
         text: list[str] = []
         acknowledged = False
         pending_tool_calls: dict[str, dict[str, str]] = {}
+        next_heartbeat_at = time.monotonic() + heartbeat_seconds
         while True:
+            timeout = heartbeat_seconds
+            if capture is not None:
+                timeout = min(
+                    _CAPTURE_POLL_SECONDS,
+                    max(0.0, next_heartbeat_at - time.monotonic()),
+                )
             try:
-                raw = lines.get(timeout=heartbeat_seconds)
+                raw = lines.get(timeout=timeout)
             except Empty:
-                if on_heartbeat is not None:
-                    on_heartbeat()
+                if capture is not None:
+                    capture.drain_model_requests()
+                now = time.monotonic()
+                if now >= next_heartbeat_at:
+                    if on_heartbeat is not None:
+                        on_heartbeat()
+                    next_heartbeat_at = now + heartbeat_seconds
                 continue
             if raw is None:
                 raise self._eof_error()
@@ -103,7 +119,7 @@ class PiRpcClient:
             except json.JSONDecodeError as exc:
                 raise PiProtocolError("Pi RPC returned invalid JSONL") from exc
             if capture is not None:
-                capture.drain_provider_requests()
+                capture.drain_model_requests()
                 capture.on_raw_event(event)
             if on_event is not None:
                 on_event(event)
@@ -125,9 +141,13 @@ class PiRpcClient:
                 if event.get("success") is True:
                     acknowledged = True
                 else:
+                    if capture is not None:
+                        capture.drain_model_requests()
                     raise PiProtocolError(f"Pi prompt failed: {event.get('error', 'unknown error')}")
             if event.get("type") == "agent_end":
                 if not acknowledged:
+                    if capture is not None:
+                        capture.drain_model_requests()
                     raise PiProtocolError("Pi agent ended before prompt acknowledgement")
                 provider_error = _provider_error(event)
                 if provider_error:
@@ -136,12 +156,20 @@ class PiRpcClient:
                         # still retry this prompt before agent_settled.
                         text.clear()
                         continue
+                    if capture is not None:
+                        capture.drain_model_requests()
                     raise PiProtocolError(f"Pi provider failure: {provider_error}")
                 answer = "".join(text)
                 if not answer.strip():
                     if not require_answer_text:
+                        if capture is not None:
+                            capture.drain_model_requests()
                         return ""
+                    if capture is not None:
+                        capture.drain_model_requests()
                     raise PiProtocolError("Pi agent ended without answer text")
+                if capture is not None:
+                    capture.drain_model_requests()
                 return answer
 
     def _eof_error(self) -> RuntimeError:

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
+import os
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -12,6 +15,7 @@ from typing import Any, Protocol
 
 from grid_agent.analysis.integrity import ContentReferenceVerifier
 from grid_agent.trajectory.artifacts import ArtifactPointer, ImmutableArtifactRegistry
+from grid_agent.trajectory.canonical import canonical_json_bytes
 from grid_agent.trajectory.events import (
     Causation,
     EventDraft,
@@ -32,6 +36,36 @@ _SENSITIVE_FIELD = re.compile(
     r"credential|credentials|hidden_reasoning|password|reasoning|refresh_token|"
     r"secret|token)(?:$|_)",
     re.IGNORECASE,
+)
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_SOURCE_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_PUBLIC_OPTION_KEYS = frozenset(
+    {
+        "reasoning",
+        "thinkingBudgets",
+        "temperature",
+        "maxTokens",
+        "transport",
+        "cacheRetention",
+        "timeoutMs",
+        "websocketConnectTimeoutMs",
+        "maxRetries",
+        "maxRetryDelayMs",
+    }
+)
+_REASONING_VALUES = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
+_TRANSPORT_VALUES = frozenset({"sse", "websocket", "websocket-cached", "auto"})
+_CACHE_RETENTION_VALUES = frozenset({"none", "short", "long"})
+_THINKING_BUDGET_KEYS = frozenset({"minimal", "low", "medium", "high"})
+_NUMERIC_OPTION_KEYS = frozenset(
+    {
+        "temperature",
+        "maxTokens",
+        "timeoutMs",
+        "websocketConnectTimeoutMs",
+        "maxRetries",
+        "maxRetryDelayMs",
+    }
 )
 
 
@@ -58,6 +92,17 @@ class _RequestState:
     model: str
     first_token_at: float | None = None
     settled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalModelRequestDocument:
+    request_id: str
+    turn_id: str
+    request_index: int
+    source_event_sequences: tuple[int, ...]
+    provider: str
+    model: str
+    semantic_request_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +137,7 @@ class NativeCaptureAdapter:
         self._seen_requests: set[str] = set()
         self._current_request: _RequestState | None = None
         self._tool_calls: dict[str, _ToolState] = {}
+        self._awaiting_tool_round_completion = False
         self._last_retry_attempt: int | None = None
         self._last_retry_max_attempts: int | None = None
 
@@ -104,36 +150,32 @@ class NativeCaptureAdapter:
         self._step_ordinal = 0
         self._current_request = None
         self._tool_calls.clear()
+        self._awaiting_tool_round_completion = False
         self._last_retry_attempt = None
         self._last_retry_max_attempts = None
 
-    def drain_provider_requests(self) -> None:
+    def drain_model_requests(self) -> None:
         turn_id = self._require_turn()
         for path in sorted(self.workspace.requests_path.glob("*/input.json")):
             document = self._load_request_document(path)
-            request_id = self._required_string(document, "request_id")
+            request_id = document.request_id
             if request_id in self._seen_requests:
                 continue
-            request_turn_id = self._required_string(document, "turn_id")
-            if request_turn_id != turn_id:
+            if document.turn_id != turn_id:
                 continue
-            request_index = self._required_positive_int(document, "request_index")
+            request_index = document.request_index
             if request_index <= self._last_request_index:
                 raise CaptureIntegrityError(
-                    "provider request indexes must be monotonically increasing"
+                    "model request indexes must be monotonically increasing"
                 )
             if path.parent.name != request_id:
-                raise CaptureIntegrityError(
-                    "provider request path does not match request_id"
-                )
-            if self._current_request is not None and not self._current_request.settled:
-                raise CaptureIntegrityError(
-                    "a new provider request was captured before the current request settled"
-                )
+                raise CaptureIntegrityError("model request path does not match request_id")
+            if self._current_request is not None and (
+                not self._current_request.settled
+                or self._awaiting_tool_round_completion
+            ):
+                break
 
-            source_sequences = self._source_sequences(document)
-            provider = self._required_string(document, "provider")
-            model = self._required_string(document, "model")
             pointer = self.artifacts.register_existing(
                 "request-input", request_id, path
             )
@@ -153,25 +195,27 @@ class NativeCaptureAdapter:
                         "request_index": request_index,
                     },
                     causation=(
-                        Causation(parent_sequence=source_sequences[-1])
-                        if source_sequences
-                        else Causation()
+                        Causation(parent_sequence=document.source_event_sequences[-1])
                     ),
                     source=self._source(),
                     refs=EventRefs(produced=(pointer.ref,)),
                 )
             )
+            self._write_commit_acknowledgement(document, pointer, event.sequence)
             self._current_request = _RequestState(
                 request_id=request_id,
                 step_id=step_id,
                 request_index=request_index,
                 started_at=started_at,
                 event_sequence=event.sequence,
-                provider=provider,
-                model=model,
+                provider=document.provider,
+                model=document.model,
             )
             self._last_request_index = request_index
             self._seen_requests.add(request_id)
+
+    def drain_provider_requests(self) -> None:
+        self.drain_model_requests()
 
     def on_raw_event(self, event: Mapping[str, Any]) -> None:
         event_type = event.get("type")
@@ -227,6 +271,7 @@ class NativeCaptureAdapter:
         self._turn_id = None
         self._current_request = None
         self._tool_calls.clear()
+        self._awaiting_tool_round_completion = False
         self._last_retry_attempt = None
         self._last_retry_max_attempts = None
 
@@ -285,6 +330,7 @@ class NativeCaptureAdapter:
             )
         )
         request.settled = True
+        self._awaiting_tool_round_completion = stop_reason == "toolUse"
 
     def _fail_response(self, error_type: str, message: str) -> None:
         request = self._require_unsettled_request()
@@ -298,6 +344,7 @@ class NativeCaptureAdapter:
             )
         )
         request.settled = True
+        self._awaiting_tool_round_completion = False
 
     def _record_retry_started(self, event: Mapping[str, Any]) -> None:
         request = self._require_request()
@@ -462,6 +509,8 @@ class NativeCaptureAdapter:
                 )
             )
         del self._tool_calls[tool_call_id]
+        if not self._tool_calls:
+            self._awaiting_tool_round_completion = False
 
     def _validated_decision(
         self,
@@ -565,23 +614,269 @@ class NativeCaptureAdapter:
         ):
             request.first_token_at = self.clock()
 
-    def _load_request_document(self, path: Path) -> Mapping[str, Any]:
+    def _load_request_document(self, path: Path) -> CanonicalModelRequestDocument:
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise CaptureIntegrityError(
-                f"provider request is not readable JSON: {path}"
-            ) from exc
+            raise CaptureIntegrityError(f"model request is not readable JSON: {path}") from exc
         if not isinstance(document, Mapping):
-            raise CaptureIntegrityError("provider request must be a JSON object")
-        if document.get("schema_version") != "grid-model-request-input/1.0":
-            raise CaptureIntegrityError("provider request schema_version is invalid")
-        return document
+            raise CaptureIntegrityError("model request must be a JSON object")
+        if document.get("schema_version") != "grid-model-request-input/2.0":
+            raise CaptureIntegrityError("model request schema_version is invalid")
+        expected_keys = {
+            "schema_version",
+            "request_id",
+            "request_index",
+            "turn_id",
+            "captured_at",
+            "source_event_sequences",
+            "context_revision",
+            "context_state_hash",
+            "runtime",
+            "semantic_request",
+            "semantic_request_sha256",
+        }
+        if set(document) != expected_keys:
+            raise CaptureIntegrityError("model request has unexpected fields")
+        captured_at = document.get("captured_at")
+        if not isinstance(captured_at, str) or not captured_at:
+            raise CaptureIntegrityError("captured_at must be a non-empty string")
+        context_revision = document.get("context_revision")
+        if (
+            not isinstance(context_revision, int)
+            or isinstance(context_revision, bool)
+            or context_revision < 0
+        ):
+            raise CaptureIntegrityError("context_revision must be a nonnegative integer")
+        context_hash = document.get("context_state_hash")
+        if not isinstance(context_hash, str) or not _SHA256_PATTERN.fullmatch(context_hash):
+            raise CaptureIntegrityError("context_state_hash must be a sha256 digest")
+        self._validate_runtime(document.get("runtime"))
+        semantic_request = self._semantic_request(document.get("semantic_request"))
+        supplied_digest = document.get("semantic_request_sha256")
+        if not isinstance(supplied_digest, str) or not _SHA256_PATTERN.fullmatch(supplied_digest):
+            raise CaptureIntegrityError("semantic_request_sha256 must be a sha256 digest")
+        model = semantic_request["model"]
+        return CanonicalModelRequestDocument(
+            request_id=self._required_string(document, "request_id"),
+            turn_id=self._required_string(document, "turn_id"),
+            request_index=self._required_positive_int(document, "request_index"),
+            source_event_sequences=self._source_sequences(document),
+            provider=self._required_string(model, "provider"),
+            model=self._required_string(model, "id"),
+            semantic_request_sha256=_sha256_canonical_sorted(semantic_request),
+        )
+
+    def _write_commit_acknowledgement(
+        self,
+        document: CanonicalModelRequestDocument,
+        pointer: ArtifactPointer,
+        event_sequence: int,
+    ) -> None:
+        path = (
+            _acknowledgements_path(self.workspace, self.recorder.analysis_id)
+            / f"{document.request_id}.committed.json"
+        )
+        _write_json_exclusive_atomic(
+            path,
+            {
+                "schema_version": "grid-model-request-commit/1.0",
+                "request_id": document.request_id,
+                "semantic_request_sha256": document.semantic_request_sha256,
+                "artifact_ref": pointer.ref,
+                "event_sequence": event_sequence,
+                "status": "committed",
+            },
+        )
+
+    @staticmethod
+    def _validate_runtime(value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("runtime must be an object")
+        expected = {
+            "pi_coding_agent_version",
+            "pi_ai_version",
+            "pi_source_commit",
+            "pi_patch_set_sha256",
+        }
+        if set(value) != expected:
+            raise CaptureIntegrityError("runtime shape is invalid")
+        for key in ("pi_coding_agent_version", "pi_ai_version"):
+            item = value.get(key)
+            if not isinstance(item, str) or not item:
+                raise CaptureIntegrityError(f"runtime {key} must be a non-empty string")
+        source_commit = value.get("pi_source_commit")
+        if not isinstance(source_commit, str) or not _SOURCE_COMMIT_PATTERN.fullmatch(source_commit):
+            raise CaptureIntegrityError("runtime pi_source_commit is invalid")
+        patch_hash = value.get("pi_patch_set_sha256")
+        if not isinstance(patch_hash, str) or not _SHA256_PATTERN.fullmatch(patch_hash):
+            raise CaptureIntegrityError("runtime pi_patch_set_sha256 is invalid")
+
+    def _semantic_request(self, value: object) -> Mapping[str, Any]:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("semantic_request must be an object")
+        if set(value) != {"model", "context", "options"}:
+            raise CaptureIntegrityError("semantic_request shape is invalid")
+        self._semantic_model(value.get("model"))
+        self._semantic_context(value.get("context"))
+        self._semantic_options(value.get("options"))
+        return value
+
+    def _semantic_model(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("semantic_request.model must be an object")
+        if set(value) != {"provider", "api", "id"}:
+            raise CaptureIntegrityError("semantic_request.model shape is invalid")
+        self._required_string(value, "provider")
+        self._required_string(value, "api")
+        self._required_string(value, "id")
+
+    def _semantic_context(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("semantic_request.context must be an object")
+        if set(value) != {"system_prompt", "messages", "tools"}:
+            raise CaptureIntegrityError("semantic_request.context shape is invalid")
+        system_prompt = value.get("system_prompt")
+        if system_prompt is not None and not isinstance(system_prompt, str):
+            raise CaptureIntegrityError("semantic_request.context.system_prompt is invalid")
+        messages = value.get("messages")
+        tools = value.get("tools")
+        if not isinstance(messages, list):
+            raise CaptureIntegrityError("semantic_request.context.messages must be an array")
+        if not isinstance(tools, list):
+            raise CaptureIntegrityError("semantic_request.context.tools must be an array")
+        for message in messages:
+            self._semantic_message(message)
+        for tool in tools:
+            self._semantic_tool(tool)
+
+    def _semantic_message(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("semantic_request message must be an object")
+        role = value.get("role")
+        if role == "user":
+            if set(value) != {"role", "content"}:
+                raise CaptureIntegrityError("semantic_request user message shape is invalid")
+            self._semantic_user_content(value.get("content"))
+            return
+        if role == "assistant":
+            if set(value) != {"role", "content"}:
+                raise CaptureIntegrityError("semantic_request assistant message shape is invalid")
+            content = value.get("content")
+            if not isinstance(content, list):
+                raise CaptureIntegrityError("assistant.content must be an array")
+            for block in content:
+                self._semantic_assistant_content_block(block)
+            return
+        if role == "toolResult":
+            if set(value) != {"role", "toolCallId", "toolName", "content", "details", "isError"}:
+                raise CaptureIntegrityError("semantic_request tool result message shape is invalid")
+            self._required_string(value, "toolCallId")
+            self._required_string(value, "toolName")
+            self._semantic_user_content(value.get("content"))
+            _validate_json_leaf(value.get("details"), "toolResult.details")
+            if not isinstance(value.get("isError"), bool):
+                raise CaptureIntegrityError("toolResult.isError must be boolean")
+            return
+        raise CaptureIntegrityError("semantic_request message role is invalid")
+
+    def _semantic_user_content(self, value: object) -> None:
+        if not isinstance(value, list):
+            raise CaptureIntegrityError("user content must be an array")
+        for block in value:
+            self._semantic_user_content_block(block)
+
+    def _semantic_user_content_block(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("user content block must be an object")
+        block_type = value.get("type")
+        if block_type == "text":
+            if set(value) != {"type", "text"}:
+                raise CaptureIntegrityError("text content shape is invalid")
+            text = value.get("text")
+            if not isinstance(text, str):
+                raise CaptureIntegrityError("text.text must be a string")
+            return
+        if block_type == "image":
+            if set(value) != {"type", "data", "mimeType"}:
+                raise CaptureIntegrityError("image content shape is invalid")
+            self._required_string(value, "data")
+            self._required_string(value, "mimeType")
+            return
+        raise CaptureIntegrityError("user content block type is invalid")
+
+    def _semantic_assistant_content_block(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("assistant content block must be an object")
+        block_type = value.get("type")
+        if block_type == "text":
+            if set(value) != {"type", "text"}:
+                raise CaptureIntegrityError("assistant text content shape is invalid")
+            text = value.get("text")
+            if not isinstance(text, str):
+                raise CaptureIntegrityError("text.text must be a string")
+            return
+        if block_type == "thinking":
+            if set(value) != {"type", "redacted"} or value.get("redacted") is not True:
+                raise CaptureIntegrityError("assistant thinking content shape is invalid")
+            return
+        if block_type == "toolCall":
+            if set(value) != {"type", "id", "name", "arguments"}:
+                raise CaptureIntegrityError("assistant toolCall content shape is invalid")
+            self._required_string(value, "id")
+            self._required_string(value, "name")
+            arguments = value.get("arguments")
+            if not isinstance(arguments, Mapping):
+                raise CaptureIntegrityError("toolCall.arguments must be an object")
+            _validate_json_leaf(arguments, "toolCall.arguments")
+            return
+        raise CaptureIntegrityError("assistant content block type is invalid")
+
+    def _semantic_tool(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("semantic_request tool must be an object")
+        if set(value) != {"name", "description", "parameters"}:
+            raise CaptureIntegrityError("semantic_request tool shape is invalid")
+        self._required_string(value, "name")
+        if not isinstance(value.get("description"), str):
+            raise CaptureIntegrityError("tool.description must be a string")
+        parameters = value.get("parameters")
+        if not isinstance(parameters, Mapping):
+            raise CaptureIntegrityError("tool.parameters must be an object")
+        _validate_json_leaf(parameters, "tool.parameters")
+
+    def _semantic_options(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("semantic_request.options must be an object")
+        if set(value) - _PUBLIC_OPTION_KEYS:
+            raise CaptureIntegrityError("semantic_request.options has unknown fields")
+        for key, item in value.items():
+            if key == "reasoning":
+                if item not in _REASONING_VALUES:
+                    raise CaptureIntegrityError("options.reasoning is invalid")
+            elif key == "transport":
+                if item not in _TRANSPORT_VALUES:
+                    raise CaptureIntegrityError("options.transport is invalid")
+            elif key == "cacheRetention":
+                if item not in _CACHE_RETENTION_VALUES:
+                    raise CaptureIntegrityError("options.cacheRetention is invalid")
+            elif key == "thinkingBudgets":
+                self._semantic_thinking_budgets(item)
+            elif key in _NUMERIC_OPTION_KEYS:
+                _nonnegative_number(item, f"options.{key}")
+
+    def _semantic_thinking_budgets(self, value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise CaptureIntegrityError("options.thinkingBudgets must be an object")
+        if set(value) - _THINKING_BUDGET_KEYS:
+            raise CaptureIntegrityError("options.thinkingBudgets has unknown fields")
+        for key, item in value.items():
+            _nonnegative_number(item, f"options.thinkingBudgets.{key}")
 
     @staticmethod
     def _source_sequences(document: Mapping[str, Any]) -> tuple[int, ...]:
         values = document.get("source_event_sequences")
-        if not isinstance(values, list) or any(
+        if not isinstance(values, list) or not values or any(
             not isinstance(value, int) or isinstance(value, bool) or value < 1
             for value in values
         ):
@@ -635,6 +930,106 @@ class NativeCaptureAdapter:
     @staticmethod
     def _source() -> EventSource:
         return EventSource(producer="grid-agent.pi-rpc")
+
+
+def _acknowledgements_path(workspace: CaptureWorkspace, analysis_id: str) -> Path:
+    configured = getattr(workspace, "trajectory_acks_path", None)
+    if isinstance(configured, Path):
+        return configured
+    return (
+        workspace.root_path.parent.parent
+        / ".grid-agent"
+        / "trajectory-acks"
+        / analysis_id
+    )
+
+
+def _write_json_exclusive_atomic(path: Path, payload: object) -> None:
+    encoded = canonical_json_bytes(payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        written = os.write(descriptor, encoded)
+        if written != len(encoded):
+            raise OSError(f"short write: expected {len(encoded)} bytes, wrote {written}")
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            try:
+                existing = path.read_bytes()
+            except OSError as exc:
+                raise CaptureIntegrityError("model request acknowledgement is unreadable") from exc
+            if existing != encoded:
+                raise CaptureIntegrityError(
+                    "model request acknowledgement already contains different content"
+                )
+        _fsync_directory(path.parent)
+    except OSError as exc:
+        raise CaptureIntegrityError(
+            f"model request acknowledgement write failed: {exc}"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _sha256_canonical_sorted(value: object) -> str:
+    encoded = json.dumps(
+        _sort_json(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sort_json(value: object) -> object:
+    if isinstance(value, list):
+        return [_sort_json(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _sort_json(value[key]) for key in sorted(value)}
+    return value
+
+
+def _validate_json_leaf(value: object, path: str) -> None:
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not math.isfinite(value):
+            raise CaptureIntegrityError(f"{path} contains a non-finite number")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_json_leaf(item, f"{path}[{index}]")
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise CaptureIntegrityError(f"{path} contains a non-string key")
+            _validate_json_leaf(item, f"{path}.{key}")
+        return
+    raise CaptureIntegrityError(f"{path} contains a non-JSON value")
 
 
 def _public_assistant_message(message: Mapping[str, Any]) -> dict[str, object]:
@@ -697,6 +1092,7 @@ def _nonnegative_number(value: object, name: str) -> float:
     if (
         not isinstance(value, (int, float))
         or isinstance(value, bool)
+        or not math.isfinite(value)
         or value < 0
     ):
         raise CaptureIntegrityError(f"{name} must be a nonnegative number")

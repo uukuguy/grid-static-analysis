@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,23 +44,32 @@ def write_request_input(
     request_id: str,
     index: int,
     source_event_sequences: list[int] | None = None,
+    semantic_request: dict[str, Any] | None = None,
+    semantic_request_sha256: str | None = None,
 ) -> Path:
+    semantic = semantic_request or semantic_request_fixture()
     path = workspace.requests_path / request_id / "input.json"
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
-                "schema_version": "grid-model-request-input/1.0",
+                "schema_version": "grid-model-request-input/2.0",
                 "request_id": request_id,
                 "request_index": index,
                 "turn_id": "analysis-test-t001",
-                "provider": "scripted",
-                "model": "scripted-model",
                 "captured_at": "2026-08-14T00:00:00.000Z",
-                "source_event_sequences": source_event_sequences or [],
+                "source_event_sequences": source_event_sequences or [7],
                 "context_revision": 1,
                 "context_state_hash": "a" * 64,
-                "provider_payload": {"messages": [{"role": "user", "content": "question"}]},
+                "runtime": {
+                    "pi_coding_agent_version": "0.80.6",
+                    "pi_ai_version": "0.80.6",
+                    "pi_source_commit": "1" * 40,
+                    "pi_patch_set_sha256": "2" * 64,
+                },
+                "semantic_request": semantic,
+                "semantic_request_sha256": semantic_request_sha256
+                or sha256_canonical_sorted(semantic),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -80,12 +90,181 @@ def capture_with_active_request(
         request_id="analysis-test-t001-r001",
         index=1,
     )
-    adapter.drain_provider_requests()
+    adapter.drain_model_requests()
     return recorder, adapter, workspace
+
+
+def semantic_request_fixture(
+    *,
+    provider: str = "scripted",
+    model_id: str = "scripted-model",
+) -> dict[str, Any]:
+    return {
+        "model": {
+            "provider": provider,
+            "api": "openai-responses",
+            "id": model_id,
+        },
+        "context": {
+            "system_prompt": "system",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "question"}],
+                }
+            ],
+            "tools": [
+                {
+                    "name": "grid_context_open",
+                    "description": "Open context.",
+                    "parameters": {"type": "object", "additionalProperties": False},
+                }
+            ],
+        },
+        "options": {
+            "reasoning": "medium",
+            "thinkingBudgets": {"medium": 1024},
+            "temperature": 0,
+            "maxTokens": 1024,
+            "transport": "sse",
+            "cacheRetention": "short",
+            "timeoutMs": 1000,
+            "websocketConnectTimeoutMs": 1000,
+            "maxRetries": 1,
+            "maxRetryDelayMs": 100,
+        },
+    }
+
+
+def sha256_canonical_sorted(value: object) -> str:
+    import hashlib
+
+    encoded = json.dumps(
+        _sort_json(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sort_json(value: object) -> object:
+    if isinstance(value, list):
+        return [_sort_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sort_json(value[key]) for key in sorted(value)}
+    return value
 
 
 def events(recorder: RunEventRecorder):  # type: ignore[no-untyped-def]
     return RunEventReader(recorder.events_path).read_prefix().events
+
+
+def acknowledgement_path(workspace: AnalysisWorkspace, request_id: str) -> Path:
+    return (
+        workspace.root_path.parent.parent
+        / ".grid-agent"
+        / "trajectory-acks"
+        / workspace.analysis_id
+        / f"{request_id}.committed.json"
+    )
+
+
+def acknowledgement(workspace: AnalysisWorkspace, request_id: str) -> dict[str, Any]:
+    return json.loads(acknowledgement_path(workspace, request_id).read_text(encoding="utf-8"))
+
+
+def test_model_request_commit_ack_recomputes_digest_after_event_append(
+    tmp_path: Path,
+) -> None:
+    workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-test")
+    artifacts = ImmutableArtifactRegistry(workspace.root_path)
+    request_id = "analysis-test-t001-r001"
+    observed_ack_visibility: list[bool] = []
+
+    def observe_started_event(event: object) -> None:
+        if getattr(event, "event_type", None) == "model.request.started":
+            observed_ack_visibility.append(acknowledgement_path(workspace, request_id).exists())
+
+    recorder = RunEventRecorder(
+        workspace.events_path,
+        workspace.analysis_id,
+        artifact_registry=artifacts,
+        subscribers=(observe_started_event,),
+    )
+    adapter = NativeCaptureAdapter(recorder, artifacts, workspace, clock=Clock())
+    semantic = semantic_request_fixture(provider="deepseek", model_id="deepseek-v4")
+    adapter.begin_turn("analysis-test-t001")
+    write_request_input(
+        workspace,
+        request_id=request_id,
+        index=1,
+        source_event_sequences=[11, 13],
+        semantic_request=semantic,
+        semantic_request_sha256="f" * 64,
+    )
+
+    adapter.drain_model_requests()
+    adapter.drain_model_requests()
+
+    recorded = events(recorder)
+    ack = acknowledgement(workspace, request_id)
+    expected_digest = sha256_canonical_sorted(semantic)
+    assert [event.event_type for event in recorded] == ["model.request.started"]
+    assert observed_ack_visibility == [False]
+    assert ack == {
+        "schema_version": "grid-model-request-commit/1.0",
+        "request_id": request_id,
+        "semantic_request_sha256": expected_digest,
+        "artifact_ref": recorded[0].payload["artifact_ref"],
+        "event_sequence": recorded[0].sequence,
+        "status": "committed",
+    }
+    assert recorded[0].causation.parent_sequence == 13
+
+    adapter.on_raw_event(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "done"}],
+            },
+        }
+    )
+    response = json.loads(
+        (workspace.requests_path / request_id / "response.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert response["provider"] == "deepseek"
+    assert response["model"] == "deepseek-v4"
+
+
+def test_malformed_model_request_does_not_ack_or_advance_state(
+    tmp_path: Path,
+) -> None:
+    recorder, adapter, workspace = native_capture_fixture(tmp_path)
+    request_id = "analysis-test-t001-r001"
+    adapter.begin_turn("analysis-test-t001")
+    request_path = write_request_input(workspace, request_id=request_id, index=1)
+    malformed = json.loads(request_path.read_text(encoding="utf-8"))
+    malformed["runtime"].pop("pi_source_commit")
+    request_path.write_text(
+        json.dumps(malformed, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CaptureIntegrityError, match="runtime"):
+        adapter.drain_model_requests()
+
+    assert not acknowledgement_path(workspace, request_id).exists()
+    assert events(recorder) == ()
+
+    write_request_input(workspace, request_id=request_id, index=1)
+    adapter.drain_model_requests()
+
+    assert acknowledgement_path(workspace, request_id).is_file()
+    assert [event.event_type for event in events(recorder)] == ["model.request.started"]
 
 
 def test_capture_orders_request_response_and_tool_events(tmp_path: Path) -> None:
@@ -98,7 +277,7 @@ def test_capture_orders_request_response_and_tool_events(tmp_path: Path) -> None
         source_event_sequences=[7, 9],
     )
 
-    adapter.drain_provider_requests()
+    adapter.drain_model_requests()
     adapter.on_semantic_event(
         {
             "type": "tool_execution_start",
@@ -282,7 +461,7 @@ def test_capture_maps_prompt_provider_retry_and_interruption_events(
         request_id="analysis-test-t001-r002",
         index=2,
     )
-    adapter.drain_provider_requests()
+    adapter.drain_model_requests()
     adapter.on_raw_event(
         {
             "type": "response",
@@ -306,7 +485,7 @@ def test_capture_maps_prompt_provider_retry_and_interruption_events(
         request_id="analysis-test-t001-r003",
         index=3,
     )
-    adapter.drain_provider_requests()
+    adapter.drain_model_requests()
     adapter.end_turn()
 
     recorded = events(recorder)
@@ -618,11 +797,11 @@ def test_capture_requires_monotonic_request_indexes_and_one_active_turn(
         request_id="analysis-test-t001-r002",
         index=2,
     )
-    adapter.drain_provider_requests()
+    adapter.drain_model_requests()
     write_request_input(
         workspace,
         request_id="analysis-test-t001-r001",
         index=1,
     )
     with pytest.raises(CaptureIntegrityError, match="monotonically increasing"):
-        adapter.drain_provider_requests()
+        adapter.drain_model_requests()
