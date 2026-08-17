@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -238,7 +240,11 @@ def create_trajectory_app(
         if at_sequence is not None:
             if cursor is not None or any(value is not None for value in filters.values()):
                 raise _invalid_query("at_sequence")
-            return _context_detail(projected, at_sequence)
+            return _context_detail(
+                projected,
+                at_sequence,
+                Path(catalog.runs_root) / projected.analysis_id,
+            )
         return projection_page(
             projected, "context", cursor, filters, cursor_codec
         ).model_dump(mode="json")
@@ -329,7 +335,9 @@ def _reject_unknown_or_repeated_query(
             raise _invalid_query(parameter)
 
 
-def _context_detail(projected: ProjectedRun, at_sequence: int) -> dict[str, Any]:
+def _context_detail(
+    projected: ProjectedRun, at_sequence: int, run_root: Path
+) -> dict[str, Any]:
     frame = public_context_frame(
         projected, projected.context.at_sequence(at_sequence)
     )
@@ -341,7 +349,51 @@ def _context_detail(projected: ProjectedRun, at_sequence: int) -> dict[str, Any]
     value["max_sequence"] = max(
         (item.source_sequence for item in projected.context.frames), default=0
     )
+    value["request_input"] = _canonical_request_preview(
+        projected, run_root, frame.request_artifact_ref
+    )
     return value
+
+
+def _canonical_request_preview(
+    projected: ProjectedRun, run_root: Path, reference: str | None
+) -> dict[str, Any] | None:
+    if reference is None:
+        return None
+    record = projected.artifacts.records.get(reference)
+    if record is None or record.verification_status != "verified":
+        return None
+    path = run_root / record.relative_path
+    try:
+        path.resolve(strict=True).relative_to(run_root.resolve(strict=True))
+        content = path.read_bytes()
+    except (OSError, ValueError):
+        return None
+    if record.sha256 != hashlib.sha256(content).hexdigest():
+        return None
+    try:
+        document = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    if document.get("schema_version") != "grid-model-request-input/2.0":
+        return None
+    preview_keys = (
+        "request_id",
+        "request_index",
+        "turn_id",
+        "captured_at",
+        "source_event_sequences",
+        "context_revision",
+        "context_state_hash",
+        "runtime",
+        "semantic_request",
+        "semantic_request_sha256",
+    )
+    if not all(key in document for key in preview_keys):
+        return None
+    return {key: document[key] for key in preview_keys}
 
 
 def _packaged_static_root() -> Path:

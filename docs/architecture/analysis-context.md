@@ -51,6 +51,22 @@ chain across model requests, public model responses, tools, context changes,
 accepted answers, and terminal lifecycle events. The manifest publishes this
 path as `events_path` together with `trajectory_schema_version`.
 
+Before each provider call in a native continuous analysis, Pi writes the final
+provider-independent semantic request to
+`requests/<request_id>/input.json` (`grid-model-request-input/2.0`). This
+request is committed and acknowledged before provider I/O begins. It is the
+canonical replay boundary for model-facing context: final system prompt,
+messages, public tool schemas, public options, correlations, runtime identity,
+and semantic digest. Provider wire payloads, private reasoning, and provider
+thinking signatures are deliberately unavailable in durable analysis context
+and trajectory projections. If this pre-call commit fails, the turn fails as
+an analysis integrity failure rather than as a provider error.
+
+Historical v1 request artifacts may still be indexed and served as immutable
+raw-provider input artifacts. They are not upgraded in place, do not receive
+invented semantic fields, and are not equivalent to v2 canonical context
+replay.
+
 The older context ledger remains at `context/context-events.jsonl` with
 `schema_version: "analysis-context-event/1.0"` and validation by
 `schemas/analysis-context-event-v1.schema.json`. For native runs it is a

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -248,6 +248,69 @@ def create_test_app(
     )
 
 
+def _sha256_canonical_sorted(value: object) -> str:
+    encoded = json.dumps(
+        _sort_json(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _sort_json(value: object) -> object:
+    if isinstance(value, list):
+        return [_sort_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sort_json(value[key]) for key in sorted(value)}
+    return value
+
+
+def _canonical_request_document() -> dict[str, Any]:
+    semantic_request: dict[str, Any] = {
+        "model": {
+            "provider": "openai",
+            "api": "openai-responses",
+            "id": "gpt-5.5",
+        },
+        "context": {
+            "system_prompt": "final system prompt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "question"}],
+                }
+            ],
+            "tools": [
+                {
+                    "name": "grid_context_open",
+                    "description": "Open a grid context.",
+                    "parameters": {"type": "object", "additionalProperties": False},
+                }
+            ],
+        },
+        "options": {"transport": "sse", "temperature": 0},
+    }
+    return {
+        "schema_version": "grid-model-request-input/2.0",
+        "request_id": "analysis-native-artifacts-t001-r001",
+        "request_index": 1,
+        "turn_id": "analysis-native-artifacts-t001",
+        "captured_at": "2026-08-17T00:00:00Z",
+        "source_event_sequences": [3],
+        "context_revision": 1,
+        "context_state_hash": "1" * 64,
+        "runtime": {
+            "pi_coding_agent_version": "0.80.6",
+            "pi_ai_version": "0.80.6",
+            "pi_source_commit": "1" * 40,
+            "pi_patch_set_sha256": "2" * 64,
+        },
+        "semantic_request": semantic_request,
+        "semantic_request_sha256": _sha256_canonical_sorted(semantic_request),
+    }
+
+
 def write_native_run_with_simulator_artifacts(runs_root: Path) -> tuple[Path, dict[str, str]]:
     run_root = runs_root / "analysis-native-artifacts"
     run_root.mkdir(parents=True)
@@ -266,7 +329,7 @@ def write_native_run_with_simulator_artifacts(runs_root: Path) -> tuple[Path, di
     request = registry.write_json(
         "request-input",
         "analysis-native-artifacts-t001-r001",
-        {"schema_version": "grid-model-request-input/1.0", "messages": []},
+        _canonical_request_document(),
     )
     response = registry.write_json(
         "model-response",
@@ -458,6 +521,76 @@ def create_native_catalog_app(tmp_path: Path) -> tuple[FastAPI, dict[str, str]]:
     from grid_agent.trajectory.api.app import create_trajectory_app
 
     return create_trajectory_app(catalog, CursorCodec.load_or_create(cache_root / "cursor.key"), static_root=write_static_fixture(tmp_path)), refs
+
+
+def write_native_run_with_historical_v1_request(runs_root: Path) -> tuple[Path, str]:
+    run_root = runs_root / "analysis-historical-v1-request"
+    run_root.mkdir(parents=True)
+    registry = ImmutableArtifactRegistry(run_root)
+    recorder = RunEventRecorder(
+        run_root / "events/run-events.jsonl",
+        "analysis-historical-v1-request",
+        artifact_registry=registry,
+    )
+    scope = RunScope(
+        turn_id="analysis-historical-v1-request-t001",
+        step_id="analysis-historical-v1-request-t001-s001",
+        request_id="analysis-historical-v1-request-t001-r001",
+    )
+    request = registry.write_json(
+        "request-input",
+        "analysis-historical-v1-request-t001-r001",
+        {
+            "schema_version": "grid-model-request-input/1.0",
+            "request_id": "analysis-historical-v1-request-t001-r001",
+            "request_index": 1,
+            "turn_id": "analysis-historical-v1-request-t001",
+            "provider": "openai",
+            "model": "legacy-model",
+            "provider_payload": {
+                "messages": [{"role": "user", "content": "legacy question"}],
+                "tools": [],
+            },
+        },
+    )
+    recorder.append(EventDraft(event_type="analysis.started", payload={}))
+    recorder.append(
+        EventDraft(
+            event_type="turn.started",
+            scope=RunScope(turn_id="analysis-historical-v1-request-t001"),
+            payload={"ordinal": 1, "instruction_sha256": "4" * 64},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="model.request.started",
+            scope=scope,
+            refs=EventRefs(produced=(request.ref,)),
+            payload={"artifact_ref": request.ref, "request_index": 1},
+        )
+    )
+    recorder.append(
+        EventDraft(
+            event_type="analysis.completed",
+            payload={"completed_turns": 1, "total_turns": 1},
+        )
+    )
+    recorder.close()
+    (run_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "grid-agent-analysis-manifest/1.0",
+                "analysis_id": "analysis-historical-v1-request",
+                "status": "completed",
+                "completed_turns": 1,
+                "total_turns": 1,
+                "events_path": "events/run-events.jsonl",
+                "trajectory_schema_version": "grid-run-event/1.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return run_root, request.ref
 
 
 def test_spa_is_served_with_self_only_csp(tmp_path: Path) -> None:
@@ -706,6 +839,40 @@ def test_native_api_verifies_simulator_artifacts_and_downloads_exact_bytes(tmp_p
         assert sha256(artifact.content).hexdigest() == record["sha256"]
 
 
+def test_native_api_reads_historical_v1_request_without_mutating_bytes(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    run_root, request_ref = write_native_run_with_historical_v1_request(runs_root)
+    request_path = next((run_root / "requests").glob("*/input.json"))
+    before = request_path.read_bytes()
+    cache_root = tmp_path / ".grid-agent/trajectory-cache"
+    catalog = TrajectoryRunCatalog(runs_root, cache_root, ProjectionService(cache_root))
+    from grid_agent.trajectory.api.app import create_trajectory_app
+
+    app = create_trajectory_app(
+        catalog,
+        CursorCodec.load_or_create(cache_root / "cursor.key"),
+        static_root=write_static_fixture(tmp_path),
+    )
+    client = TestClient(app)
+
+    assert client.get("/api/runs").status_code == 200
+    assert client.get("/api/runs/analysis-historical-v1-request/agent").status_code == 200
+    evidence = client.get("/api/runs/analysis-historical-v1-request/evidence")
+    artifact = client.get(
+        f"/api/runs/analysis-historical-v1-request/artifacts/{request_ref}"
+    )
+
+    assert evidence.status_code == 200
+    records = {record["reference"]: record for record in evidence.json()["items"]}
+    assert records[request_ref]["verification_status"] == "verified"
+    assert artifact.status_code == 200
+    assert artifact.content == before
+    assert request_path.read_bytes() == before
+    assert json.loads(before)["schema_version"] == "grid-model-request-input/1.0"
+
+
 def test_native_api_keeps_unsupported_refs_explicitly_unavailable(tmp_path: Path) -> None:
     app, refs = create_native_catalog_app(tmp_path)
 
@@ -734,6 +901,9 @@ def test_execution_slice_returns_only_agent_records_causally_bound_to_sequence(t
     assert response.json()["source_sequence"] == 48
     assert response.json()["unavailable_reason"] is None
     assert "provider_payload" not in response.text
+    assert "reasoning_content" not in response.text
+    assert "thinkingSignature" not in response.text
+    assert "GRID_AGENT_TRAJECTORY_ACKS" not in response.text
     assert "/turns/" not in response.text
 
 
@@ -811,6 +981,9 @@ def test_execution_slice_resolves_a_claim_only_through_verified_artifact_lineage
     assert "unrelated" not in response.text
     assert "numeric-id" not in response.text
     assert "provider_payload" not in response.text
+    assert "reasoning_content" not in response.text
+    assert "thinkingSignature" not in response.text
+    assert "GRID_AGENT_TRAJECTORY_ACKS" not in response.text
 
 
 def test_execution_slice_is_explicitly_unavailable_without_durable_linkage(tmp_path: Path) -> None:

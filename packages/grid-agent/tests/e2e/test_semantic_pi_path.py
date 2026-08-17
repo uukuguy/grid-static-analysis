@@ -20,24 +20,70 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
     pi = tmp_path / "scripted-pi"
     pi.write_text(
         "#!/usr/bin/env python3\n"
-        "import json, os, subprocess\n"
+        "import hashlib, json, os, subprocess, sys, time\n"
         "from datetime import datetime, timezone\n"
         "from pathlib import Path\n"
         "prompt=json.loads(input())\n"
+        "prompt_text=prompt.get('message', prompt) if isinstance(prompt,dict) else prompt\n"
         "requests_path=os.environ.get('GRID_AGENT_TRAJECTORY_REQUESTS')\n"
+        "def sort_json(value):\n"
+        " if isinstance(value,list): return [sort_json(item) for item in value]\n"
+        " if isinstance(value,dict): return {key:sort_json(value[key]) for key in sorted(value)}\n"
+        " return value\n"
+        "def digest(value):\n"
+        " return hashlib.sha256(json.dumps(sort_json(value),ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8')).hexdigest()\n"
+        "def write_json_atomic(path, value):\n"
+        " encoded=json.dumps(sort_json(value),ensure_ascii=False,separators=(',',':'))+'\\n'\n"
+        " tmp=path.with_name(f'.{path.name}.{os.getpid()}.tmp')\n"
+        " tmp.write_text(encoded,encoding='utf-8')\n"
+        " tmp.replace(path)\n"
+        "def system_prompt():\n"
+        " if '--system-prompt' in sys.argv:\n"
+        "  path=sys.argv[sys.argv.index('--system-prompt')+1]\n"
+        "  return Path(path).read_text(encoding='utf-8')\n"
+        " return None\n"
+        "def argv_value(name, fallback):\n"
+        " if name in sys.argv:\n"
+        "  return sys.argv[sys.argv.index(name)+1]\n"
+        " return fallback\n"
+        "def semantic_tools(catalog):\n"
+        " tools=[{'name':tool['name'],'description':tool['description'],'parameters':tool['input_schema']} for tool in catalog['tools']]\n"
+        " tools.append({'name':'grid_guide_open','description':'Open a packaged grid analysis guide.','parameters':{'type':'object','additionalProperties':False,'properties':{'resource_id':{'type':'string','minLength':1}},'required':['resource_id']}})\n"
+        " tools.append({'name':'grid_submit_answer','description':'Submit the final user-facing answer.','parameters':{'type':'object','additionalProperties':False,'properties':{'answer_output':{'type':'string','minLength':1},'result_refs':{'type':'array','items':{'type':'string'}},'claim_evidence_refs':{'type':'array','items':{'type':'string'}}},'required':['answer_output']}})\n"
+        " return tools\n"
+        "def runtime_identity():\n"
+        " return {'pi_coding_agent_version':os.environ.get('GRID_AGENT_PI_CODING_AGENT_VERSION','scripted-test'),'pi_ai_version':os.environ.get('GRID_AGENT_PI_AI_VERSION','scripted-test'),'pi_source_commit':os.environ.get('GRID_AGENT_PI_SOURCE_COMMIT','1'*40),'pi_patch_set_sha256':os.environ.get('GRID_AGENT_PI_PATCH_SET_SHA256','2'*64)}\n"
+        "def wait_for_ack(request_id, expected_digest):\n"
+        " ack_dir=os.environ.get('GRID_AGENT_TRAJECTORY_ACKS')\n"
+        " if not ack_dir: return\n"
+        " path=Path(ack_dir)/f'{request_id}.committed.json'\n"
+        " deadline=time.monotonic()+10\n"
+        " while time.monotonic()<deadline:\n"
+        "  if path.exists():\n"
+        "   ack=json.loads(path.read_text(encoding='utf-8'))\n"
+        "   if ack.get('semantic_request_sha256')!=expected_digest or ack.get('status')!='committed': raise RuntimeError('invalid trajectory request ack')\n"
+        "   mark('model_request_committed')\n"
+        "   return\n"
+        "  time.sleep(0.025)\n"
+        " raise RuntimeError('timed out waiting for trajectory request ack')\n"
         "def mark(name):\n"
         " order_path=Path(os.environ['GRID_AGENT_WORKSPACE'])/'scripted-canonical-order.jsonl'\n"
         " with order_path.open('a',encoding='utf-8') as f: f.write(json.dumps({'marker':name})+'\\n')\n"
+        "catalog=json.load(open(os.environ['GRID_AGENT_TOOL_CATALOG'],encoding='utf-8'))\n"
         "if requests_path:\n"
         " turn=json.load(open(os.environ['GRID_AGENT_ACTIVE_TURN'],encoding='utf-8'))\n"
         " state=json.load(open(os.environ['GRID_AGENT_TRAJECTORY_CAPTURE_STATE'],encoding='utf-8'))\n"
         " request_id=turn['turn_id']+'-r001'\n"
         " request_path=Path(requests_path)/request_id/'input.json'\n"
-        " request_path.parent.mkdir()\n"
-        " request={'schema_version':'grid-model-request-input/1.0','request_id':request_id,'request_index':1,'turn_id':turn['turn_id'],'provider':os.environ['GRID_AGENT_PROVIDER_ID'],'model':os.environ['GRID_AGENT_MODEL_ID'],'captured_at':datetime.now(timezone.utc).isoformat(),'source_event_sequences':state['source_event_sequences'],'context_revision':state['context_revision'],'context_state_hash':state['context_state_hash'],'provider_payload':{'model':os.environ['GRID_AGENT_MODEL_ID'],'messages':[{'role':'user','content':prompt}],'tools':[]}}\n"
-        " request_path.write_text(json.dumps(request,ensure_ascii=False),encoding='utf-8')\n"
-        "mark('before_model_request')\n"
-        "catalog=json.load(open(os.environ['GRID_AGENT_TOOL_CATALOG'],encoding='utf-8'))\n"
+        " request_path.parent.mkdir(parents=True,exist_ok=True)\n"
+        " semantic={'model':{'provider':argv_value('--provider','scripted'),'api':'openai-responses','id':argv_value('--model','scripted-model')},'context':{'system_prompt':system_prompt(),'messages':[{'role':'user','content':[{'type':'text','text':str(prompt_text)}]}],'tools':semantic_tools(catalog)},'options':{'transport':'sse','temperature':0}}\n"
+        " semantic_digest=digest(semantic)\n"
+        " request={'schema_version':'grid-model-request-input/2.0','request_id':request_id,'request_index':1,'turn_id':turn['turn_id'],'captured_at':datetime.now(timezone.utc).isoformat(),'source_event_sequences':state['source_event_sequences'],'context_revision':state['context_revision'],'context_state_hash':state['context_state_hash'],'runtime':runtime_identity(),'semantic_request':semantic,'semantic_request_sha256':semantic_digest}\n"
+        " write_json_atomic(request_path, request)\n"
+        " mark('before_model_request')\n"
+        " wait_for_ack(request_id, semantic_digest)\n"
+        "else:\n"
+        " mark('before_model_request')\n"
         "by_cap={tool['capability']:tool['name'] for tool in catalog['tools']}\n"
         "mark('provider_enter')\n"
         "def emit(payload): print(json.dumps(payload), flush=True)\n"
@@ -135,7 +181,46 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         assert (runs_path / "evidence/network-facts" / f"network-fact-{digest}.json").is_file()
         order_path = runs_path / "scripted-canonical-order.jsonl"
         order = [json.loads(line)["marker"] for line in order_path.read_text(encoding="utf-8").splitlines()]
-        assert order[:2] == ["before_model_request", "provider_enter"]
+        request_paths = tuple((runs_path / "requests").glob("*/input.json"))
+        if request_paths:
+            assert order[:3] == ["before_model_request", "model_request_committed", "provider_enter"]
+            request = json.loads(request_paths[0].read_text(encoding="utf-8"))
+            assert request["schema_version"] == "grid-model-request-input/2.0"
+            assert request["semantic_request"]["model"] == {
+                "provider": "openai",
+                "api": "openai-responses",
+                "id": "gpt-5.5",
+            }
+            assert request["semantic_request"]["context"]["messages"] == [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "IEEE-39节点系统中线路11连接哪两个母线?",
+                        }
+                    ],
+                }
+            ]
+            assert request["semantic_request"]["context"]["tools"]
+            assert request["semantic_request"]["options"]["transport"] == "sse"
+            assert set(request["runtime"]) == {
+                "pi_coding_agent_version",
+                "pi_ai_version",
+                "pi_source_commit",
+                "pi_patch_set_sha256",
+            }
+            assert "provider_payload" not in request
+            assert "test-only-secret" not in json.dumps(request, ensure_ascii=False)
+            ack = json.loads(
+                next((ROOT / ".grid-agent/trajectory-acks" / question_id).glob("*.committed.json")).read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert ack["semantic_request_sha256"] == request["semantic_request_sha256"]
+            assert ack["status"] == "committed"
+        else:
+            assert order[:2] == ["before_model_request", "provider_enter"]
 
         questions = tmp_path / "questions.txt"
         questions.write_text("IEEE-39节点系统中线路11连接哪两个母线?\n", encoding="utf-8")

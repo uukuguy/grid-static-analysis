@@ -119,13 +119,15 @@ runs/analysis-20260814T081822Z
 
 详情以结构化节点展示 Before、Delta、After；**Raw recorded JSON** 是次要折叠视图。可将两个已经获取的权威 frame 分别固定为 A/B，比较 Added、Removed、Changed 键。比较不会生成合成上下文。模型请求输入只有在 frame 保存了已验证引用时才提供下载；工作台不会用最近序列替代缺失输入。
 
+中心 Context 里的请求输入链接表示最终的、provider 无关的语义输入，而不是 provider wire payload。原生 v2 请求预览只暴露 `semantic_request`、相关 turn/request/context 标识和运行时身份；内部提交确认、Provider 私有 reasoning、thinking signature、凭证和 wire payload 不会出现在 API 响应或工作台预览中。已登记工件下载仍返回原始不可变字节，用于完整性复核。
+
 ### Evidence：证据与工件
 
 Evidence 是虚拟化的分页调查表，可按 **Kind、Source、Verification、起止序列、Relevant reference、Sort** 筛选。表头状态显示当前已加载记录数和序列范围；**Load older evidence history** 与 **Retry older evidence history** 的游标语义和 Agent 相同。每条记录可以复制引用；Producer 和 Consumer 按钮只导航到记录中明确保存的序列，不按数字巧合或最近节点推断关系。
 
 只有 `verification_status=verified` 的记录会显示 **Preview** 和 **Download**。预览仍通过同源的已登记工件网关请求，发送 `Range: bytes=0-131071`，客户端最多保留 131,072 bytes，并明确标记截断；仅接受 JSON、Markdown 和纯文本响应。预览是显示用途，不执行内容。未验证记录显示持久化的不可用原因，且不会生成预览按钮、下载链接或工件 URL。
 
-原生 `native` run 通常包含可重新校验的登记工件和精确请求输入。`legacy-v0.2` run 的摘要、分页和已能投影的 lineage 仍可浏览；没有登记文件、摘要或精确请求输入的项目保持 `unavailable` 并说明原因。两类 run 都不会用附近序列、父 turn 或任意文件路径补齐缺失事实。
+原生 `native` run 通常包含可重新校验的登记工件和精确语义请求输入。历史 `grid-model-request-input/1.0` 工件仍可作为只读历史原始输入浏览或下载，但它们不会被改写为 v2，也不等同于当前的 canonical replay。`legacy-v0.2` run 的摘要、分页和已能投影的 lineage 仍可浏览；没有登记文件、摘要或精确请求输入的项目保持 `unavailable` 并说明原因。两类 run 都不会用附近序列、父 turn 或任意文件路径补齐缺失事实。
 
 ### Inspector 与移动设备
 
@@ -158,6 +160,7 @@ curl 'http://127.0.0.1:8765/api/runs/<analysis_id>/context?at_sequence=42'
 | 浏览器无法打开 | 确认命令仍在运行，并使用 `http://127.0.0.1:<PORT>/`，不要使用公网地址。 |
 | 显示 `corrupt` | 不要依据该 run 输出结论；检查其事件链和诊断，必要时重新执行分析。 |
 | Evidence 链接被拒绝 | 这是预期安全行为：路径、未登记引用、符号链接逃逸或摘要不匹配都会被拒绝。 |
+| 模型请求提交失败 | 这是分析完整性失败；请求必须先持久化并收到 commit acknowledgement，才允许进入 provider I/O。不要按 provider 故障处理。 |
 | 前端开发验证缺少浏览器 | 默认使用 Playwright 固定版本 Chromium：`npm exec --prefix packages/trajectory-workbench -- playwright install chromium`。只有在固定浏览器档案不可用且明确接受本机差异时，才临时设置 `TRAJECTORY_WORKBENCH_BROWSER_CHANNEL=chrome` 使用系统 Chrome。 |
 | 需要复用已启动的本地 Vite 服务 | 默认测试会启动独立 loopback 服务以保持验证可重复；仅在本地排障时设置 `TRAJECTORY_WORKBENCH_REUSE_SERVER=1`。 |
 

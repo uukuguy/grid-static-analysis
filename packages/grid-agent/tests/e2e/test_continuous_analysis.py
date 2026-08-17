@@ -204,9 +204,38 @@ def test_scripted_analysis_writes_replayable_native_trajectory(
         request = json.loads(
             next((root / "requests").glob("*/input.json")).read_text(encoding="utf-8")
         )
-        assert request["provider"] == "openai"
-        assert request["model"] == "gpt-5.5"
+        assert request["schema_version"] == "grid-model-request-input/2.0"
+        assert request["semantic_request"]["model"] == {
+            "provider": "openai",
+            "api": "openai-responses",
+            "id": "gpt-5.5",
+        }
+        assert request["semantic_request"]["context"]["system_prompt"]
+        user_message = request["semantic_request"]["context"]["messages"][0]
+        assert user_message["role"] == "user"
+        assert user_message["content"][0]["type"] == "text"
+        assert "载入 IEEE-39 并说明第11号线路的连接端" in user_message["content"][0]["text"]
+        assert "<analysis_context_view>" in user_message["content"][0]["text"]
+        assert {
+            tool["name"]
+            for tool in request["semantic_request"]["context"]["tools"]
+        } >= {"grid_context_open", "grid_submit_answer"}
+        assert request["semantic_request"]["options"]["transport"] == "sse"
+        assert set(request["runtime"]) == {
+            "pi_coding_agent_version",
+            "pi_ai_version",
+            "pi_source_commit",
+            "pi_patch_set_sha256",
+        }
+        assert "provider_payload" not in request
         assert "test-only-secret" not in json.dumps(request)
+        ack = json.loads(
+            next((ROOT / ".grid-agent/trajectory-acks" / root.name).glob("*.committed.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert ack["semantic_request_sha256"] == request["semantic_request_sha256"]
+        assert ack["status"] == "committed"
         assert "test-only-secret" not in (root / "events/run-events.jsonl").read_text(
             encoding="utf-8"
         )
@@ -268,10 +297,12 @@ def _tool_start(trace: list[dict[str, Any]], tool_name: str) -> dict[str, Any]:
 
 
 _SCRIPTED_PI = f"""#!/usr/bin/env python3
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -282,6 +313,130 @@ def emit(payload):
 
 def load_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def sort_json(value):
+    if isinstance(value, list):
+        return [sort_json(item) for item in value]
+    if isinstance(value, dict):
+        return {{key: sort_json(value[key]) for key in sorted(value)}}
+    return value
+
+
+def digest(value):
+    encoded = json.dumps(
+        sort_json(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def write_json_atomic(path, value):
+    encoded = json.dumps(
+        sort_json(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ) + "\\n"
+    temporary = path.with_name(f".{{path.name}}.{{os.getpid()}}.tmp")
+    temporary.write_text(encoded, encoding="utf-8")
+    temporary.replace(path)
+
+
+def system_prompt():
+    if "--system-prompt" not in sys.argv:
+        return None
+    return Path(sys.argv[sys.argv.index("--system-prompt") + 1]).read_text(
+        encoding="utf-8"
+    )
+
+
+def argv_value(name, fallback):
+    if name not in sys.argv:
+        return fallback
+    return sys.argv[sys.argv.index(name) + 1]
+
+
+def prompt_text(prompt):
+    if isinstance(prompt, dict) and isinstance(prompt.get("message"), str):
+        return prompt["message"]
+    return str(prompt)
+
+
+def semantic_tools():
+    tools = [
+        {{
+            "name": tool["name"],
+            "description": tool["description"],
+            "parameters": tool["input_schema"],
+        }}
+        for tool in CATALOG["tools"]
+    ]
+    tools.append(
+        {{
+            "name": "grid_guide_open",
+            "description": "Open a packaged grid analysis guide.",
+            "parameters": {{
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {{"resource_id": {{"type": "string", "minLength": 1}}}},
+                "required": ["resource_id"],
+            }},
+        }}
+    )
+    tools.append(
+        {{
+            "name": "grid_submit_answer",
+            "description": "Submit the final user-facing answer.",
+            "parameters": {{
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {{
+                    "answer_output": {{"type": "string", "minLength": 1}},
+                    "result_refs": {{"type": "array", "items": {{"type": "string"}}}},
+                    "claim_evidence_refs": {{
+                        "type": "array",
+                        "items": {{"type": "string"}},
+                    }},
+                }},
+                "required": ["answer_output"],
+            }},
+        }}
+    )
+    return tools
+
+
+def runtime_identity():
+    return {{
+        "pi_coding_agent_version": os.environ.get(
+            "GRID_AGENT_PI_CODING_AGENT_VERSION", "scripted-test"
+        ),
+        "pi_ai_version": os.environ.get("GRID_AGENT_PI_AI_VERSION", "scripted-test"),
+        "pi_source_commit": os.environ.get("GRID_AGENT_PI_SOURCE_COMMIT", "1" * 40),
+        "pi_patch_set_sha256": os.environ.get(
+            "GRID_AGENT_PI_PATCH_SET_SHA256", "2" * 64
+        ),
+    }}
+
+
+def wait_for_request_ack(request_id, expected_digest):
+    ack_dir = os.environ.get("GRID_AGENT_TRAJECTORY_ACKS")
+    if not ack_dir:
+        return
+    path = Path(ack_dir) / f"{{request_id}}.committed.json"
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if path.exists():
+            ack = load_json(path)
+            if (
+                ack.get("semantic_request_sha256") != expected_digest
+                or ack.get("status") != "committed"
+            ):
+                raise RuntimeError("invalid trajectory request acknowledgement")
+            return
+        time.sleep(0.025)
+    raise RuntimeError("timed out waiting for trajectory request acknowledgement")
 
 
 def capture_provider_request(prompt):
@@ -295,29 +450,42 @@ def capture_provider_request(prompt):
     request_id = f"{{turn['turn_id']}}-r{{request_index:03d}}"
     request_path = Path(requests_path) / request_id / "input.json"
     request_path.parent.mkdir()
-    request_path.write_text(
-        json.dumps(
-            {{
-                "schema_version": "grid-model-request-input/1.0",
-                "request_id": request_id,
-                "request_index": request_index,
-                "turn_id": turn["turn_id"],
-                "provider": os.environ["GRID_AGENT_PROVIDER_ID"],
-                "model": os.environ["GRID_AGENT_MODEL_ID"],
-                "captured_at": datetime.now(timezone.utc).isoformat(),
-                "source_event_sequences": capture_state["source_event_sequences"],
-                "context_revision": capture_state["context_revision"],
-                "context_state_hash": capture_state["context_state_hash"],
-                "provider_payload": {{
-                    "model": os.environ["GRID_AGENT_MODEL_ID"],
-                    "messages": [{{"role": "user", "content": prompt}}],
-                    "tools": [],
-                }},
-            }},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    semantic_request = {{
+        "model": {{
+            "provider": argv_value("--provider", "scripted"),
+            "api": "openai-responses",
+            "id": argv_value("--model", "scripted-model"),
+        }},
+        "context": {{
+            "system_prompt": system_prompt(),
+            "messages": [
+                {{
+                    "role": "user",
+                    "content": [{{"type": "text", "text": prompt_text(prompt)}}],
+                }}
+            ],
+            "tools": semantic_tools(),
+        }},
+        "options": {{"transport": "sse", "temperature": 0}},
+    }}
+    semantic_digest = digest(semantic_request)
+    write_json_atomic(
+        request_path,
+        {{
+            "schema_version": "grid-model-request-input/2.0",
+            "request_id": request_id,
+            "request_index": request_index,
+            "turn_id": turn["turn_id"],
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "source_event_sequences": capture_state["source_event_sequences"],
+            "context_revision": capture_state["context_revision"],
+            "context_state_hash": capture_state["context_state_hash"],
+            "runtime": runtime_identity(),
+            "semantic_request": semantic_request,
+            "semantic_request_sha256": semantic_digest,
+        }},
     )
+    wait_for_request_ack(request_id, semantic_digest)
 
 
 def tool_name_for(capability):

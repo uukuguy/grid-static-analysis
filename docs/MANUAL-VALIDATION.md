@@ -85,6 +85,15 @@ make analysis INSTRUCTIONS=questions.txt
 
 stdout 必须只有一个最终 `AnswerEnvelope`，`question_id` 形如 `analysis-20260814T120000Z`，`answer_output` 是项目相对报告路径，例如 `runs/analysis-20260814T120000Z/report.md`。stderr 实时显示模型请求、工具开始/完成/失败、重试、等待提示和报告检查点。每次运行只创建一个 `runs/<analysis_id>/` 目录，输入副本在 `input/instructions.md.txt`，逐回合答案在 `output/answers.jsonl`，上下文快照在 `context/analysis-context.json`，最终报告在 `report.md`。
 
+对每个原生模型请求，检查
+`runs/<analysis_id>/requests/<request_id>/input.json` 是
+`grid-model-request-input/2.0`，包含最终 system prompt、语义 messages、公开工具 schemas、公开 options、runtime identity 与 `semantic_request_sha256`。对应的
+`.grid-agent/trajectory-acks/<analysis_id>/<request_id>.committed.json`
+必须在 provider 工具事件前出现并引用同一 digest。请求提交失败属于分析完整性失败，不应判读为 provider 调用失败。
+
+请求、Context 预览和 API 响应不得包含 provider wire payload、凭证、私有 reasoning、`reasoning_content`、`thinkingSignature` 或 ack 环境路径。历史
+`grid-model-request-input/1.0` 工件可以只读下载和核验原始字节，但不得被改写、补齐 v2 字段或视为当前 canonical replay。
+
 `make report` 和 `grid-agent report --questions PATH` 仅为迁移期兼容别名，委托同一条连续分析路径。它们不再接受独立 `OUTPUT`、`--output` 或 `--report-path`，也不再为每个问题启动一个 `grid-agent run` 子进程。当前版本没有 resume、命名 session 或 session 切换；中断后应检查已写入的同一分析目录并重新运行指令集。
 
 答案草稿通过受控提交后即为已接受答案；审计会作为单独的诊断写入报告，明确列出发现、影响和复核建议，但不会把已接受答案改写为“未采纳”。同一分析目录中的 `output/answers.jsonl` 仍只记录受控的逐回合答案 envelope。

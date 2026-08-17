@@ -125,11 +125,13 @@ class NativeCaptureAdapter:
         artifacts: ImmutableArtifactRegistry,
         workspace: CaptureWorkspace,
         *,
+        acknowledgements_path: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.recorder = recorder
         self.artifacts = artifacts
         self.workspace = workspace
+        self.acknowledgements_path = acknowledgements_path
         self.clock = clock
         self._turn_id: str | None = None
         self._step_ordinal = 0
@@ -674,9 +676,9 @@ class NativeCaptureAdapter:
         event_sequence: int,
     ) -> None:
         path = (
-            _acknowledgements_path(self.workspace, self.recorder.analysis_id)
-            / f"{document.request_id}.committed.json"
-        )
+            self.acknowledgements_path
+            or _acknowledgements_path(self.workspace, self.recorder.analysis_id)
+        ) / f"{document.request_id}.committed.json"
         _write_json_exclusive_atomic(
             path,
             {

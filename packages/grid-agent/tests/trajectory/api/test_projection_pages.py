@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from hashlib import sha256
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -190,6 +192,9 @@ def test_agent_page_never_echoes_internal_capabilities_or_artifact_paths(
 
     assert response.status_code == 200
     assert "provider_payload" not in response.text
+    assert "reasoning_content" not in response.text
+    assert "thinkingSignature" not in response.text
+    assert "GRID_AGENT_TRAJECTORY_ACKS" not in response.text
     assert "artifact_ref" not in response.text
     assert "/private/" not in response.text
 
@@ -332,6 +337,115 @@ def test_context_request_input_requires_verified_artifact_registration(
     assert detail["request_input_unavailable_reason"] == persisted_reason
     assert detail["request_artifact_ref"] is None
     assert detail["unavailable_reason"] == persisted_reason
+
+
+def test_context_detail_exposes_only_canonical_request_preview(tmp_path: Path) -> None:
+    app, catalog, _ = create_test_app(tmp_path)
+    run_root = catalog.runs_root / "analysis-test"
+    request_path = run_root / "requests/request-canonical/input.json"
+    request_path.parent.mkdir(parents=True)
+    request_document = {
+        "schema_version": "grid-model-request-input/2.0",
+        "request_id": "request-canonical",
+        "request_index": 1,
+        "turn_id": "analysis-test-t001",
+        "captured_at": "2026-08-17T00:00:00Z",
+        "source_event_sequences": [10, 20],
+        "context_revision": 3,
+        "context_state_hash": "a" * 64,
+        "runtime": {
+            "pi_coding_agent_version": "0.80.6",
+            "pi_ai_version": "0.80.6",
+            "pi_source_commit": "1" * 40,
+            "pi_patch_set_sha256": "2" * 64,
+        },
+        "semantic_request": {
+            "model": {
+                "provider": "openai",
+                "api": "openai-responses",
+                "id": "gpt-5.5",
+            },
+            "context": {
+                "system_prompt": "final system",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "question"}],
+                    }
+                ],
+                "tools": [
+                    {
+                        "name": "grid_context_open",
+                        "description": "Open a context.",
+                        "parameters": {"type": "object"},
+                    }
+                ],
+            },
+            "options": {"transport": "sse", "temperature": 0},
+        },
+        "semantic_request_sha256": "b" * 64,
+    }
+    request_path.write_text(json.dumps(request_document), encoding="utf-8")
+    request_ref = "artifact:sha256:" + sha256(request_path.read_bytes()).hexdigest()
+    frame = ContextFrame(
+        id="context:analysis-test:901",
+        source_sequences=(901,),
+        rule_id="context-state-delta/v1",
+        source_sequence=901,
+        before_revision=2,
+        after_revision=3,
+        before_state_hash="b" * 64,
+        after_state_hash="c" * 64,
+        before_state={"model": "before"},
+        delta={"model": "changed"},
+        after_state={"model": "after"},
+        request_artifact_ref=request_ref,
+    )
+    record = ArtifactIndexRecord(
+        id="artifact:analysis-test:request-canonical",
+        source_sequences=(901,),
+        reference=request_ref,
+        kind="request-input",
+        relative_path="requests/request-canonical/input.json",
+        sha256=sha256(request_path.read_bytes()).hexdigest(),
+        verification_status="verified",
+        producing_sequence=901,
+    )
+    catalog.projected = catalog.projected.model_copy(
+        update={
+            "context": ContextTimeline(
+                analysis_id="analysis-test",
+                frames=(frame,),
+            ),
+            "artifacts": ArtifactIndex(
+                analysis_id="analysis-test",
+                records={request_ref: record},
+            ),
+        }
+    )
+
+    response = TestClient(app).get(
+        "/api/runs/analysis-test/context", params={"at_sequence": 901}
+    )
+
+    assert response.status_code == 200
+    preview = response.json()["request_input"]
+    assert preview == {
+        "request_id": "request-canonical",
+        "request_index": 1,
+        "turn_id": "analysis-test-t001",
+        "captured_at": "2026-08-17T00:00:00Z",
+        "source_event_sequences": [10, 20],
+        "context_revision": 3,
+        "context_state_hash": "a" * 64,
+        "runtime": request_document["runtime"],
+        "semantic_request": request_document["semantic_request"],
+        "semantic_request_sha256": "b" * 64,
+    }
+    assert "provider_payload" not in response.text
+    assert "reasoning_content" not in response.text
+    assert "thinkingSignature" not in response.text
+    assert "GRID_AGENT_TRAJECTORY_ACKS" not in response.text
 
 
 def test_evidence_page_maps_public_metadata_without_content(tmp_path: Path) -> None:

@@ -511,7 +511,14 @@ def _execute_analysis(
             ),
             transition_commit=bridge.commit,
         )
-        capture = NativeCaptureAdapter(recorder, artifacts, workspace)
+        capture = NativeCaptureAdapter(
+            recorder,
+            artifacts,
+            workspace,
+            acknowledgements_path=project_paths.trajectory_acks_path(
+                workspace.analysis_id
+            ),
+        )
         launch = build_pi_launch(
             resolved,
             RuntimePaths(

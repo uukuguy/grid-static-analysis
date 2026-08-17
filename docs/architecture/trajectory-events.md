@@ -105,6 +105,14 @@ audit.diagnostic.recorded
 artifacts under `requests/<request_id>/input.json` and
 `requests/<request_id>/response.json`. Events record bounded summaries and
 artifact references rather than hidden reasoning or streaming token deltas.
+For current native runs, `input.json` uses
+`grid-model-request-input/2.0`: the artifact is the final provider-independent
+semantic request, including the final system prompt, normalized messages,
+public tool schemas, public options, correlation fields, runtime identity, and
+the canonical semantic request digest. Provider wire payloads are deliberately
+not persisted as replay sources. Private reasoning content and provider
+thinking signatures are redacted before any durable request, response, event,
+or projection surface is written.
 
 ## Recorder and Artifact Rules
 
@@ -120,6 +128,17 @@ and digest-verified before an event may reference it. A tool result artifact,
 for example, is persisted before `tool.completed` cites it. Artifact integrity
 or registration failure therefore prevents the dependent event from becoming
 authoritative.
+
+Model request commit is stricter: the request artifact is written before
+provider I/O, `model.request.started` is appended, and only then does the
+capture adapter write `grid-model-request-commit/1.0` under
+`.grid-agent/trajectory-acks/<analysis_id>/`. A Pi runtime must not enter
+provider I/O until that acknowledgement is visible. Failure to commit this
+pre-call request is an analysis integrity failure, not a provider failure.
+
+Historical `grid-model-request-input/1.0` request artifacts remain readable and
+downloadable as immutable run artifacts. Readers must not rewrite them, infer
+missing v2 semantic fields, or treat them as equivalent to canonical v2 replay.
 
 ## Fail-Closed Reading and Evolution
 
