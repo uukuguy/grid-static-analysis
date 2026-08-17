@@ -175,11 +175,13 @@ def test_current_sources_do_not_use_obsolete_provider_capture_path() -> None:
         capture_output=True,
         check=True,
     )
-    source_files = [
-        ROOT / line
-        for line in completed.stdout.splitlines()
-        if line and (ROOT / line).suffix in TEXT_SUFFIXES
-    ]
+    tracked_paths = [line for line in completed.stdout.splitlines() if line]
+    checked_relative_paths = set(tracked_paths)
+    assert {
+        "packages/grid-agent/src/grid_agent/trajectory/static/assets/app.css",
+        "packages/grid-agent/src/grid_agent/trajectory/static/assets/app.js",
+        "packages/grid-agent/src/grid_agent/trajectory/static/index.html",
+    }.issubset(checked_relative_paths)
     forbidden_terms = (
         "before_provider_request",
         "provider_payload",
@@ -188,12 +190,21 @@ def test_current_sources_do_not_use_obsolete_provider_capture_path() -> None:
         "drain_provider_requests",
     )
 
-    offenders: dict[str, list[str]] = {}
-    for path in source_files:
-        text = path.read_text(encoding="utf-8")
-        matches = [term for term in forbidden_terms if term in text]
-        if matches:
-            offenders[str(path.relative_to(ROOT))] = matches
+    grep = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-I",
+            "-n",
+            *[option for term in forbidden_terms for option in ("-e", term)],
+            "--",
+            *checked_paths,
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
-    assert offenders == {}
-    assert source_files
+    assert grep.returncode == 1, grep.stdout or grep.stderr
+    assert tracked_paths
