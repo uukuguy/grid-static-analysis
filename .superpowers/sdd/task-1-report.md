@@ -1,152 +1,266 @@
-# Task 1 Report: Canonical JSON and typed event envelope
+# Task 1 Report: Pi before_model_request Contract
 
-Date: 2026-08-14
+## Summary
 
-Status: implemented and verified
+Created an upstream-ready patch artifact at `configs/runtime/patches/pi-0.80.6-before-model-request.patch` against Pi `0.80.6` commit `2b3fda9921b5590f285165287bd442a25817f17b`.
 
-## Scope
+The patch defines the provider-neutral, observation-only `before_model_request` extension event contract, adds a fail-closed `ExtensionRunner.emitBeforeModelRequest()` method, re-exports the public types, and adds SDK boundary tests that describe the required emission behavior for the next task.
 
-Implemented only the Task 1 trajectory protocol surface. Existing runtime behavior,
-stdout envelopes, simulator boundaries, and existing analysis workspace behavior were
-not changed.
+No installed `.grid-agent/runtime/pi/source` tree was edited. Work was performed in a clean temporary checkout: `/tmp/pi-canonical-hook.G6C55q/pi`.
 
-## Files changed
+## Files Changed
 
-- `packages/grid-agent/src/grid_agent/trajectory/__init__.py`
-- `packages/grid-agent/src/grid_agent/trajectory/canonical.py`
-- `packages/grid-agent/src/grid_agent/trajectory/events.py`
-- `packages/grid-agent/tests/trajectory/__init__.py`
-- `packages/grid-agent/tests/trajectory/test_events.py`
+Repository:
 
-## TDD evidence
+- `configs/runtime/patches/pi-0.80.6-before-model-request.patch`
 
-### RED
+Upstream files represented in the patch:
 
-Command:
+- `packages/coding-agent/src/core/extensions/types.ts`
+- `packages/coding-agent/src/core/extensions/runner.ts`
+- `packages/coding-agent/src/core/extensions/index.ts`
+- `packages/coding-agent/src/index.ts`
+- `packages/coding-agent/test/sdk-before-model-request.test.ts`
 
-```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
-```
-
-Observed output:
-
-```text
-ImportError while importing test module 'packages/grid-agent/tests/trajectory/test_events.py'.
-ModuleNotFoundError: No module named 'grid_agent.trajectory'
-1 error in 0.07s
-```
-
-This was the expected failure before the new package existed.
-
-### GREEN
+## RED Evidence
 
 Command:
 
 ```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts
 ```
 
-Observed output:
+Result before implementation: FAIL, 2 failed tests.
 
-```text
-..........                                                               [100%]
-10 passed in 0.06s
-```
+Observed failures:
 
-Also run:
+- First test received order `["provider"]` instead of `["before_model_request", "provider"]`.
+- Second test resolved with `AssistantMessageEventStream` instead of rejecting with `commit failed`; provider call was not blocked.
+
+This proves the test catches the missing pre-provider SDK emission behavior.
+
+## GREEN / Verification Evidence
+
+Contract implementation and formatting:
 
 ```sh
-git diff --check
+npx biome check packages/coding-agent/src/core/extensions/types.ts packages/coding-agent/src/core/extensions/runner.ts packages/coding-agent/src/core/extensions/index.ts packages/coding-agent/src/index.ts packages/coding-agent/test/sdk-before-model-request.test.ts
 ```
 
-Observed result: success with no whitespace errors.
+Result: PASS, `Checked 5 files in 13ms. No fixes applied.`
 
-## Implementation
+Upstream dependency/type build:
 
-- Added deterministic UTF-8 canonical JSON with sorted keys, compact separators,
-  final newline, non-finite-number rejection, and SHA-256 reference formatting.
-- Added immutable, extra-forbidden envelope models for scope, causation, provenance,
-  context boundaries, references, drafts, and persisted events.
-- Enforced `turn -> step -> request -> tool call` scope nesting.
-- Added the complete closed `PAYLOAD_MODELS` vocabulary and normalized every draft
-  payload through its event-specific Pydantic model before use.
-- Added native `grid-run-event/1.0` event construction, UTC microsecond timestamps,
-  SHA-256 field validation, and canonical pre-hash event construction.
+```sh
+cd packages/ai && npx tsgo -p tsconfig.build.json
+```
 
-## Self-review
+Result: PASS.
 
-- Confirmed `PAYLOAD_MODELS` includes all 25 required event types and rejects extra
-  payload fields through `StrictFrozenModel`.
-- Confirmed source kinds are limited to persisted `observed` and `agent-declared`;
-  `derived` remains a projection-only concept.
-- Confirmed the hash is formed only from the complete envelope prior to adding
-  `event_hash`, then the final envelope is validated and canonical round-trips.
-- Confirmed no later recorder, reader, artifact, workspace, model-capability, or
-  runtime integration code was added.
+Coding-agent build/typecheck after building local workspace dependencies:
+
+```sh
+npm run build --workspace @earendil-works/pi-agent-core && npm run build --workspace @earendil-works/pi-coding-agent
+```
+
+Result: PASS.
+
+Patch hygiene:
+
+```sh
+git apply --check configs/runtime/patches/pi-0.80.6-before-model-request.patch
+```
+
+Result against a fresh pinned checkout: PASS, patch applies cleanly.
+
+```sh
+git diff --check -- configs/runtime/patches/pi-0.80.6-before-model-request.patch
+```
+
+Result: PASS, no whitespace errors.
+
+Expected remaining behavior test status after contract-only implementation:
+
+```sh
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts
+```
+
+Result: FAIL, 2 failed tests, because SDK stream-boundary emission is intentionally not implemented in this task.
+
+## Self-Review
+
+- The event options type includes only semantic replay inputs requested in the brief: reasoning, thinking budgets, temperature, max tokens, transport, cache retention, timeouts, and retry controls.
+- The event excludes private/transport/correlation fields in the tests: `apiKey`, `env`, `headers`, `signal`, `onPayload`, `onResponse`, `metadata`, and `sessionId`.
+- `emitBeforeModelRequest()` projects safe public model/context/options snapshots before each handler.
+- Handler failures propagate naturally because the method does not catch/log like display-oriented extension events.
+- No SDK emission wiring was added, preserving the task boundary for the next slice.
 
 ## Concerns
 
-None. The future recorder task remains responsible for durable append/fsync,
-registered-reference admission, prohibited-content rejection, and fail-closed replay.
+- The exact SDK behavior tests remain failing by design until Task 2 calls `emitBeforeModelRequest()` at the stream boundary.
+- A root `npm run build` attempt was blocked before coding-agent by `packages/ai` online model generation/network-derived generated files. After restoring generated files, focused dependency and coding-agent builds passed.
 
-## Review follow-up fix: event timestamp and predecessor seed validation
+## Review Fix: Safe Public Projection
 
-Addressed the Task 1 review findings within the event envelope only.
+Review found two Important issues in the first patch artifact:
 
-### RED
+- `structuredClone(context)` would throw `DataCloneError` for real `Context.tools` containing executable callbacks.
+- `structuredClone(options)` would clone runtime/private fields instead of selecting only the public semantic request options.
 
-After adding regression coverage, ran:
+Fix applied in the upstream patch:
 
-```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
-```
+- Added `PublicModelRequestTool` and `PublicModelRequestContext`.
+- Changed `BeforeModelRequestEvent.context` from full `Context` to the safe public context snapshot.
+- Added `projectBeforeModelRequestContext()` to copy system prompt, converted messages, and tool `name`/`description`/`parameters` only.
+- Added `projectPublicModelRequestOptions()` to select exactly the Task 1 public option fields.
+- Added direct runner-contract tests without SDK emission wiring.
 
-Observed result:
+### Review RED Evidence
 
-```text
-..........FFFFF                                                          [100%]
-5 failed, 10 passed in 0.08s
-```
-
-The failures were the intended gaps: a naive `datetime` was accepted, two
-calendar-invalid timestamp strings passed the regex, and both invalid
-zero-predecessor boundaries were accepted.
-
-### GREEN
-
-Ran:
+Command:
 
 ```sh
-uv run --project packages/grid-agent pytest packages/grid-agent/tests/trajectory/test_events.py -q
-git diff --check
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts -t "tool snapshot|public semantic"
 ```
 
-Observed result:
+Result before fix: FAIL, 2 failed tests.
 
-```text
-...............                                                          [100%]
-15 passed in 0.06s
+Observed failures:
+
+- Tool snapshot test failed with `DataCloneError: async () => ({ result: "[]" }) could not be cloned.`
+- Public-options test failed with `DataCloneError: () => undefined could not be cloned.`
+
+### Review GREEN Evidence
+
+Command:
+
+```sh
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts -t "tool snapshot|public semantic"
 ```
 
-`git diff --check` completed successfully with no whitespace errors.
+Result after fix: PASS, `Test Files 1 passed (1)`, `Tests 2 passed | 2 skipped (4)`.
 
-### Changed files
+Full contract test file:
 
-- `packages/grid-agent/src/grid_agent/trajectory/events.py`
-- `packages/grid-agent/tests/trajectory/test_events.py`
+```sh
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts
+```
 
-### Implementation and self-review
+Result after fix: expected FAIL, `Tests 2 failed | 2 passed (4)`. The two passing tests cover safe runner projection; the two failing tests are still the Task 2 SDK-emission expectations.
 
-- `build_event` now rejects datetimes without a UTC offset before conversion.
-- `RunEvent` semantically parses its regex-conforming timestamp and requires the
-  exact six-digit UTC `Z` form.
-- The all-zero predecessor hash is required for sequence 1 and forbidden for later
-  sequences. No cross-event sequence-contiguity rule was added; that remains
-  recorder-owned.
-- Regression tests cover naive input, malformed-but-regex-matching date/time values,
-  and both predecessor-seed boundaries.
+Formatting:
 
-### Concerns
+```sh
+npx biome check packages/coding-agent/src/core/extensions/types.ts packages/coding-agent/src/core/extensions/runner.ts packages/coding-agent/src/core/extensions/index.ts packages/coding-agent/src/index.ts packages/coding-agent/test/sdk-before-model-request.test.ts
+```
 
-None. This change intentionally does not determine whether a nonzero predecessor
-hash is the actual prior event; durable chain contiguity belongs to the recorder.
+Result: PASS, `Checked 5 files in 13ms. No fixes applied.`
+
+Build/typecheck:
+
+```sh
+npm run build --workspace @earendil-works/pi-agent-core && npm run build --workspace @earendil-works/pi-coding-agent
+```
+
+Result: PASS.
+
+Patch apply:
+
+```sh
+git apply --check configs/runtime/patches/pi-0.80.6-before-model-request.patch
+```
+
+Result against a fresh pinned checkout: PASS, patch applies cleanly.
+
+Upstream source whitespace:
+
+```sh
+git diff --cached --check
+```
+
+Result in the temporary upstream checkout: PASS, no whitespace errors.
+
+## Second Review Fix: Public Model Identity
+
+Second review found that `BeforeModelRequestEvent.model` still exposed `structuredClone(model)`, which can include provider-private model fields such as `headers`, `compat`, `baseUrl`, and other non-semantic configuration.
+
+Fix applied in the upstream patch:
+
+- Added `PublicModelRequestModel`.
+- Changed `BeforeModelRequestEvent.model` from full `Model<Api>` to `PublicModelRequestModel`.
+- Added `projectBeforeModelRequestModel()` to expose only `provider`, `api`, and `id`.
+- Updated the fixture model to include `headers` and `compat`.
+- Added a direct runner-contract test proving the observer receives only model identity and not private/provider fields.
+- No SDK stream-boundary emission was added.
+
+### Second Review RED Evidence
+
+Command:
+
+```sh
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts -t "public semantic identity"
+```
+
+Result before fix: FAIL, 1 failed test.
+
+Observed failure:
+
+- `observed.model` contained full model fields including `headers`, `compat`, `baseUrl`, `name`, `cost`, `contextWindow`, and `maxTokens` instead of only `{ provider, api, id }`.
+
+### Second Review GREEN Evidence
+
+Command:
+
+```sh
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts -t "public semantic identity"
+```
+
+Result after fix: PASS, `Test Files 1 passed (1)`, `Tests 1 passed | 4 skipped (5)`.
+
+Projection regression tests:
+
+```sh
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts -t "tool snapshot|public semantic"
+```
+
+Result after fix: PASS, `Test Files 1 passed (1)`, `Tests 3 passed | 2 skipped (5)`.
+
+Full contract test file:
+
+```sh
+npm test --workspace @earendil-works/pi-coding-agent -- sdk-before-model-request.test.ts
+```
+
+Result after fix: expected FAIL, `Tests 2 failed | 3 passed (5)`. The three passing tests cover model/context/options projection; the two failing tests remain the Task 2 SDK-emission expectations.
+
+Formatting:
+
+```sh
+npx biome check packages/coding-agent/src/core/extensions/types.ts packages/coding-agent/src/core/extensions/runner.ts packages/coding-agent/src/core/extensions/index.ts packages/coding-agent/src/index.ts packages/coding-agent/test/sdk-before-model-request.test.ts
+```
+
+Result: PASS, `Checked 5 files in 13ms. No fixes applied.`
+
+Build/typecheck:
+
+```sh
+npm run build --workspace @earendil-works/pi-agent-core && npm run build --workspace @earendil-works/pi-coding-agent
+```
+
+Result: PASS.
+
+Patch apply:
+
+```sh
+git apply --check configs/runtime/patches/pi-0.80.6-before-model-request.patch
+```
+
+Result against a fresh pinned checkout: PASS, patch applies cleanly.
+
+Upstream source whitespace:
+
+```sh
+git diff --cached --check
+```
+
+Result in the temporary upstream checkout: PASS, no whitespace errors.
