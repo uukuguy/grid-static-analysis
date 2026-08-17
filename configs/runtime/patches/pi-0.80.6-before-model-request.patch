@@ -1,5 +1,5 @@
 diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
-index 29847b63..f2772103 100644
+index 29847b63..359ccfd6 100644
 --- a/packages/coding-agent/src/core/extensions/index.ts
 +++ b/packages/coding-agent/src/core/extensions/index.ts
 @@ -36,6 +36,7 @@ export type {
@@ -10,16 +10,18 @@ index 29847b63..f2772103 100644
  	BeforeProviderHeadersEvent,
  	BeforeProviderRequestEvent,
  	BeforeProviderRequestEventResult,
-@@ -111,6 +112,7 @@ export type {
+@@ -111,6 +112,9 @@ export type {
  	// Provider Registration
  	ProviderConfig,
  	ProviderModelConfig,
++	PublicModelRequestContext,
 +	PublicModelRequestOptions,
++	PublicModelRequestTool,
  	ReadToolCallEvent,
  	ReadToolResultEvent,
  	// Commands
 diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
-index 2a699a7d..0c765ef1 100644
+index 2a699a7d..1f378626 100644
 --- a/packages/coding-agent/src/core/extensions/runner.ts
 +++ b/packages/coding-agent/src/core/extensions/runner.ts
 @@ -3,7 +3,7 @@
@@ -39,15 +41,57 @@ index 2a699a7d..0c765ef1 100644
  	BeforeProviderHeadersEvent,
  	BeforeProviderRequestEvent,
  	CompactOptions,
-@@ -45,6 +46,7 @@ import type {
+@@ -45,6 +46,8 @@ import type {
  	ProjectTrustEvent,
  	ProjectTrustEventResult,
  	ProviderConfig,
++	PublicModelRequestContext,
 +	PublicModelRequestOptions,
  	RegisteredCommand,
  	RegisteredTool,
  	ReplacedSessionContext,
-@@ -990,6 +992,29 @@ export class ExtensionRunner {
+@@ -86,6 +89,40 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
+ 	"tui.editor.deleteToLineEnd",
+ ] as const;
+ 
++function projectBeforeModelRequestContext(context: Context): PublicModelRequestContext {
++	const projected: PublicModelRequestContext = {
++		messages: structuredClone(context.messages),
++	};
++	if (context.systemPrompt !== undefined) {
++		projected.systemPrompt = context.systemPrompt;
++	}
++	if (context.tools !== undefined) {
++		projected.tools = context.tools.map((tool) => ({
++			name: tool.name,
++			description: tool.description,
++			parameters: structuredClone(tool.parameters),
++		}));
++	}
++	return projected;
++}
++
++function projectPublicModelRequestOptions(options: PublicModelRequestOptions): PublicModelRequestOptions {
++	const projected: PublicModelRequestOptions = {};
++	if (options.reasoning !== undefined) projected.reasoning = options.reasoning;
++	if (options.thinkingBudgets !== undefined) projected.thinkingBudgets = structuredClone(options.thinkingBudgets);
++	if (options.temperature !== undefined) projected.temperature = options.temperature;
++	if (options.maxTokens !== undefined) projected.maxTokens = options.maxTokens;
++	if (options.transport !== undefined) projected.transport = options.transport;
++	if (options.cacheRetention !== undefined) projected.cacheRetention = options.cacheRetention;
++	if (options.timeoutMs !== undefined) projected.timeoutMs = options.timeoutMs;
++	if (options.websocketConnectTimeoutMs !== undefined) {
++		projected.websocketConnectTimeoutMs = options.websocketConnectTimeoutMs;
++	}
++	if (options.maxRetries !== undefined) projected.maxRetries = options.maxRetries;
++	if (options.maxRetryDelayMs !== undefined) projected.maxRetryDelayMs = options.maxRetryDelayMs;
++	return projected;
++}
++
+ type BuiltInKeyBindings = Partial<Record<KeyId, { keybinding: string; restrictOverride: boolean }>>;
+ 
+ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltInKeyBindings => {
+@@ -990,6 +1027,29 @@ export class ExtensionRunner {
  		return currentPayload;
  	}
  
@@ -66,8 +110,8 @@ index 2a699a7d..0c765ef1 100644
 +				const event: BeforeModelRequestEvent = {
 +					type: "before_model_request",
 +					model: structuredClone(model),
-+					context: structuredClone(context),
-+					options: structuredClone(options),
++					context: projectBeforeModelRequestContext(context),
++					options: projectPublicModelRequestOptions(options),
 +				};
 +				await handler(event, ctx);
 +			}
@@ -78,7 +122,7 @@ index 2a699a7d..0c765ef1 100644
  		const ctx = this.createContext();
  
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index a3c9f735..610bacd8 100644
+index a3c9f735..55f4f1ad 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -19,6 +19,7 @@ import type {
@@ -99,7 +143,7 @@ index a3c9f735..610bacd8 100644
  } from "@earendil-works/pi-ai";
  import type {
  	AutocompleteItem,
-@@ -664,6 +667,26 @@ export interface BeforeProviderRequestEvent {
+@@ -664,6 +667,38 @@ export interface BeforeProviderRequestEvent {
  	payload: unknown;
  }
  
@@ -116,17 +160,29 @@ index a3c9f735..610bacd8 100644
 +	maxRetryDelayMs?: number;
 +}
 +
++export interface PublicModelRequestTool {
++	name: string;
++	description: string;
++	parameters: Readonly<TSchema>;
++}
++
++export interface PublicModelRequestContext {
++	systemPrompt?: string;
++	messages: Readonly<Context["messages"]>;
++	tools?: readonly PublicModelRequestTool[];
++}
++
 +export interface BeforeModelRequestEvent {
 +	type: "before_model_request";
 +	model: Readonly<Model<Api>>;
-+	context: Readonly<Context>;
++	context: Readonly<PublicModelRequestContext>;
 +	options: Readonly<PublicModelRequestOptions>;
 +}
 +
  /**
   * Fired after request headers are assembled, before the provider HTTP call.
   * Handlers mutate `headers` in place (e.g. to inject tracing/session headers);
-@@ -1020,6 +1043,7 @@ export type ExtensionEvent =
+@@ -1020,6 +1055,7 @@ export type ExtensionEvent =
  	| ResourcesDiscoverEvent
  	| SessionEvent
  	| ContextEvent
@@ -134,7 +190,7 @@ index a3c9f735..610bacd8 100644
  	| BeforeProviderRequestEvent
  	| BeforeProviderHeadersEvent
  	| AfterProviderResponseEvent
-@@ -1185,6 +1209,7 @@ export interface ExtensionAPI {
+@@ -1185,6 +1221,7 @@ export interface ExtensionAPI {
  	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
  	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
  	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
@@ -143,7 +199,7 @@ index a3c9f735..610bacd8 100644
  		event: "before_provider_request",
  		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
 diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
-index 7c6de94b..4f81e10f 100644
+index 7c6de94b..d52d4e44 100644
 --- a/packages/coding-agent/src/index.ts
 +++ b/packages/coding-agent/src/index.ts
 @@ -70,6 +70,7 @@ export type {
@@ -154,20 +210,22 @@ index 7c6de94b..4f81e10f 100644
  	BeforeProviderHeadersEvent,
  	BeforeProviderRequestEvent,
  	BeforeProviderRequestEventResult,
-@@ -118,6 +119,7 @@ export type {
+@@ -118,6 +119,9 @@ export type {
  	ProjectTrustHandler,
  	ProviderConfig,
  	ProviderModelConfig,
++	PublicModelRequestContext,
 +	PublicModelRequestOptions,
++	PublicModelRequestTool,
  	ReadToolCallEvent,
  	RegisteredCommand,
  	RegisteredTool,
 diff --git a/packages/coding-agent/test/sdk-before-model-request.test.ts b/packages/coding-agent/test/sdk-before-model-request.test.ts
 new file mode 100644
-index 00000000..51472deb
+index 00000000..e0e61d6f
 --- /dev/null
 +++ b/packages/coding-agent/test/sdk-before-model-request.test.ts
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,348 @@
 +import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
@@ -413,6 +471,104 @@ index 00000000..51472deb
 +		try {
 +			await expect(session.agent.streamFn(model, { messages: [] })).rejects.toThrow("commit failed");
 +			expect(providerCall).toHaveBeenCalledTimes(0);
++		} finally {
++			dispose();
++		}
++	});
++
++	it("emits an LLM-visible tool snapshot without cloning executable callbacks", async () => {
++		let observed: BeforeModelRequestEvent | undefined;
++		const { session, model, dispose } = await createCaptureSession({
++			extensionFactory: (pi: ExtensionAPI) => {
++				pi.on("before_model_request", (event) => {
++					observed = event;
++				});
++			},
++			onProvider: vi.fn(),
++		});
++		const tool = gridModelListTool();
++
++		try {
++			await session.extensionRunner.emitBeforeModelRequest(
++				model,
++				{
++					systemPrompt: "final system prompt",
++					messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
++					tools: [tool],
++				},
++				{},
++			);
++
++			expect(observed?.context).toMatchObject({
++				systemPrompt: "final system prompt",
++				messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
++				tools: [
++					{ name: "grid_model_list", description: "List available grid models.", parameters: tool.parameters },
++				],
++			});
++			expect(observed?.context.tools?.[0]).not.toHaveProperty("execute");
++		} finally {
++			dispose();
++		}
++	});
++
++	it("projects runtime options to the public semantic request fields", async () => {
++		let observed: BeforeModelRequestEvent | undefined;
++		const { session, model, dispose } = await createCaptureSession({
++			extensionFactory: (pi: ExtensionAPI) => {
++				pi.on("before_model_request", (event) => {
++					observed = event;
++				});
++			},
++			onProvider: vi.fn(),
++		});
++
++		try {
++			await session.extensionRunner.emitBeforeModelRequest(model, { messages: [] }, {
++				reasoning: "medium",
++				thinkingBudgets: { medium: 2048 },
++				temperature: 0.2,
++				maxTokens: 1024,
++				transport: "sse",
++				cacheRetention: "short",
++				timeoutMs: 1234,
++				websocketConnectTimeoutMs: 2345,
++				maxRetries: 2,
++				maxRetryDelayMs: 3000,
++				apiKey: "caller-secret",
++				env: { SECRET_TOKEN: "secret" },
++				headers: { Authorization: "Bearer secret" },
++				signal: new AbortController().signal,
++				onPayload: () => undefined,
++				onResponse: () => undefined,
++				metadata: { trace: "transport-state" },
++				sessionId: "session-state",
++			} as SimpleStreamOptions);
++
++			expect(observed?.options).toEqual({
++				reasoning: "medium",
++				thinkingBudgets: { medium: 2048 },
++				temperature: 0.2,
++				maxTokens: 1024,
++				transport: "sse",
++				cacheRetention: "short",
++				timeoutMs: 1234,
++				websocketConnectTimeoutMs: 2345,
++				maxRetries: 2,
++				maxRetryDelayMs: 3000,
++			});
++			for (const privateKey of [
++				"apiKey",
++				"env",
++				"headers",
++				"signal",
++				"onPayload",
++				"onResponse",
++				"metadata",
++				"sessionId",
++			]) {
++				expect(observed?.options).not.toHaveProperty(privateKey);
++			}
 +		} finally {
 +			dispose();
 +		}
