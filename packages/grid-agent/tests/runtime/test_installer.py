@@ -179,6 +179,37 @@ def test_installer_uses_arrays_cwd_timeouts_and_captured_stderr(
     assert all(isinstance(kwargs["timeout"], int | float) and kwargs["timeout"] > 0 for kwargs in fake_runner.kwargs)
 
 
+def test_installer_rejects_symlink_source_before_runner_or_marker_mutation(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:
+    paths = ProjectPaths.from_root(tmp_path)
+    outside = tmp_path / "outside-source"
+    outside.mkdir()
+    paths.pi_runtime_dir.mkdir(parents=True)
+    paths.pi_runtime_dir.joinpath("source").symlink_to(outside, target_is_directory=True)
+    active = paths.pi_runtime_dir / "active"
+    active.write_text("stale marker\n", encoding="utf-8")
+    runner = FakeRunner()
+
+    with pytest.raises(PiRuntimeInstallerError, match="source"):
+        PiRuntimeInstaller(runtime_lock, paths.pi_runtime_dir, runner=runner).install()
+
+    assert runner.calls == []
+    assert active.read_text(encoding="utf-8") == "stale marker\n"
+    assert outside.exists()
+
+
+def test_installer_normal_managed_source_proceeds_after_validation(
+    tmp_path: Path,
+    fake_runner: FakeRunner,
+    runtime_lock: PiRuntimeLock,
+) -> None:
+    paths = ProjectPaths.from_root(tmp_path)
+    paths.pi_runtime_dir.joinpath("source").mkdir(parents=True)
+
+    PiRuntimeInstaller(runtime_lock, paths.pi_runtime_dir, runner=fake_runner).install()
+
+    assert fake_runner.calls[0] == ["git", "init"]
+
+
 def test_installer_rehashes_patch_bytes_before_running_git(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:
     patch = runtime_lock.patches[0].path
     lock_root = tmp_path / "runtime"

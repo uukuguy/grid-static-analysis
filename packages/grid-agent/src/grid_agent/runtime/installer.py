@@ -38,10 +38,9 @@ class PiRuntimeInstaller:
         return self.pi_runtime_dir / "active"
 
     def install(self) -> PiCommand:
+        source = self._prepare_source_dir()
         self._clear_active_marker()
         self._verify_patch_bytes()
-        source = self.source_dir
-        source.mkdir(parents=True, exist_ok=True)
 
         if not (source / ".git").exists():
             self._run(["git", "init"])
@@ -85,6 +84,28 @@ class PiRuntimeInstaller:
             version=version,
         )
         return PiCommand(argv=("node", str(cli)), identity=identity)
+
+    def _prepare_source_dir(self) -> Path:
+        runtime_root = self.pi_runtime_dir.resolve()
+        source = self.source_dir
+        if source.is_symlink():
+            raise PiRuntimeInstallerError(f"Pi runtime source directory must not be a symlink: {source}")
+
+        try:
+            source.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise PiRuntimeInstallerError(f"Pi runtime source directory could not be created: {source}") from exc
+        if source.is_symlink() or not source.is_dir():
+            raise PiRuntimeInstallerError(f"Pi runtime source path is not a safe directory: {source}")
+
+        resolved_source = source.resolve()
+        try:
+            resolved_source.relative_to(runtime_root)
+        except ValueError as exc:
+            raise PiRuntimeInstallerError(
+                f"Pi runtime source directory must stay inside the managed runtime root: {source}"
+            ) from exc
+        return source
 
     def _clear_active_marker(self) -> None:
         try:
