@@ -210,9 +210,6 @@ class NativeCaptureAdapter:
             self._last_request_index = request_index
             self._seen_requests.add(request_id)
 
-    def drain_provider_requests(self) -> None:
-        self.drain_model_requests()
-
     def on_raw_event(self, event: Mapping[str, Any]) -> None:
         event_type = event.get("type")
         if event_type == "text_delta":

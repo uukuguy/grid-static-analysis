@@ -159,3 +159,41 @@ def test_legacy_runtime_paths_are_absent() -> None:
     assert legacy_request_class not in source
     assert legacy_operation_access not in source
     assert legacy_query not in source
+
+
+def test_current_sources_do_not_use_obsolete_provider_capture_path() -> None:
+    checked_paths = (
+        "packages/grid-agent/src/",
+        "packages/pi-grid-tools/src/",
+        "schemas/",
+        "docs/architecture/",
+    )
+    completed = subprocess.run(
+        ["git", "ls-files", *checked_paths],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    source_files = [
+        ROOT / line
+        for line in completed.stdout.splitlines()
+        if line and (ROOT / line).suffix in TEXT_SUFFIXES
+    ]
+    forbidden_terms = (
+        "before_provider_request",
+        "provider_payload",
+        "HIDDEN_REASONING_KEYS",
+        "CREDENTIAL_KEY_PATTERN",
+        "drain_provider_requests",
+    )
+
+    offenders: dict[str, list[str]] = {}
+    for path in source_files:
+        text = path.read_text(encoding="utf-8")
+        matches = [term for term in forbidden_terms if term in text]
+        if matches:
+            offenders[str(path.relative_to(ROOT))] = matches
+
+    assert offenders == {}
+    assert source_files
