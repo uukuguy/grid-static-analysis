@@ -1,5 +1,5 @@
 diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
-index 29847b63..359ccfd6 100644
+index 29847b63..853203bc 100644
 --- a/packages/coding-agent/src/core/extensions/index.ts
 +++ b/packages/coding-agent/src/core/extensions/index.ts
 @@ -36,6 +36,7 @@ export type {
@@ -10,18 +10,19 @@ index 29847b63..359ccfd6 100644
  	BeforeProviderHeadersEvent,
  	BeforeProviderRequestEvent,
  	BeforeProviderRequestEventResult,
-@@ -111,6 +112,9 @@ export type {
+@@ -111,6 +112,10 @@ export type {
  	// Provider Registration
  	ProviderConfig,
  	ProviderModelConfig,
 +	PublicModelRequestContext,
++	PublicModelRequestModel,
 +	PublicModelRequestOptions,
 +	PublicModelRequestTool,
  	ReadToolCallEvent,
  	ReadToolResultEvent,
  	// Commands
 diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
-index 2a699a7d..1f378626 100644
+index 2a699a7d..424b7651 100644
 --- a/packages/coding-agent/src/core/extensions/runner.ts
 +++ b/packages/coding-agent/src/core/extensions/runner.ts
 @@ -3,7 +3,7 @@
@@ -41,19 +42,28 @@ index 2a699a7d..1f378626 100644
  	BeforeProviderHeadersEvent,
  	BeforeProviderRequestEvent,
  	CompactOptions,
-@@ -45,6 +46,8 @@ import type {
+@@ -45,6 +46,9 @@ import type {
  	ProjectTrustEvent,
  	ProjectTrustEventResult,
  	ProviderConfig,
 +	PublicModelRequestContext,
++	PublicModelRequestModel,
 +	PublicModelRequestOptions,
  	RegisteredCommand,
  	RegisteredTool,
  	ReplacedSessionContext,
-@@ -86,6 +89,40 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
+@@ -86,6 +90,48 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
  	"tui.editor.deleteToLineEnd",
  ] as const;
  
++function projectBeforeModelRequestModel(model: Model<Api>): PublicModelRequestModel {
++	return {
++		provider: model.provider,
++		api: model.api,
++		id: model.id,
++	};
++}
++
 +function projectBeforeModelRequestContext(context: Context): PublicModelRequestContext {
 +	const projected: PublicModelRequestContext = {
 +		messages: structuredClone(context.messages),
@@ -91,7 +101,7 @@ index 2a699a7d..1f378626 100644
  type BuiltInKeyBindings = Partial<Record<KeyId, { keybinding: string; restrictOverride: boolean }>>;
  
  const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltInKeyBindings => {
-@@ -990,6 +1027,29 @@ export class ExtensionRunner {
+@@ -990,6 +1036,29 @@ export class ExtensionRunner {
  		return currentPayload;
  	}
  
@@ -109,7 +119,7 @@ index 2a699a7d..1f378626 100644
 +			for (const handler of handlers) {
 +				const event: BeforeModelRequestEvent = {
 +					type: "before_model_request",
-+					model: structuredClone(model),
++					model: projectBeforeModelRequestModel(model),
 +					context: projectBeforeModelRequestContext(context),
 +					options: projectPublicModelRequestOptions(options),
 +				};
@@ -122,7 +132,7 @@ index 2a699a7d..1f378626 100644
  		const ctx = this.createContext();
  
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index a3c9f735..55f4f1ad 100644
+index a3c9f735..31f726ca 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -19,6 +19,7 @@ import type {
@@ -143,7 +153,7 @@ index a3c9f735..55f4f1ad 100644
  } from "@earendil-works/pi-ai";
  import type {
  	AutocompleteItem,
-@@ -664,6 +667,38 @@ export interface BeforeProviderRequestEvent {
+@@ -664,6 +667,44 @@ export interface BeforeProviderRequestEvent {
  	payload: unknown;
  }
  
@@ -160,6 +170,12 @@ index a3c9f735..55f4f1ad 100644
 +	maxRetryDelayMs?: number;
 +}
 +
++export interface PublicModelRequestModel {
++	provider: string;
++	api: Api;
++	id: string;
++}
++
 +export interface PublicModelRequestTool {
 +	name: string;
 +	description: string;
@@ -174,7 +190,7 @@ index a3c9f735..55f4f1ad 100644
 +
 +export interface BeforeModelRequestEvent {
 +	type: "before_model_request";
-+	model: Readonly<Model<Api>>;
++	model: Readonly<PublicModelRequestModel>;
 +	context: Readonly<PublicModelRequestContext>;
 +	options: Readonly<PublicModelRequestOptions>;
 +}
@@ -182,7 +198,7 @@ index a3c9f735..55f4f1ad 100644
  /**
   * Fired after request headers are assembled, before the provider HTTP call.
   * Handlers mutate `headers` in place (e.g. to inject tracing/session headers);
-@@ -1020,6 +1055,7 @@ export type ExtensionEvent =
+@@ -1020,6 +1061,7 @@ export type ExtensionEvent =
  	| ResourcesDiscoverEvent
  	| SessionEvent
  	| ContextEvent
@@ -190,7 +206,7 @@ index a3c9f735..55f4f1ad 100644
  	| BeforeProviderRequestEvent
  	| BeforeProviderHeadersEvent
  	| AfterProviderResponseEvent
-@@ -1185,6 +1221,7 @@ export interface ExtensionAPI {
+@@ -1185,6 +1227,7 @@ export interface ExtensionAPI {
  	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
  	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
  	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
@@ -199,7 +215,7 @@ index a3c9f735..55f4f1ad 100644
  		event: "before_provider_request",
  		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
 diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
-index 7c6de94b..d52d4e44 100644
+index 7c6de94b..d4694628 100644
 --- a/packages/coding-agent/src/index.ts
 +++ b/packages/coding-agent/src/index.ts
 @@ -70,6 +70,7 @@ export type {
@@ -210,11 +226,12 @@ index 7c6de94b..d52d4e44 100644
  	BeforeProviderHeadersEvent,
  	BeforeProviderRequestEvent,
  	BeforeProviderRequestEventResult,
-@@ -118,6 +119,9 @@ export type {
+@@ -118,6 +119,10 @@ export type {
  	ProjectTrustHandler,
  	ProviderConfig,
  	ProviderModelConfig,
 +	PublicModelRequestContext,
++	PublicModelRequestModel,
 +	PublicModelRequestOptions,
 +	PublicModelRequestTool,
  	ReadToolCallEvent,
@@ -222,10 +239,10 @@ index 7c6de94b..d52d4e44 100644
  	RegisteredTool,
 diff --git a/packages/coding-agent/test/sdk-before-model-request.test.ts b/packages/coding-agent/test/sdk-before-model-request.test.ts
 new file mode 100644
-index 00000000..e0e61d6f
+index 00000000..bb5e60ad
 --- /dev/null
 +++ b/packages/coding-agent/test/sdk-before-model-request.test.ts
-@@ -0,0 +1,348 @@
+@@ -0,0 +1,377 @@
 +import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
@@ -279,6 +296,8 @@ index 00000000..e0e61d6f
 +			provider: "capture-provider",
 +			baseUrl: "https://capture.invalid/v1",
 +			reasoning: false,
++			headers: { "X-Private-Header": "secret" },
++			compat: { supportsStore: false, supportsDeveloperRole: false },
 +			input: ["text"],
 +			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 +			contextWindow: 128000,
@@ -568,6 +587,33 @@ index 00000000..e0e61d6f
 +				"sessionId",
 +			]) {
 +				expect(observed?.options).not.toHaveProperty(privateKey);
++			}
++		} finally {
++			dispose();
++		}
++	});
++
++	it("projects model to public semantic identity only", async () => {
++		let observed: BeforeModelRequestEvent | undefined;
++		const { session, model, dispose } = await createCaptureSession({
++			extensionFactory: (pi: ExtensionAPI) => {
++				pi.on("before_model_request", (event) => {
++					observed = event;
++				});
++			},
++			onProvider: vi.fn(),
++		});
++
++		try {
++			await session.extensionRunner.emitBeforeModelRequest(model, { messages: [] }, {});
++
++			expect(observed?.model).toEqual({
++				provider: "capture-provider",
++				api: "openai-completions",
++				id: "capture-model",
++			});
++			for (const privateKey of ["headers", "compat", "baseUrl", "name", "cost", "contextWindow", "maxTokens"]) {
++				expect(observed?.model).not.toHaveProperty(privateKey);
 +			}
 +		} finally {
 +			dispose();
