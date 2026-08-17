@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 
-import { configureTrajectoryCapture } from "./trajectory-capture.mjs";
+import { configureModelRequestCapture } from "./model-request-capture.mjs";
 
 const CANONICAL_SECRET_NAMES = [
   "OPENAI_API_KEY",
@@ -78,13 +78,12 @@ export default function domainToolsExtension(pi) {
     paths.trajectoryCaptureStatePath !== undefined &&
     paths.trajectoryAllowedRefsPath !== undefined
   ) {
-    configureTrajectoryCapture(pi, {
+    configureModelRequestCapture(pi, {
       requestsPath: paths.trajectoryRequestsPath,
       activeTurnPath: paths.activeTurnPath,
       captureStatePath: paths.trajectoryCaptureStatePath,
       allowedRefsPath: paths.trajectoryAllowedRefsPath,
-      providerId: paths.providerId,
-      modelId: paths.modelId,
+      runtime: paths.piRuntime,
     });
   }
   const catalog = readJsonSync(paths.toolCatalogPath);
@@ -393,10 +392,6 @@ function runtimePaths(env) {
   if (trajectoryPaths.some((path) => path !== undefined) && !trajectoryConfigured) {
     throw new Error("trajectory capture requires all three trajectory paths");
   }
-  const providerId = trajectoryConfigured
-    ? requiredString(env, "GRID_AGENT_PROVIDER_ID")
-    : undefined;
-  const modelId = trajectoryConfigured ? requiredString(env, "GRID_AGENT_MODEL_ID") : undefined;
   if (trajectoryConfigured && activeTurnPath === undefined) {
     throw new Error("trajectory capture requires GRID_AGENT_ACTIVE_TURN");
   }
@@ -424,8 +419,24 @@ function runtimePaths(env) {
     trajectoryRequestsPath,
     trajectoryCaptureStatePath,
     trajectoryAllowedRefsPath,
-    providerId,
-    modelId,
+    piRuntime: runtimeIdentity(env),
+  };
+}
+
+function runtimeIdentity(env) {
+  if (
+    env.GRID_AGENT_PI_CODING_AGENT_VERSION === undefined &&
+    env.GRID_AGENT_PI_AI_VERSION === undefined &&
+    env.GRID_AGENT_PI_SOURCE_COMMIT === undefined &&
+    env.GRID_AGENT_PI_PATCH_SET_SHA256 === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    pi_coding_agent_version: requiredString(env, "GRID_AGENT_PI_CODING_AGENT_VERSION"),
+    pi_ai_version: requiredString(env, "GRID_AGENT_PI_AI_VERSION"),
+    pi_source_commit: requiredString(env, "GRID_AGENT_PI_SOURCE_COMMIT"),
+    pi_patch_set_sha256: requiredString(env, "GRID_AGENT_PI_PATCH_SET_SHA256"),
   };
 }
 

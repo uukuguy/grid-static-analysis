@@ -157,6 +157,48 @@ test("records bounded decisions only against controller-known refs", async () =>
   assert.equal(outOfBounds.details.error.code, "invalid_decision");
 });
 
+test("native request capture subscribes to before_model_request only", async () => {
+  const root = await makeFixtureRoot();
+  await configureAnalysisPaths(
+    root,
+    { turn_id: "analysis-test-t002", turn_nonce: "nonce-2" },
+    { schema_version: "analysis-context-view/1.0", revision: 9, state_hash: "sha256:test" },
+  );
+  process.env.GRID_AGENT_TRAJECTORY_REQUESTS = join(root, "run/requests");
+  process.env.GRID_AGENT_TRAJECTORY_CAPTURE_STATE = join(
+    root,
+    "run/context/trajectory-capture-state.json",
+  );
+  process.env.GRID_AGENT_TRAJECTORY_ALLOWED_REFS = join(
+    root,
+    "run/context/trajectory-allowed-refs.json",
+  );
+  await mkdir(process.env.GRID_AGENT_TRAJECTORY_REQUESTS, { recursive: true });
+  await writeFile(
+    process.env.GRID_AGENT_TRAJECTORY_CAPTURE_STATE,
+    JSON.stringify({
+      source_event_sequences: [1],
+      context_revision: 1,
+      context_state_hash: "a".repeat(64),
+    }),
+    "utf8",
+  );
+  await writeFile(
+    process.env.GRID_AGENT_TRAJECTORY_ALLOWED_REFS,
+    JSON.stringify({ refs: [] }),
+    "utf8",
+  );
+  const handlers = new Map();
+
+  domainToolsExtension({
+    on: (name, handler) => handlers.set(name, handler),
+    registerTool: () => undefined,
+  });
+
+  assert.equal(handlers.has("before_model_request"), true);
+  assert.equal(handlers.has("before_provider_request"), false);
+});
+
 test("answer submission declares bounded structured claims without parsing prose", async () => {
   const root = await makeFixtureRoot();
   await configureAnalysisPaths(

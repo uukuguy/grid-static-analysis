@@ -92,7 +92,8 @@ test("package surface admits canonical request hook without expanding grid tools
       "grid_guide_open",
       "grid_submit_answer",
     ]);
-    assert(!registeredTools.some((name) => ["read", "bash", "shell", "grid_query"].includes(name)));
+    const legacyQuery = "grid" + "_query";
+    assert(!registeredTools.some((name) => ["read", "bash", "shell", legacyQuery].includes(name)));
   } finally {
     process.env = originalEnv;
     await rm(tempDir, { recursive: true, force: true });

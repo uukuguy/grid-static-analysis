@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/domain-tools.mjs",
+    "check": "node --check src/domain-tools.mjs && node --check src/model-request-capture.mjs",
     "test": "node --test"
   },
   "dependencies": {
