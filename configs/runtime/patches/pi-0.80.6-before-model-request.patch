@@ -1,0 +1,420 @@
+diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
+index 29847b63..f2772103 100644
+--- a/packages/coding-agent/src/core/extensions/index.ts
++++ b/packages/coding-agent/src/core/extensions/index.ts
+@@ -36,6 +36,7 @@ export type {
+ 	BashToolResultEvent,
+ 	BeforeAgentStartEvent,
+ 	BeforeAgentStartEventResult,
++	BeforeModelRequestEvent,
+ 	BeforeProviderHeadersEvent,
+ 	BeforeProviderRequestEvent,
+ 	BeforeProviderRequestEventResult,
+@@ -111,6 +112,7 @@ export type {
+ 	// Provider Registration
+ 	ProviderConfig,
+ 	ProviderModelConfig,
++	PublicModelRequestOptions,
+ 	ReadToolCallEvent,
+ 	ReadToolResultEvent,
+ 	// Commands
+diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
+index 2a699a7d..0c765ef1 100644
+--- a/packages/coding-agent/src/core/extensions/runner.ts
++++ b/packages/coding-agent/src/core/extensions/runner.ts
+@@ -3,7 +3,7 @@
+  */
+ 
+ import type { AgentMessage } from "@earendil-works/pi-agent-core";
+-import type { ImageContent, Model, ProviderHeaders } from "@earendil-works/pi-ai";
++import type { Api, Context, ImageContent, Model, ProviderHeaders } from "@earendil-works/pi-ai";
+ import type { KeyId } from "@earendil-works/pi-tui";
+ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
+ import type { ResourceDiagnostic } from "../diagnostics.ts";
+@@ -14,6 +14,7 @@ import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+ import type {
+ 	BeforeAgentStartEvent,
+ 	BeforeAgentStartEventResult,
++	BeforeModelRequestEvent,
+ 	BeforeProviderHeadersEvent,
+ 	BeforeProviderRequestEvent,
+ 	CompactOptions,
+@@ -45,6 +46,7 @@ import type {
+ 	ProjectTrustEvent,
+ 	ProjectTrustEventResult,
+ 	ProviderConfig,
++	PublicModelRequestOptions,
+ 	RegisteredCommand,
+ 	RegisteredTool,
+ 	ReplacedSessionContext,
+@@ -990,6 +992,29 @@ export class ExtensionRunner {
+ 		return currentPayload;
+ 	}
+ 
++	async emitBeforeModelRequest(
++		model: Model<Api>,
++		context: Context,
++		options: PublicModelRequestOptions,
++	): Promise<void> {
++		const ctx = this.createContext();
++
++		for (const ext of this.extensions) {
++			const handlers = ext.handlers.get("before_model_request");
++			if (!handlers || handlers.length === 0) continue;
++
++			for (const handler of handlers) {
++				const event: BeforeModelRequestEvent = {
++					type: "before_model_request",
++					model: structuredClone(model),
++					context: structuredClone(context),
++					options: structuredClone(options),
++				};
++				await handler(event, ctx);
++			}
++		}
++	}
++
+ 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
+ 		const ctx = this.createContext();
+ 
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index a3c9f735..610bacd8 100644
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -19,6 +19,7 @@ import type {
+ 	Api,
+ 	AssistantMessageEvent,
+ 	AssistantMessageEventStream,
++	CacheRetention,
+ 	Context,
+ 	ImageContent,
+ 	Model,
+@@ -27,7 +28,9 @@ import type {
+ 	ProviderHeaders,
+ 	SimpleStreamOptions,
+ 	TextContent,
++	ThinkingBudgets,
+ 	ToolResultMessage,
++	Transport,
+ } from "@earendil-works/pi-ai";
+ import type {
+ 	AutocompleteItem,
+@@ -664,6 +667,26 @@ export interface BeforeProviderRequestEvent {
+ 	payload: unknown;
+ }
+ 
++export interface PublicModelRequestOptions {
++	reasoning?: ThinkingLevel;
++	thinkingBudgets?: Readonly<ThinkingBudgets>;
++	temperature?: number;
++	maxTokens?: number;
++	transport?: Transport;
++	cacheRetention?: CacheRetention;
++	timeoutMs?: number;
++	websocketConnectTimeoutMs?: number;
++	maxRetries?: number;
++	maxRetryDelayMs?: number;
++}
++
++export interface BeforeModelRequestEvent {
++	type: "before_model_request";
++	model: Readonly<Model<Api>>;
++	context: Readonly<Context>;
++	options: Readonly<PublicModelRequestOptions>;
++}
++
+ /**
+  * Fired after request headers are assembled, before the provider HTTP call.
+  * Handlers mutate `headers` in place (e.g. to inject tracing/session headers);
+@@ -1020,6 +1043,7 @@ export type ExtensionEvent =
+ 	| ResourcesDiscoverEvent
+ 	| SessionEvent
+ 	| ContextEvent
++	| BeforeModelRequestEvent
+ 	| BeforeProviderRequestEvent
+ 	| BeforeProviderHeadersEvent
+ 	| AfterProviderResponseEvent
+@@ -1185,6 +1209,7 @@ export interface ExtensionAPI {
+ 	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
+ 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
+ 	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
++	on(event: "before_model_request", handler: ExtensionHandler<BeforeModelRequestEvent>): void;
+ 	on(
+ 		event: "before_provider_request",
+ 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
+diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
+index 7c6de94b..4f81e10f 100644
+--- a/packages/coding-agent/src/index.ts
++++ b/packages/coding-agent/src/index.ts
+@@ -70,6 +70,7 @@ export type {
+ 	BashToolCallEvent,
+ 	BeforeAgentStartEvent,
+ 	BeforeAgentStartEventResult,
++	BeforeModelRequestEvent,
+ 	BeforeProviderHeadersEvent,
+ 	BeforeProviderRequestEvent,
+ 	BeforeProviderRequestEventResult,
+@@ -118,6 +119,7 @@ export type {
+ 	ProjectTrustHandler,
+ 	ProviderConfig,
+ 	ProviderModelConfig,
++	PublicModelRequestOptions,
+ 	ReadToolCallEvent,
+ 	RegisteredCommand,
+ 	RegisteredTool,
+diff --git a/packages/coding-agent/test/sdk-before-model-request.test.ts b/packages/coding-agent/test/sdk-before-model-request.test.ts
+new file mode 100644
+index 00000000..51472deb
+--- /dev/null
++++ b/packages/coding-agent/test/sdk-before-model-request.test.ts
+@@ -0,0 +1,250 @@
++import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import {
++	type Api,
++	type AssistantMessage,
++	type Context,
++	createAssistantMessageEventStream,
++	type Model,
++	type SimpleStreamOptions,
++	Type,
++} from "@earendil-works/pi-ai";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { AuthStorage } from "../src/core/auth-storage.ts";
++import type {
++	BeforeModelRequestEvent,
++	ExtensionAPI,
++	ExtensionFactory,
++	ToolDefinition,
++} from "../src/core/extensions/index.ts";
++import { ModelRegistry } from "../src/core/model-registry.ts";
++import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
++import { createAgentSession } from "../src/core/sdk.ts";
++import { SessionManager } from "../src/core/session-manager.ts";
++import { SettingsManager } from "../src/core/settings-manager.ts";
++
++describe("createAgentSession before_model_request extension event", () => {
++	let tempDir: string;
++	let cwd: string;
++	let agentDir: string;
++
++	beforeEach(() => {
++		tempDir = mkdtempSync(join(tmpdir(), "pi-sdk-before-model-request-"));
++		cwd = join(tempDir, "project");
++		agentDir = join(tempDir, "agent");
++		mkdirSync(cwd, { recursive: true });
++		mkdirSync(agentDir, { recursive: true });
++	});
++
++	afterEach(() => {
++		if (tempDir) {
++			rmSync(tempDir, { recursive: true, force: true });
++		}
++	});
++
++	function createModel(api: Api): Model<Api> {
++		return {
++			id: "capture-model",
++			name: "Capture Model",
++			api,
++			provider: "capture-provider",
++			baseUrl: "https://capture.invalid/v1",
++			reasoning: false,
++			input: ["text"],
++			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++			contextWindow: 128000,
++			maxTokens: 4096,
++		};
++	}
++
++	function createDoneStream(api: Api) {
++		const stream = createAssistantMessageEventStream();
++		const message: AssistantMessage = {
++			role: "assistant",
++			content: [{ type: "text", text: "ok" }],
++			api,
++			provider: "capture-provider",
++			model: "capture-model",
++			usage: {
++				input: 0,
++				output: 0,
++				cacheRead: 0,
++				cacheWrite: 0,
++				totalTokens: 0,
++				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
++			},
++			stopReason: "stop",
++			timestamp: Date.now(),
++		};
++		stream.end(message);
++		return stream;
++	}
++
++	function gridModelListTool(): ToolDefinition {
++		return {
++			name: "grid_model_list",
++			label: "Grid model list",
++			description: "List available grid models.",
++			parameters: Type.Object({}),
++			execute: async () => ({ result: "[]" }),
++		};
++	}
++
++	async function createCaptureSession(options: {
++		extensionFactory: ExtensionFactory;
++		onProvider: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => void;
++	}) {
++		const api: Api = "openai-completions";
++		const model = createModel(api);
++		const settingsManager = SettingsManager.inMemory({ httpIdleTimeoutMs: 1234, websocketConnectTimeoutMs: 2345 });
++		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
++		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
++		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
++		modelRegistry.registerProvider(model.provider, {
++			api,
++			streamSimple: (streamModel, context, streamOptions) => {
++				options.onProvider(streamModel, context, streamOptions);
++				return createDoneStream(api);
++			},
++		});
++
++		const resourceLoader = new DefaultResourceLoader({
++			cwd,
++			agentDir,
++			settingsManager,
++			extensionFactories: [options.extensionFactory],
++		});
++		await resourceLoader.reload();
++
++		const created = await createAgentSession({
++			cwd,
++			agentDir,
++			model,
++			thinkingLevel: "medium",
++			authStorage,
++			modelRegistry,
++			settingsManager,
++			sessionManager: SessionManager.inMemory(cwd),
++			resourceLoader,
++			tools: ["grid_model_list"],
++			customTools: [gridModelListTool()],
++		});
++
++		return {
++			...created,
++			model,
++			dispose: () => {
++				created.session.dispose();
++				modelRegistry.unregisterProvider(model.provider);
++			},
++		};
++	}
++
++	it("emits a provider-neutral observation event before entering the provider", async () => {
++		const order: string[] = [];
++		let observed: BeforeModelRequestEvent | undefined;
++		const providerCall = vi.fn((_model: Model<Api>, _context: Context, _options?: SimpleStreamOptions) => {
++			order.push("provider");
++		});
++
++		const { session, model, dispose } = await createCaptureSession({
++			extensionFactory: (pi: ExtensionAPI) => {
++				pi.on("before_model_request", (event) => {
++					order.push("before_model_request");
++					observed = event;
++				});
++			},
++			onProvider: providerCall,
++		});
++
++		try {
++			await session.agent.streamFn(
++				model,
++				{
++					systemPrompt: "final system prompt",
++					messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
++					tools: [gridModelListTool()],
++				},
++				{
++					reasoning: "medium",
++					temperature: 0.2,
++					maxTokens: 1024,
++					transport: "sse",
++					cacheRetention: "short",
++					timeoutMs: 1234,
++					websocketConnectTimeoutMs: 2345,
++					maxRetries: 2,
++					maxRetryDelayMs: 3000,
++					apiKey: "caller-secret",
++					env: { SECRET_TOKEN: "secret" },
++					headers: { Authorization: "Bearer secret" },
++					signal: new AbortController().signal,
++					onPayload: () => undefined,
++					onResponse: () => undefined,
++					metadata: { trace: "transport-state" },
++					sessionId: "session-state",
++				},
++			);
++
++			expect(order).toEqual(["before_model_request", "provider"]);
++			expect(observed).toMatchObject({
++				type: "before_model_request",
++				model: {
++					provider: "capture-provider",
++					api: "openai-completions",
++					id: "capture-model",
++				},
++				context: {
++					systemPrompt: "final system prompt",
++					messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
++					tools: [{ name: "grid_model_list" }],
++				},
++				options: {
++					reasoning: "medium",
++					temperature: 0.2,
++					maxTokens: 1024,
++					transport: "sse",
++					cacheRetention: "short",
++					timeoutMs: 1234,
++					websocketConnectTimeoutMs: 2345,
++					maxRetries: 2,
++					maxRetryDelayMs: 3000,
++				},
++			});
++			for (const privateKey of [
++				"apiKey",
++				"env",
++				"headers",
++				"signal",
++				"onPayload",
++				"onResponse",
++				"metadata",
++				"sessionId",
++			]) {
++				expect(observed?.options).not.toHaveProperty(privateKey);
++			}
++		} finally {
++			dispose();
++		}
++	});
++
++	it("blocks the provider when the handler fails", async () => {
++		const providerCall = vi.fn();
++		const { session, model, dispose } = await createCaptureSession({
++			extensionFactory: (pi: ExtensionAPI) => {
++				pi.on("before_model_request", () => {
++					throw new Error("commit failed");
++				});
++			},
++			onProvider: providerCall,
++		});
++
++		try {
++			await expect(session.agent.streamFn(model, { messages: [] })).rejects.toThrow("commit failed");
++			expect(providerCall).toHaveBeenCalledTimes(0);
++		} finally {
++			dispose();
++		}
++	});
++});
