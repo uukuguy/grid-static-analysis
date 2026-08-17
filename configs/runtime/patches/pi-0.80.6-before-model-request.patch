@@ -1,5 +1,5 @@
 diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
-index 29847b63..853203bc 100644
+index 29847b6..853203b 100644
 --- a/packages/coding-agent/src/core/extensions/index.ts
 +++ b/packages/coding-agent/src/core/extensions/index.ts
 @@ -36,6 +36,7 @@ export type {
@@ -22,7 +22,7 @@ index 29847b63..853203bc 100644
  	ReadToolResultEvent,
  	// Commands
 diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
-index 2a699a7d..424b7651 100644
+index 2a699a7..424b765 100644
 --- a/packages/coding-agent/src/core/extensions/runner.ts
 +++ b/packages/coding-agent/src/core/extensions/runner.ts
 @@ -3,7 +3,7 @@
@@ -132,7 +132,7 @@ index 2a699a7d..424b7651 100644
  		const ctx = this.createContext();
  
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index a3c9f735..31f726ca 100644
+index a3c9f73..31f726c 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -19,6 +19,7 @@ import type {
@@ -214,8 +214,141 @@ index a3c9f735..31f726ca 100644
  	on(
  		event: "before_provider_request",
  		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
+diff --git a/packages/coding-agent/src/core/sdk.ts b/packages/coding-agent/src/core/sdk.ts
+index 4fc9867..2c24f11 100644
+--- a/packages/coding-agent/src/core/sdk.ts
++++ b/packages/coding-agent/src/core/sdk.ts
+@@ -1,13 +1,25 @@
+ import { join } from "node:path";
+ import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
++import {
++	clampThinkingLevel,
++	type Message,
++	type Model,
++	type SimpleStreamOptions,
++	streamSimple,
++} from "@earendil-works/pi-ai/compat";
+ import { getAgentDir } from "../config.ts";
+ import { resolvePath } from "../utils/paths.ts";
+ import { AgentSession } from "./agent-session.ts";
+ import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
+ import { AuthStorage } from "./auth-storage.ts";
+ import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+-import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
++import type {
++	ExtensionRunner,
++	LoadExtensionsResult,
++	PublicModelRequestOptions,
++	SessionStartEvent,
++	ToolDefinition,
++} from "./extensions/index.ts";
+ import { convertToLlm } from "./messages.ts";
+ import { ModelRegistry } from "./model-registry.ts";
+ import { findInitialModel } from "./model-resolver.ts";
+@@ -129,6 +141,58 @@ function getDefaultAgentDir(): string {
+ 	return getAgentDir();
+ }
+ 
++type ResolvedPublicRequestOptions = {
++	timeoutMs: number;
++	websocketConnectTimeoutMs?: number;
++	maxRetries?: number;
++	maxRetryDelayMs: number;
++};
++
++function omitUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
++	const result: Record<string, unknown> = {};
++	for (const [key, entry] of Object.entries(value)) {
++		if (entry !== undefined) {
++			result[key] = entry;
++		}
++	}
++	return result as Partial<T>;
++}
++
++function resolvePublicRequestOptions(
++	options: SimpleStreamOptions | undefined,
++	retry: ReturnType<SettingsManager["getProviderRetrySettings"]>,
++	settingsManager: SettingsManager,
++): ResolvedPublicRequestOptions {
++	const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
++	// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
++	// Use max int32 to effectively disable the timeout.
++	const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
++	return {
++		timeoutMs: options?.timeoutMs ?? retry.timeoutMs ?? effectiveTimeoutMs,
++		websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs(),
++		maxRetries: options?.maxRetries ?? retry.maxRetries,
++		maxRetryDelayMs: options?.maxRetryDelayMs ?? retry.maxRetryDelayMs,
++	};
++}
++
++function publicModelRequestOptions(
++	options: SimpleStreamOptions | undefined,
++	resolved: ResolvedPublicRequestOptions,
++): PublicModelRequestOptions {
++	return omitUndefined({
++		reasoning: options?.reasoning,
++		thinkingBudgets: options?.thinkingBudgets,
++		temperature: options?.temperature,
++		maxTokens: options?.maxTokens,
++		transport: options?.transport,
++		cacheRetention: options?.cacheRetention,
++		timeoutMs: resolved.timeoutMs,
++		websocketConnectTimeoutMs: resolved.websocketConnectTimeoutMs,
++		maxRetries: resolved.maxRetries,
++		maxRetryDelayMs: resolved.maxRetryDelayMs,
++	}) as PublicModelRequestOptions;
++}
++
+ /**
+  * Create an AgentSession with the specified options.
+  *
+@@ -300,19 +364,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
+ 		},
+ 		convertToLlm: convertToLlmWithBlockImages,
+ 		streamFn: async (model, context, options) => {
++			const retry = settingsManager.getProviderRetrySettings();
++			const resolved = resolvePublicRequestOptions(options, retry, settingsManager);
++			const runner = extensionRunnerRef.current;
++			if (runner?.hasHandlers("before_model_request")) {
++				await runner.emitBeforeModelRequest(model, context, publicModelRequestOptions(options, resolved));
++			}
++
+ 			const auth = await modelRegistry.getApiKeyAndHeaders(model);
+ 			if (!auth.ok) {
+ 				throw new Error(auth.error);
+ 			}
+ 			const env = auth.env || options?.env ? { ...(auth.env ?? {}), ...(options?.env ?? {}) } : undefined;
+-			const providerRetrySettings = settingsManager.getProviderRetrySettings();
+-			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
+-			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
+-			// Use max int32 to effectively disable the timeout.
+-			const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
+-			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
+-			const websocketConnectTimeoutMs =
+-				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
+ 			let headers = mergeProviderAttributionHeaders(
+ 				model,
+ 				settingsManager,
+@@ -330,10 +393,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
+ 				...options,
+ 				apiKey: auth.apiKey,
+ 				env,
+-				timeoutMs,
+-				websocketConnectTimeoutMs,
+-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+-				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
++				timeoutMs: resolved.timeoutMs,
++				websocketConnectTimeoutMs: resolved.websocketConnectTimeoutMs,
++				maxRetries: resolved.maxRetries,
++				maxRetryDelayMs: resolved.maxRetryDelayMs,
+ 				headers,
+ 			});
+ 		},
 diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
-index 7c6de94b..d4694628 100644
+index 7c6de94..d469462 100644
 --- a/packages/coding-agent/src/index.ts
 +++ b/packages/coding-agent/src/index.ts
 @@ -70,6 +70,7 @@ export type {
@@ -239,10 +372,10 @@ index 7c6de94b..d4694628 100644
  	RegisteredTool,
 diff --git a/packages/coding-agent/test/sdk-before-model-request.test.ts b/packages/coding-agent/test/sdk-before-model-request.test.ts
 new file mode 100644
-index 00000000..bb5e60ad
+index 0000000..959f454
 --- /dev/null
 +++ b/packages/coding-agent/test/sdk-before-model-request.test.ts
-@@ -0,0 +1,377 @@
+@@ -0,0 +1,403 @@
 +import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
@@ -339,10 +472,11 @@ index 00000000..bb5e60ad
 +	}
 +
 +	async function createCaptureSession(options: {
++		api?: Api;
 +		extensionFactory: ExtensionFactory;
 +		onProvider: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => void;
 +	}) {
-+		const api: Api = "openai-completions";
++		const api: Api = options.api ?? "openai-completions";
 +		const model = createModel(api);
 +		const settingsManager = SettingsManager.inMemory({ httpIdleTimeoutMs: 1234, websocketConnectTimeoutMs: 2345 });
 +		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
@@ -388,32 +522,44 @@ index 00000000..bb5e60ad
 +		};
 +	}
 +
-+	it("emits a provider-neutral observation event before entering the provider", async () => {
-+		const order: string[] = [];
-+		let observed: BeforeModelRequestEvent | undefined;
-+		const providerCall = vi.fn((_model: Model<Api>, _context: Context, _options?: SimpleStreamOptions) => {
-+			order.push("provider");
-+		});
++	it.each(["openai-completions", "anthropic-messages"] as const)(
++		"emits a provider-neutral observation event before entering the %s provider",
++		async (api) => {
++			const order: string[] = [];
++			let observed: BeforeModelRequestEvent | undefined;
++			let providerContext: Context | undefined;
++			const providerCall = vi.fn((_model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
++				order.push("provider");
++				providerContext = context;
++			});
++			const tool = gridModelListTool();
++			const finalContext: Context = {
++				systemPrompt: "final system prompt",
++				messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
++				tools: [tool],
++			};
 +
-+		const { session, model, dispose } = await createCaptureSession({
-+			extensionFactory: (pi: ExtensionAPI) => {
-+				pi.on("before_model_request", (event) => {
-+					order.push("before_model_request");
-+					observed = event;
-+				});
-+			},
-+			onProvider: providerCall,
-+		});
-+
-+		try {
-+			await session.agent.streamFn(
-+				model,
-+				{
-+					systemPrompt: "final system prompt",
-+					messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
-+					tools: [gridModelListTool()],
++			const { session, model, dispose } = await createCaptureSession({
++				api,
++				extensionFactory: (pi: ExtensionAPI) => {
++					pi.on("before_model_request", (event) => {
++						order.push("before_model_request");
++						observed = structuredClone(event);
++						const mutableContext = event.context as Context;
++						mutableContext.messages[0] = {
++							role: "user",
++							content: [{ type: "text", text: "mutated" }],
++						};
++						if (mutableContext.tools) {
++							mutableContext.tools[0].parameters = Type.Object({ mutated: Type.String() });
++						}
++					});
 +				},
-+				{
++				onProvider: providerCall,
++			});
++
++			try {
++				await session.agent.streamFn(model, finalContext, {
 +					reasoning: "medium",
 +					temperature: 0.2,
 +					maxTokens: 1024,
@@ -431,50 +577,63 @@ index 00000000..bb5e60ad
 +					onResponse: () => undefined,
 +					metadata: { trace: "transport-state" },
 +					sessionId: "session-state",
-+				},
-+			);
++				});
 +
-+			expect(order).toEqual(["before_model_request", "provider"]);
-+			expect(observed).toMatchObject({
-+				type: "before_model_request",
-+				model: {
-+					provider: "capture-provider",
-+					api: "openai-completions",
-+					id: "capture-model",
-+				},
-+				context: {
-+					systemPrompt: "final system prompt",
-+					messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
-+					tools: [{ name: "grid_model_list" }],
-+				},
-+				options: {
-+					reasoning: "medium",
-+					temperature: 0.2,
-+					maxTokens: 1024,
-+					transport: "sse",
-+					cacheRetention: "short",
-+					timeoutMs: 1234,
-+					websocketConnectTimeoutMs: 2345,
-+					maxRetries: 2,
-+					maxRetryDelayMs: 3000,
-+				},
-+			});
-+			for (const privateKey of [
-+				"apiKey",
-+				"env",
-+				"headers",
-+				"signal",
-+				"onPayload",
-+				"onResponse",
-+				"metadata",
-+				"sessionId",
-+			]) {
-+				expect(observed?.options).not.toHaveProperty(privateKey);
++				expect(order).toEqual(["before_model_request", "provider"]);
++				expect(observed).toMatchObject({
++					type: "before_model_request",
++					model: {
++						provider: "capture-provider",
++						api,
++						id: "capture-model",
++					},
++					context: {
++						systemPrompt: "final system prompt",
++						messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
++						tools: [
++							{
++								name: "grid_model_list",
++								description: "List available grid models.",
++								parameters: tool.parameters,
++							},
++						],
++					},
++					options: {
++						reasoning: "medium",
++						temperature: 0.2,
++						maxTokens: 1024,
++						transport: "sse",
++						cacheRetention: "short",
++						timeoutMs: 1234,
++						websocketConnectTimeoutMs: 2345,
++						maxRetries: 2,
++						maxRetryDelayMs: 3000,
++					},
++				});
++				expect(providerContext).toEqual(finalContext);
++				expect(providerContext?.messages[0]).toEqual({
++					role: "user",
++					content: [{ type: "text", text: "question" }],
++				});
++				expect(providerContext?.tools?.[0].parameters).toBe(tool.parameters);
++				expect(observed).not.toHaveProperty("payload");
++				for (const privateKey of [
++					"apiKey",
++					"env",
++					"headers",
++					"signal",
++					"onPayload",
++					"onResponse",
++					"metadata",
++					"sessionId",
++				]) {
++					expect(observed?.options).not.toHaveProperty(privateKey);
++				}
++			} finally {
++				dispose();
 +			}
-+		} finally {
-+			dispose();
-+		}
-+	});
++		},
++	);
 +
 +	it("blocks the provider when the handler fails", async () => {
 +		const providerCall = vi.fn();
