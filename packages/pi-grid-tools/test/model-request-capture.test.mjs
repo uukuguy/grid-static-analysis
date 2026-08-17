@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { configureModelRequestCapture } from "../src/model-request-capture.mjs";
 
@@ -39,6 +39,85 @@ test("captures a canonical v2 model request from before_model_request only", asy
   assert.equal(JSON.stringify(request).includes("thoughtSignature"), false);
   assert.equal(JSON.stringify(request).includes("textSignature"), false);
   assert.equal(JSON.stringify(request).includes("private chain"), false);
+});
+
+test("blocks provider continuation until a correlated commit acknowledgement is durable", async () => {
+  const root = await makeModelRequestFixture();
+  const handlers = new Map();
+  configureModelRequestCapture(
+    { on: (name, handler) => handlers.set(name, handler) },
+    fixturePaths(root, { acknowledgements: true }),
+  );
+  let providerEntered = false;
+
+  const provider = handlers.get("before_model_request")(modelRequestEvent()).then(() => {
+    providerEntered = true;
+  });
+  const request = await waitForCapturedRequest(root, "analysis-test-t007-r001");
+
+  await sleep(75);
+  assert.equal(providerEntered, false);
+
+  await writeCommitAcknowledgement(root, request);
+  await provider;
+  assert.equal(providerEntered, true);
+});
+
+test("rejects malformed commit acknowledgements before provider continuation", async () => {
+  const cases = [
+    ["wrong request id", { request_id: "analysis-test-t007-r999" }, /request_id/],
+    ["digest mismatch", { semantic_request_sha256: "f".repeat(64) }, /semantic_request_sha256/],
+    ["failed status", { status: "failed" }, /status/],
+    ["unsafe acknowledgement root", null, /absolute/],
+  ];
+
+  for (const [name, override, expected] of cases) {
+    const root = await makeModelRequestFixture();
+    const failures = [];
+    const handlers = new Map();
+    configureModelRequestCapture(
+      { on: (event, handler) => handlers.set(event, handler) },
+      fixturePaths(root, {
+        acknowledgements: true,
+        acknowledgementPath: name === "unsafe acknowledgement root" ? "relative/acks" : undefined,
+      }),
+      fatalCollector(failures),
+    );
+    let providerEntered = false;
+    const provider = handlers.get("before_model_request")(modelRequestEvent()).then(() => {
+      providerEntered = true;
+    });
+
+    if (override !== null) {
+      const request = await waitForCapturedRequest(root, "analysis-test-t007-r001");
+      await writeCommitAcknowledgement(root, request, override);
+    }
+
+    await assert.rejects(provider, /fatal-86/);
+    assert.match(failures[0], expected);
+    assert.equal(providerEntered, false);
+  }
+});
+
+test("times out waiting for a commit acknowledgement before provider continuation", async () => {
+  const root = await makeModelRequestFixture();
+  const failures = [];
+  const handlers = new Map();
+  configureModelRequestCapture(
+    { on: (event, handler) => handlers.set(event, handler) },
+    fixturePaths(root, { acknowledgements: true, acknowledgementTimeoutMs: 30, acknowledgementPollIntervalMs: 5 }),
+    fatalCollector(failures),
+  );
+  let providerEntered = false;
+  const provider = handlers.get("before_model_request")(modelRequestEvent()).then(() => {
+    providerEntered = true;
+  });
+
+  await waitForCapturedRequest(root, "analysis-test-t007-r001");
+  await assert.rejects(provider, /fatal-86/);
+
+  assert.match(failures[0], /timed out/);
+  assert.equal(providerEntered, false);
 });
 
 test("semantic digest is deterministic across provider identities and changes with model identity", async () => {
@@ -273,13 +352,20 @@ async function makeModelRequestFixture(
   return root;
 }
 
-function fixturePaths(root) {
+function fixturePaths(root, options = {}) {
   return {
     requestsPath: join(root, "requests"),
     activeTurnPath: join(root, "run/active-turn.json"),
     captureStatePath: join(root, "run/context/trajectory-capture-state.json"),
     allowedRefsPath: join(root, "run/context/trajectory-allowed-refs.json"),
     runtime: runtimeIdentity(),
+    ...(options.acknowledgements
+      ? {
+          acknowledgementsPath: options.acknowledgementPath ?? join(root, "acks"),
+          acknowledgementTimeoutMs: options.acknowledgementTimeoutMs,
+          acknowledgementPollIntervalMs: options.acknowledgementPollIntervalMs,
+        }
+      : {}),
   };
 }
 
@@ -427,6 +513,43 @@ function canonicalSemanticFixture() {
 
 function sha256Canonical(value) {
   return createHash("sha256").update(JSON.stringify(sortJson(value)), "utf8").digest("hex");
+}
+
+async function waitForCapturedRequest(root, requestId) {
+  const deadline = Date.now() + 2000;
+  const path = join(root, "requests", requestId, "input.json");
+  while (Date.now() < deadline) {
+    try {
+      return JSON.parse(await readFile(path, "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      await sleep(5);
+    }
+  }
+  throw new Error(`request was not captured: ${requestId}`);
+}
+
+async function writeCommitAcknowledgement(root, request, overrides = {}) {
+  const path = join(root, "acks", `${request.request_id}.committed.json`);
+  const payload = {
+    schema_version: "grid-model-request-commit/1.0",
+    request_id: request.request_id,
+    semantic_request_sha256: request.semantic_request_sha256,
+    artifact_ref: `artifact:sha256:${"d".repeat(64)}`,
+    event_sequence: 12,
+    status: "committed",
+    ...overrides,
+  };
+  await mkdir(join(root, "acks"), { recursive: true });
+  const temporaryPath = join(root, "acks", `.${basename(path)}.${process.pid}.tmp`);
+  await writeFile(temporaryPath, `${JSON.stringify(sortJson(payload))}\n`, "utf8");
+  await rename(temporaryPath, path);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function sortJson(value) {

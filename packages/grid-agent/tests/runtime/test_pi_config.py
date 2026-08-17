@@ -117,8 +117,8 @@ def test_pi_launch_exposes_native_capture_paths_only_when_configured(
         / "native/run/context/trajectory-capture-state.json",
         trajectory_allowed_refs_path=tmp_path
         / "native/run/context/trajectory-allowed-refs.json",
-        provider_id="deepseek",
-        model_id="deepseek-v4-flash",
+        trajectory_acks_path=tmp_path
+        / "native/.grid-agent/trajectory-acks/analysis-test",
     )
 
     legacy_launch = build_pi_launch(
@@ -136,10 +136,11 @@ def test_pi_launch_exposes_native_capture_paths_only_when_configured(
         "GRID_AGENT_TRAJECTORY_REQUESTS",
         "GRID_AGENT_TRAJECTORY_CAPTURE_STATE",
         "GRID_AGENT_TRAJECTORY_ALLOWED_REFS",
-        "GRID_AGENT_PROVIDER_ID",
-        "GRID_AGENT_MODEL_ID",
+        "GRID_AGENT_TRAJECTORY_ACKS",
     ):
         assert key not in legacy_launch.environment
+    assert "GRID_AGENT_PROVIDER_ID" not in native_launch.environment
+    assert "GRID_AGENT_MODEL_ID" not in native_launch.environment
     assert native_launch.environment["GRID_AGENT_TRAJECTORY_REQUESTS"] == str(
         native.trajectory_requests_path
     )
@@ -149,14 +150,36 @@ def test_pi_launch_exposes_native_capture_paths_only_when_configured(
     assert native_launch.environment["GRID_AGENT_TRAJECTORY_ALLOWED_REFS"] == str(
         native.trajectory_allowed_refs_path
     )
-    assert native_launch.environment["GRID_AGENT_PROVIDER_ID"] == "deepseek"
-    assert native_launch.environment["GRID_AGENT_MODEL_ID"] == "deepseek-v4-flash"
+    assert native_launch.environment["GRID_AGENT_TRAJECTORY_ACKS"] == str(
+        native.trajectory_acks_path
+    )
+    assert native.trajectory_acks_path.is_dir()
+    assert native.trajectory_acks_path.parent.stat().st_mode & 0o777 == 0o700
+    assert native.trajectory_acks_path.stat().st_mode & 0o777 == 0o700
     trajectory_environment = {
         key: value
         for key, value in native_launch.environment.items()
         if key.startswith("GRID_AGENT_TRAJECTORY")
     }
     assert "super-secret" not in json.dumps(trajectory_environment)
+
+
+def test_pi_launch_exposes_verified_pi_runtime_identity(tmp_path: Path) -> None:
+    paths = _runtime_paths(tmp_path)
+
+    launch = build_pi_launch(
+        _resolved_openai(),
+        paths,
+        base_environment={"PATH": "/bin", "HOME": "/tmp"},
+    )
+
+    assert launch.environment["GRID_AGENT_PI_CODING_AGENT_VERSION"] == "0.80.6"
+    assert launch.environment["GRID_AGENT_PI_AI_VERSION"] == "0.80.6"
+    assert (
+        launch.environment["GRID_AGENT_PI_SOURCE_COMMIT"]
+        == "2b3fda9921b5590f285165287bd442a25817f17b"
+    )
+    assert launch.environment["GRID_AGENT_PI_PATCH_SET_SHA256"] == "4" * 64
 
 
 def _resolved_openai() -> ResolvedLLM:
@@ -190,6 +213,9 @@ def _runtime_paths(tmp_path: Path) -> RuntimePaths:
                 source="explicit_override",
                 package_version="0.80.6",
                 lock_sha256="lock",
+                pi_ai_version="0.80.6",
+                patches_sha256="4" * 64,
+                commit="2b3fda9921b5590f285165287bd442a25817f17b",
             ),
         ),
         project_pi_dir=project_paths.pi_agent_dir,

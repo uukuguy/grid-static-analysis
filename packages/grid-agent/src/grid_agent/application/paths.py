@@ -25,6 +25,21 @@ class ProjectPaths:
         return self.internal_dir / "trajectory-cache"
 
     @property
+    def trajectory_acks_dir(self) -> Path:
+        return self.internal_dir / "trajectory-acks"
+
+    def trajectory_acks_path(self, analysis_id: str) -> Path:
+        path = Path(analysis_id)
+        if (
+            not analysis_id
+            or path.is_absolute()
+            or len(path.parts) != 1
+            or path.parts[0] in {".", ".."}
+        ):
+            raise ValueError("analysis_id must be a single safe path segment")
+        return self.trajectory_acks_dir / analysis_id
+
+    @property
     def pi_runtime_dir(self) -> Path:
         return self.internal_dir / "runtime/pi"
 

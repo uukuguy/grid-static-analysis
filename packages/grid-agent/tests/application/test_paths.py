@@ -12,6 +12,10 @@ def test_project_paths_separate_internal_state_from_auditable_runs(tmp_path: Pat
     assert paths.pi_runtime_dir == tmp_path / ".grid-agent/runtime/pi"
     assert paths.pi_agent_dir == tmp_path / ".grid-agent/auth/pi"
     assert paths.sessions_dir == tmp_path / ".grid-agent/sessions"
+    assert paths.trajectory_acks_dir == tmp_path / ".grid-agent/trajectory-acks"
+    assert paths.trajectory_acks_path("analysis-test") == (
+        tmp_path / ".grid-agent/trajectory-acks/analysis-test"
+    )
     assert paths.runtime_lock == tmp_path / "configs/runtime/pi-runtime.lock.json"
 
 

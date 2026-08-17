@@ -1,10 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 const TURN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*-r[0-9]{3}$/;
 const CONTENT_HASH_PATTERN = /^[0-9a-f]{64}$/;
+const ARTIFACT_REF_PATTERN = /^artifact:sha256:[0-9a-f]{64}$/;
 const RUNTIME_SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+const ACK_POLL_INTERVAL_MS = 25;
+const ACK_TIMEOUT_MS = 30_000;
 const PUBLIC_OPTION_KEYS = [
   "reasoning",
   "thinkingBudgets",
@@ -63,6 +68,12 @@ export function configureModelRequestCapture(pi, paths, fatal = captureFatal) {
         semantic_request_sha256: sha256Canonical(semanticRequest),
       };
       await writeJsonAtomicFsync(join(paths.requestsPath, requestId, "input.json"), document);
+      if (paths.acknowledgementsPath !== undefined) {
+        await waitForCommitAcknowledgement(paths, {
+          requestId,
+          semanticRequestSha256: document.semantic_request_sha256,
+        });
+      }
       return undefined;
     } catch (error) {
       return fatal(
@@ -81,6 +92,88 @@ export function captureFatal(message) {
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function waitForCommitAcknowledgement(paths, expected) {
+  const acknowledgementsPath = requireAbsolutePath(
+    paths.acknowledgementsPath,
+    "trajectory acknowledgements path",
+  );
+  const requestId = requireSafeRequestId(expected.requestId);
+  const pollIntervalMs = pollDuration(
+    paths.acknowledgementPollIntervalMs,
+    ACK_POLL_INTERVAL_MS,
+    "acknowledgement poll interval",
+  );
+  const timeoutMs = pollDuration(
+    paths.acknowledgementTimeoutMs,
+    ACK_TIMEOUT_MS,
+    "acknowledgement timeout",
+  );
+  const deadline = performance.now() + timeoutMs;
+  const acknowledgementPath = join(acknowledgementsPath, `${requestId}.committed.json`);
+
+  while (performance.now() <= deadline) {
+    try {
+      const acknowledgement = JSON.parse(await readFile(acknowledgementPath, "utf8"));
+      validateCommitAcknowledgement(acknowledgement, expected);
+      return;
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    await sleep(pollIntervalMs);
+  }
+  throw new Error(`timed out waiting for model request commit acknowledgement: ${requestId}`);
+}
+
+function validateCommitAcknowledgement(value, expected) {
+  if (!isPlainObject(value)) {
+    throw new Error("invalid model request commit acknowledgement");
+  }
+  if (value.schema_version !== "grid-model-request-commit/1.0") {
+    throw new Error("invalid model request commit acknowledgement schema_version");
+  }
+  if (value.request_id !== expected.requestId) {
+    throw new Error("invalid model request commit acknowledgement request_id");
+  }
+  if (value.semantic_request_sha256 !== expected.semanticRequestSha256) {
+    throw new Error("invalid model request commit acknowledgement semantic_request_sha256");
+  }
+  if (typeof value.artifact_ref !== "string" || !ARTIFACT_REF_PATTERN.test(value.artifact_ref)) {
+    throw new Error("invalid model request commit acknowledgement artifact_ref");
+  }
+  if (!Number.isSafeInteger(value.event_sequence) || value.event_sequence <= 0) {
+    throw new Error("invalid model request commit acknowledgement event_sequence");
+  }
+  if (value.status !== "committed") {
+    throw new Error("invalid model request commit acknowledgement status");
+  }
+}
+
+function requireSafeRequestId(value) {
+  if (typeof value !== "string" || !REQUEST_ID_PATTERN.test(value)) {
+    throw new Error("unsafe model request id for commit acknowledgement");
+  }
+  return value;
+}
+
+function requireAbsolutePath(value, name) {
+  if (typeof value !== "string" || value.length === 0 || !isAbsolute(value)) {
+    throw new Error(`${name} must be an absolute path`);
+  }
+  return value;
+}
+
+function pollDuration(value, fallback, name) {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive finite number`);
+  }
+  return value;
 }
 
 function defaultRuntimeIdentity() {

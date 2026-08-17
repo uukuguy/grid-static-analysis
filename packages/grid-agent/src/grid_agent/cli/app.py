@@ -530,8 +530,9 @@ def _execute_analysis(
                 trajectory_requests_path=workspace.requests_path,
                 trajectory_capture_state_path=workspace.trajectory_capture_state_path,
                 trajectory_allowed_refs_path=allowed_refs_path,
-                provider_id=resolved.config.provider,
-                model_id=resolved.config.model,
+                trajectory_acks_path=project_paths.trajectory_acks_path(
+                    workspace.analysis_id
+                ),
             ),
             base_environment=runtime_env,
         )

@@ -173,7 +173,9 @@ test("native request capture subscribes to before_model_request only", async () 
     root,
     "run/context/trajectory-allowed-refs.json",
   );
+  process.env.GRID_AGENT_TRAJECTORY_ACKS = join(root, ".grid-agent/trajectory-acks/analysis-test");
   await mkdir(process.env.GRID_AGENT_TRAJECTORY_REQUESTS, { recursive: true });
+  await mkdir(process.env.GRID_AGENT_TRAJECTORY_ACKS, { recursive: true });
   await writeFile(
     process.env.GRID_AGENT_TRAJECTORY_CAPTURE_STATE,
     JSON.stringify({
@@ -538,8 +540,7 @@ function clearNativeEnvironment() {
     "GRID_AGENT_TRAJECTORY_REQUESTS",
     "GRID_AGENT_TRAJECTORY_CAPTURE_STATE",
     "GRID_AGENT_TRAJECTORY_ALLOWED_REFS",
-    "GRID_AGENT_PROVIDER_ID",
-    "GRID_AGENT_MODEL_ID",
+    "GRID_AGENT_TRAJECTORY_ACKS",
   ]) {
     delete process.env[name];
   }
@@ -567,9 +568,9 @@ async function configuredNativeTools() {
     root,
     "run/context/trajectory-allowed-refs.json",
   );
-  process.env.GRID_AGENT_PROVIDER_ID = "test-provider";
-  process.env.GRID_AGENT_MODEL_ID = "test-model";
+  process.env.GRID_AGENT_TRAJECTORY_ACKS = join(root, ".grid-agent/trajectory-acks/analysis-test");
   await mkdir(process.env.GRID_AGENT_TRAJECTORY_REQUESTS, { recursive: true });
+  await mkdir(process.env.GRID_AGENT_TRAJECTORY_ACKS, { recursive: true });
   await writeFile(
     process.env.GRID_AGENT_TRAJECTORY_CAPTURE_STATE,
     JSON.stringify({

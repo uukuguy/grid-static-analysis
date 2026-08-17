@@ -76,13 +76,15 @@ export default function domainToolsExtension(pi) {
   if (
     paths.trajectoryRequestsPath !== undefined &&
     paths.trajectoryCaptureStatePath !== undefined &&
-    paths.trajectoryAllowedRefsPath !== undefined
+    paths.trajectoryAllowedRefsPath !== undefined &&
+    paths.trajectoryAcksPath !== undefined
   ) {
     configureModelRequestCapture(pi, {
       requestsPath: paths.trajectoryRequestsPath,
       activeTurnPath: paths.activeTurnPath,
       captureStatePath: paths.trajectoryCaptureStatePath,
       allowedRefsPath: paths.trajectoryAllowedRefsPath,
+      acknowledgementsPath: paths.trajectoryAcksPath,
       runtime: paths.piRuntime,
     });
   }
@@ -383,14 +385,16 @@ function runtimePaths(env) {
     env,
     "GRID_AGENT_TRAJECTORY_ALLOWED_REFS",
   );
+  const trajectoryAcksPath = optionalExistingRealPath(env, "GRID_AGENT_TRAJECTORY_ACKS");
   const trajectoryPaths = [
     trajectoryRequestsPath,
     trajectoryCaptureStatePath,
     trajectoryAllowedRefsPath,
+    trajectoryAcksPath,
   ];
   const trajectoryConfigured = trajectoryPaths.every((path) => path !== undefined);
   if (trajectoryPaths.some((path) => path !== undefined) && !trajectoryConfigured) {
-    throw new Error("trajectory capture requires all three trajectory paths");
+    throw new Error("trajectory capture requires all four trajectory paths");
   }
   if (trajectoryConfigured && activeTurnPath === undefined) {
     throw new Error("trajectory capture requires GRID_AGENT_ACTIVE_TURN");
@@ -419,6 +423,7 @@ function runtimePaths(env) {
     trajectoryRequestsPath,
     trajectoryCaptureStatePath,
     trajectoryAllowedRefsPath,
+    trajectoryAcksPath,
     piRuntime: runtimeIdentity(env),
   };
 }
