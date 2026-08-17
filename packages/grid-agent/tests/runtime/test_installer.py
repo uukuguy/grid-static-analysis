@@ -197,7 +197,7 @@ def test_installer_configures_proxy_aware_node_build_without_leaving_preload(
     build_index = fake_runner.calls.index(["npm", "run", "build"])
     build_environment = fake_runner.kwargs[build_index]["env"]
     preload = source / ".grid-agent-node-fetch-proxy.cjs"
-    assert build_environment["NODE_OPTIONS"] == f"--trace-warnings --require={preload}"
+    assert build_environment["NODE_OPTIONS"] == f"--trace-warnings --require=./{preload.name}"
     assert not preload.exists()
 
 

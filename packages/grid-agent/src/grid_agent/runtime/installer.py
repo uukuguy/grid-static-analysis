@@ -164,7 +164,7 @@ class PiRuntimeInstaller:
         if self.environ.get("HTTPS_PROXY") or self.environ.get("HTTP_PROXY"):
             preload.write_text(_NODE_FETCH_PROXY_SOURCE, encoding="utf-8")
             build_environment = dict(self.environ)
-            required = f"--require={preload}"
+            required = f"--require=./{preload.name}"
             existing = build_environment.get("NODE_OPTIONS", "").strip()
             build_environment["NODE_OPTIONS"] = f"{existing} {required}".strip()
         try:
