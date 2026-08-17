@@ -22,7 +22,7 @@ index 29847b6..853203b 100644
  	ReadToolResultEvent,
  	// Commands
 diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
-index 2a699a7..424b765 100644
+index 2a699a7..50d2006 100644
 --- a/packages/coding-agent/src/core/extensions/runner.ts
 +++ b/packages/coding-agent/src/core/extensions/runner.ts
 @@ -3,7 +3,7 @@
@@ -42,17 +42,18 @@ index 2a699a7..424b765 100644
  	BeforeProviderHeadersEvent,
  	BeforeProviderRequestEvent,
  	CompactOptions,
-@@ -45,6 +46,9 @@ import type {
+@@ -45,6 +46,10 @@ import type {
  	ProjectTrustEvent,
  	ProjectTrustEventResult,
  	ProviderConfig,
 +	PublicModelRequestContext,
++	PublicModelRequestMessage,
 +	PublicModelRequestModel,
 +	PublicModelRequestOptions,
  	RegisteredCommand,
  	RegisteredTool,
  	ReplacedSessionContext,
-@@ -86,6 +90,48 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
+@@ -86,6 +91,66 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
  	"tui.editor.deleteToLineEnd",
  ] as const;
  
@@ -66,7 +67,7 @@ index 2a699a7..424b765 100644
 +
 +function projectBeforeModelRequestContext(context: Context): PublicModelRequestContext {
 +	const projected: PublicModelRequestContext = {
-+		messages: structuredClone(context.messages),
++		messages: context.messages.map(projectBeforeModelRequestMessage),
 +	};
 +	if (context.systemPrompt !== undefined) {
 +		projected.systemPrompt = context.systemPrompt;
@@ -79,6 +80,24 @@ index 2a699a7..424b765 100644
 +		}));
 +	}
 +	return projected;
++}
++
++function projectBeforeModelRequestMessage(message: Context["messages"][number]): PublicModelRequestMessage {
++	if (message.role === "user") {
++		return { role: "user", content: typeof message.content === "string" ? message.content : message.content.map(projectPublicContent) };
++	}
++	if (message.role === "toolResult") {
++		return { role: "toolResult", toolCallId: message.toolCallId, toolName: message.toolName, content: message.content.map(projectPublicContent), details: structuredClone(message.details ?? null), isError: message.isError };
++	}
++	return { role: "assistant", content: message.content.map((content) => {
++		if (content.type === "thinking") return { type: "thinking", redacted: true };
++		if (content.type === "toolCall") return { type: "toolCall", id: content.id, name: content.name, arguments: structuredClone(content.arguments) };
++		return { type: "text", text: content.text };
++	}) };
++}
++
++function projectPublicContent(content: { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }) {
++	return content.type === "text" ? { type: "text" as const, text: content.text } : { type: "image" as const, data: content.data, mimeType: content.mimeType };
 +}
 +
 +function projectPublicModelRequestOptions(options: PublicModelRequestOptions): PublicModelRequestOptions {
@@ -101,7 +120,7 @@ index 2a699a7..424b765 100644
  type BuiltInKeyBindings = Partial<Record<KeyId, { keybinding: string; restrictOverride: boolean }>>;
  
  const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltInKeyBindings => {
-@@ -990,6 +1036,29 @@ export class ExtensionRunner {
+@@ -990,6 +1055,29 @@ export class ExtensionRunner {
  		return currentPayload;
  	}
  
@@ -132,7 +151,7 @@ index 2a699a7..424b765 100644
  		const ctx = this.createContext();
  
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index a3c9f73..31f726c 100644
+index a3c9f73..02cd40f 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -19,6 +19,7 @@ import type {
@@ -153,7 +172,7 @@ index a3c9f73..31f726c 100644
  } from "@earendil-works/pi-ai";
  import type {
  	AutocompleteItem,
-@@ -664,6 +667,44 @@ export interface BeforeProviderRequestEvent {
+@@ -664,6 +667,56 @@ export interface BeforeProviderRequestEvent {
  	payload: unknown;
  }
  
@@ -182,9 +201,21 @@ index a3c9f73..31f726c 100644
 +	parameters: Readonly<TSchema>;
 +}
 +
++export type PublicModelRequestContent =
++	| { type: "text"; text: string }
++	| { type: "image"; data: string; mimeType: string };
++export type PublicModelRequestAssistantContent =
++	| { type: "text"; text: string }
++	| { type: "thinking"; redacted: true }
++	| { type: "toolCall"; id: string; name: string; arguments: Readonly<Record<string, unknown>> };
++export type PublicModelRequestMessage =
++	| { role: "user"; content: string | readonly PublicModelRequestContent[] }
++	| { role: "assistant"; content: readonly PublicModelRequestAssistantContent[] }
++	| { role: "toolResult"; toolCallId: string; toolName: string; content: readonly PublicModelRequestContent[]; details: unknown; isError: boolean };
++
 +export interface PublicModelRequestContext {
 +	systemPrompt?: string;
-+	messages: Readonly<Context["messages"]>;
++	messages: readonly PublicModelRequestMessage[];
 +	tools?: readonly PublicModelRequestTool[];
 +}
 +
@@ -198,7 +229,7 @@ index a3c9f73..31f726c 100644
  /**
   * Fired after request headers are assembled, before the provider HTTP call.
   * Handlers mutate `headers` in place (e.g. to inject tracing/session headers);
-@@ -1020,6 +1061,7 @@ export type ExtensionEvent =
+@@ -1020,6 +1073,7 @@ export type ExtensionEvent =
  	| ResourcesDiscoverEvent
  	| SessionEvent
  	| ContextEvent
@@ -206,7 +237,7 @@ index a3c9f73..31f726c 100644
  	| BeforeProviderRequestEvent
  	| BeforeProviderHeadersEvent
  	| AfterProviderResponseEvent
-@@ -1185,6 +1227,7 @@ export interface ExtensionAPI {
+@@ -1185,6 +1239,7 @@ export interface ExtensionAPI {
  	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
  	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
  	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
@@ -370,412 +401,3 @@ index 7c6de94..d469462 100644
  	ReadToolCallEvent,
  	RegisteredCommand,
  	RegisteredTool,
-diff --git a/packages/coding-agent/test/sdk-before-model-request.test.ts b/packages/coding-agent/test/sdk-before-model-request.test.ts
-new file mode 100644
-index 0000000..959f454
---- /dev/null
-+++ b/packages/coding-agent/test/sdk-before-model-request.test.ts
-@@ -0,0 +1,403 @@
-+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-+import { tmpdir } from "node:os";
-+import { join } from "node:path";
-+import {
-+	type Api,
-+	type AssistantMessage,
-+	type Context,
-+	createAssistantMessageEventStream,
-+	type Model,
-+	type SimpleStreamOptions,
-+	Type,
-+} from "@earendil-works/pi-ai";
-+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-+import { AuthStorage } from "../src/core/auth-storage.ts";
-+import type {
-+	BeforeModelRequestEvent,
-+	ExtensionAPI,
-+	ExtensionFactory,
-+	ToolDefinition,
-+} from "../src/core/extensions/index.ts";
-+import { ModelRegistry } from "../src/core/model-registry.ts";
-+import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
-+import { createAgentSession } from "../src/core/sdk.ts";
-+import { SessionManager } from "../src/core/session-manager.ts";
-+import { SettingsManager } from "../src/core/settings-manager.ts";
-+
-+describe("createAgentSession before_model_request extension event", () => {
-+	let tempDir: string;
-+	let cwd: string;
-+	let agentDir: string;
-+
-+	beforeEach(() => {
-+		tempDir = mkdtempSync(join(tmpdir(), "pi-sdk-before-model-request-"));
-+		cwd = join(tempDir, "project");
-+		agentDir = join(tempDir, "agent");
-+		mkdirSync(cwd, { recursive: true });
-+		mkdirSync(agentDir, { recursive: true });
-+	});
-+
-+	afterEach(() => {
-+		if (tempDir) {
-+			rmSync(tempDir, { recursive: true, force: true });
-+		}
-+	});
-+
-+	function createModel(api: Api): Model<Api> {
-+		return {
-+			id: "capture-model",
-+			name: "Capture Model",
-+			api,
-+			provider: "capture-provider",
-+			baseUrl: "https://capture.invalid/v1",
-+			reasoning: false,
-+			headers: { "X-Private-Header": "secret" },
-+			compat: { supportsStore: false, supportsDeveloperRole: false },
-+			input: ["text"],
-+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-+			contextWindow: 128000,
-+			maxTokens: 4096,
-+		};
-+	}
-+
-+	function createDoneStream(api: Api) {
-+		const stream = createAssistantMessageEventStream();
-+		const message: AssistantMessage = {
-+			role: "assistant",
-+			content: [{ type: "text", text: "ok" }],
-+			api,
-+			provider: "capture-provider",
-+			model: "capture-model",
-+			usage: {
-+				input: 0,
-+				output: 0,
-+				cacheRead: 0,
-+				cacheWrite: 0,
-+				totalTokens: 0,
-+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-+			},
-+			stopReason: "stop",
-+			timestamp: Date.now(),
-+		};
-+		stream.end(message);
-+		return stream;
-+	}
-+
-+	function gridModelListTool(): ToolDefinition {
-+		return {
-+			name: "grid_model_list",
-+			label: "Grid model list",
-+			description: "List available grid models.",
-+			parameters: Type.Object({}),
-+			execute: async () => ({ result: "[]" }),
-+		};
-+	}
-+
-+	async function createCaptureSession(options: {
-+		api?: Api;
-+		extensionFactory: ExtensionFactory;
-+		onProvider: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => void;
-+	}) {
-+		const api: Api = options.api ?? "openai-completions";
-+		const model = createModel(api);
-+		const settingsManager = SettingsManager.inMemory({ httpIdleTimeoutMs: 1234, websocketConnectTimeoutMs: 2345 });
-+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-+		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
-+		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-+		modelRegistry.registerProvider(model.provider, {
-+			api,
-+			streamSimple: (streamModel, context, streamOptions) => {
-+				options.onProvider(streamModel, context, streamOptions);
-+				return createDoneStream(api);
-+			},
-+		});
-+
-+		const resourceLoader = new DefaultResourceLoader({
-+			cwd,
-+			agentDir,
-+			settingsManager,
-+			extensionFactories: [options.extensionFactory],
-+		});
-+		await resourceLoader.reload();
-+
-+		const created = await createAgentSession({
-+			cwd,
-+			agentDir,
-+			model,
-+			thinkingLevel: "medium",
-+			authStorage,
-+			modelRegistry,
-+			settingsManager,
-+			sessionManager: SessionManager.inMemory(cwd),
-+			resourceLoader,
-+			tools: ["grid_model_list"],
-+			customTools: [gridModelListTool()],
-+		});
-+
-+		return {
-+			...created,
-+			model,
-+			dispose: () => {
-+				created.session.dispose();
-+				modelRegistry.unregisterProvider(model.provider);
-+			},
-+		};
-+	}
-+
-+	it.each(["openai-completions", "anthropic-messages"] as const)(
-+		"emits a provider-neutral observation event before entering the %s provider",
-+		async (api) => {
-+			const order: string[] = [];
-+			let observed: BeforeModelRequestEvent | undefined;
-+			let providerContext: Context | undefined;
-+			const providerCall = vi.fn((_model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
-+				order.push("provider");
-+				providerContext = context;
-+			});
-+			const tool = gridModelListTool();
-+			const finalContext: Context = {
-+				systemPrompt: "final system prompt",
-+				messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
-+				tools: [tool],
-+			};
-+
-+			const { session, model, dispose } = await createCaptureSession({
-+				api,
-+				extensionFactory: (pi: ExtensionAPI) => {
-+					pi.on("before_model_request", (event) => {
-+						order.push("before_model_request");
-+						observed = structuredClone(event);
-+						const mutableContext = event.context as Context;
-+						mutableContext.messages[0] = {
-+							role: "user",
-+							content: [{ type: "text", text: "mutated" }],
-+						};
-+						if (mutableContext.tools) {
-+							mutableContext.tools[0].parameters = Type.Object({ mutated: Type.String() });
-+						}
-+					});
-+				},
-+				onProvider: providerCall,
-+			});
-+
-+			try {
-+				await session.agent.streamFn(model, finalContext, {
-+					reasoning: "medium",
-+					temperature: 0.2,
-+					maxTokens: 1024,
-+					transport: "sse",
-+					cacheRetention: "short",
-+					timeoutMs: 1234,
-+					websocketConnectTimeoutMs: 2345,
-+					maxRetries: 2,
-+					maxRetryDelayMs: 3000,
-+					apiKey: "caller-secret",
-+					env: { SECRET_TOKEN: "secret" },
-+					headers: { Authorization: "Bearer secret" },
-+					signal: new AbortController().signal,
-+					onPayload: () => undefined,
-+					onResponse: () => undefined,
-+					metadata: { trace: "transport-state" },
-+					sessionId: "session-state",
-+				});
-+
-+				expect(order).toEqual(["before_model_request", "provider"]);
-+				expect(observed).toMatchObject({
-+					type: "before_model_request",
-+					model: {
-+						provider: "capture-provider",
-+						api,
-+						id: "capture-model",
-+					},
-+					context: {
-+						systemPrompt: "final system prompt",
-+						messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
-+						tools: [
-+							{
-+								name: "grid_model_list",
-+								description: "List available grid models.",
-+								parameters: tool.parameters,
-+							},
-+						],
-+					},
-+					options: {
-+						reasoning: "medium",
-+						temperature: 0.2,
-+						maxTokens: 1024,
-+						transport: "sse",
-+						cacheRetention: "short",
-+						timeoutMs: 1234,
-+						websocketConnectTimeoutMs: 2345,
-+						maxRetries: 2,
-+						maxRetryDelayMs: 3000,
-+					},
-+				});
-+				expect(providerContext).toEqual(finalContext);
-+				expect(providerContext?.messages[0]).toEqual({
-+					role: "user",
-+					content: [{ type: "text", text: "question" }],
-+				});
-+				expect(providerContext?.tools?.[0].parameters).toBe(tool.parameters);
-+				expect(observed).not.toHaveProperty("payload");
-+				for (const privateKey of [
-+					"apiKey",
-+					"env",
-+					"headers",
-+					"signal",
-+					"onPayload",
-+					"onResponse",
-+					"metadata",
-+					"sessionId",
-+				]) {
-+					expect(observed?.options).not.toHaveProperty(privateKey);
-+				}
-+			} finally {
-+				dispose();
-+			}
-+		},
-+	);
-+
-+	it("blocks the provider when the handler fails", async () => {
-+		const providerCall = vi.fn();
-+		const { session, model, dispose } = await createCaptureSession({
-+			extensionFactory: (pi: ExtensionAPI) => {
-+				pi.on("before_model_request", () => {
-+					throw new Error("commit failed");
-+				});
-+			},
-+			onProvider: providerCall,
-+		});
-+
-+		try {
-+			await expect(session.agent.streamFn(model, { messages: [] })).rejects.toThrow("commit failed");
-+			expect(providerCall).toHaveBeenCalledTimes(0);
-+		} finally {
-+			dispose();
-+		}
-+	});
-+
-+	it("emits an LLM-visible tool snapshot without cloning executable callbacks", async () => {
-+		let observed: BeforeModelRequestEvent | undefined;
-+		const { session, model, dispose } = await createCaptureSession({
-+			extensionFactory: (pi: ExtensionAPI) => {
-+				pi.on("before_model_request", (event) => {
-+					observed = event;
-+				});
-+			},
-+			onProvider: vi.fn(),
-+		});
-+		const tool = gridModelListTool();
-+
-+		try {
-+			await session.extensionRunner.emitBeforeModelRequest(
-+				model,
-+				{
-+					systemPrompt: "final system prompt",
-+					messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
-+					tools: [tool],
-+				},
-+				{},
-+			);
-+
-+			expect(observed?.context).toMatchObject({
-+				systemPrompt: "final system prompt",
-+				messages: [{ role: "user", content: [{ type: "text", text: "question" }] }],
-+				tools: [
-+					{ name: "grid_model_list", description: "List available grid models.", parameters: tool.parameters },
-+				],
-+			});
-+			expect(observed?.context.tools?.[0]).not.toHaveProperty("execute");
-+		} finally {
-+			dispose();
-+		}
-+	});
-+
-+	it("projects runtime options to the public semantic request fields", async () => {
-+		let observed: BeforeModelRequestEvent | undefined;
-+		const { session, model, dispose } = await createCaptureSession({
-+			extensionFactory: (pi: ExtensionAPI) => {
-+				pi.on("before_model_request", (event) => {
-+					observed = event;
-+				});
-+			},
-+			onProvider: vi.fn(),
-+		});
-+
-+		try {
-+			await session.extensionRunner.emitBeforeModelRequest(model, { messages: [] }, {
-+				reasoning: "medium",
-+				thinkingBudgets: { medium: 2048 },
-+				temperature: 0.2,
-+				maxTokens: 1024,
-+				transport: "sse",
-+				cacheRetention: "short",
-+				timeoutMs: 1234,
-+				websocketConnectTimeoutMs: 2345,
-+				maxRetries: 2,
-+				maxRetryDelayMs: 3000,
-+				apiKey: "caller-secret",
-+				env: { SECRET_TOKEN: "secret" },
-+				headers: { Authorization: "Bearer secret" },
-+				signal: new AbortController().signal,
-+				onPayload: () => undefined,
-+				onResponse: () => undefined,
-+				metadata: { trace: "transport-state" },
-+				sessionId: "session-state",
-+			} as SimpleStreamOptions);
-+
-+			expect(observed?.options).toEqual({
-+				reasoning: "medium",
-+				thinkingBudgets: { medium: 2048 },
-+				temperature: 0.2,
-+				maxTokens: 1024,
-+				transport: "sse",
-+				cacheRetention: "short",
-+				timeoutMs: 1234,
-+				websocketConnectTimeoutMs: 2345,
-+				maxRetries: 2,
-+				maxRetryDelayMs: 3000,
-+			});
-+			for (const privateKey of [
-+				"apiKey",
-+				"env",
-+				"headers",
-+				"signal",
-+				"onPayload",
-+				"onResponse",
-+				"metadata",
-+				"sessionId",
-+			]) {
-+				expect(observed?.options).not.toHaveProperty(privateKey);
-+			}
-+		} finally {
-+			dispose();
-+		}
-+	});
-+
-+	it("projects model to public semantic identity only", async () => {
-+		let observed: BeforeModelRequestEvent | undefined;
-+		const { session, model, dispose } = await createCaptureSession({
-+			extensionFactory: (pi: ExtensionAPI) => {
-+				pi.on("before_model_request", (event) => {
-+					observed = event;
-+				});
-+			},
-+			onProvider: vi.fn(),
-+		});
-+
-+		try {
-+			await session.extensionRunner.emitBeforeModelRequest(model, { messages: [] }, {});
-+
-+			expect(observed?.model).toEqual({
-+				provider: "capture-provider",
-+				api: "openai-completions",
-+				id: "capture-model",
-+			});
-+			for (const privateKey of ["headers", "compat", "baseUrl", "name", "cost", "contextWindow", "maxTokens"]) {
-+				expect(observed?.model).not.toHaveProperty(privateKey);
-+			}
-+		} finally {
-+			dispose();
-+		}
-+	});
-+});

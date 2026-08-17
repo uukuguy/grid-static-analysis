@@ -15,7 +15,7 @@ from grid_agent.runtime.lock import PiRuntimeLock, PiRuntimeLockError
 
 
 PATCH_RELATIVE_PATH = "patches/pi-0.80.6-before-model-request.patch"
-PATCH_SHA256 = "458794796163d70c71846a4f38a543bf2ed495547c5fd216b2f1e0d684e1da0e"
+PATCH_SHA256 = "28accf22df2a59129fe7710bc9c1d7286cfab8fc1ca15dfda87f797109d85226"
 
 
 def expected_patches_sha256(*patches: tuple[str, str]) -> str:
