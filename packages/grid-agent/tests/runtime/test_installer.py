@@ -180,6 +180,25 @@ def test_installer_uses_detached_pinned_commit(tmp_path: Path, fake_runner: Fake
     assert command.identity.patches_sha256 == runtime_lock.patches_sha256
 
 
+def test_installer_ensure_provisions_missing_managed_runtime_once(
+    tmp_path: Path,
+    fake_runner: FakeRunner,
+    runtime_lock: PiRuntimeLock,
+) -> None:
+    runtime_dir = ProjectPaths.from_root(tmp_path).pi_runtime_dir
+    installer = PiRuntimeInstaller(runtime_lock, runtime_dir, runner=fake_runner)
+
+    command = installer.ensure()
+    calls_after_install = list(fake_runner.calls)
+
+    assert command.identity.source == "managed"
+    assert (runtime_dir / "active").is_file()
+    assert calls_after_install
+
+    assert installer.ensure() == command
+    assert fake_runner.calls == calls_after_install
+
+
 def test_installer_uses_arrays_cwd_timeouts_and_captured_stderr(
     tmp_path: Path,
     fake_runner: FakeRunner,

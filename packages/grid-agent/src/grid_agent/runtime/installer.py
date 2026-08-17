@@ -92,6 +92,22 @@ class PiRuntimeInstaller:
         )
         return PiCommand(argv=("node", str(cli)), identity=identity)
 
+    def ensure(self) -> PiCommand:
+        """Return the verified managed runtime, provisioning it when absent or stale."""
+        # Keep the validation and repair policy in the runtime boundary.  Native
+        # analysis must never fall back to an ambient Pi executable.
+        from grid_agent.runtime.locator import PiRuntimeLocator, PiRuntimeLocatorError
+
+        locator = PiRuntimeLocator(
+            self.pi_runtime_dir,
+            runtime_lock=self.runtime_lock,
+        )
+        try:
+            return locator.resolve(require_managed=True)
+        except PiRuntimeLocatorError:
+            self.install()
+            return locator.resolve(require_managed=True)
+
     def _prepare_source_dir(self) -> Path:
         runtime_root = self._prepare_runtime_root()
         source = self.source_dir

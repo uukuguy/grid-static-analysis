@@ -467,7 +467,7 @@ def _execute_analysis(
         oauth_configured=lambda profile: auth_store.status(profile).configured,
     )
     runtime_lock = PiRuntimeLock.load(project_paths.runtime_lock)
-    command = PiRuntimeLocator(project_paths.pi_runtime_dir, runtime_env, runtime_lock=runtime_lock).resolve(require_managed=True)
+    command = PiRuntimeInstaller(runtime_lock, project_paths.pi_runtime_dir).ensure()
     _install_gridctl(workspace)
     gridctl = GridctlClient(
         executable=workspace.bin_path / "gridctl",
