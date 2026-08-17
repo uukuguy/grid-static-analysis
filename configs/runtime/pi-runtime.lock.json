@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": {
     "repository": "https://github.com/earendil-works/pi.git",
     "commit": "2b3fda9921b5590f285165287bd442a25817f17b"
@@ -13,6 +13,13 @@
     "npm_integrity": "sha512-vcfD6tOk402isLl3Cm/qbn2O10TvgroMp1+/fEGM24ZdvETFCdOYv5VZ7m59EI5fPsjfSJh+CpQ5bhBrhfOg7g=="
   },
   "runtime": {
-    "node_minimum": "22.19.0"
-  }
+    "node_minimum": "22.19.0",
+    "pi_ai_version": "0.80.6"
+  },
+  "patches": [
+    {
+      "path": "patches/pi-0.80.6-before-model-request.patch",
+      "sha256": "458794796163d70c71846a4f38a543bf2ed495547c5fd216b2f1e0d684e1da0e"
+    }
+  ]
 }

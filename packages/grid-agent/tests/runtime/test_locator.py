@@ -81,6 +81,8 @@ def test_locator_records_managed_identity_and_lock_sha(tmp_path: Path, runtime_l
     assert command.identity.commit == runtime_lock.commit
     assert command.identity.lock_sha256 == runtime_lock.sha256
     assert command.identity.package_version == "0.80.6"
+    assert command.identity.pi_ai_version == "0.80.6"
+    assert command.identity.patches_sha256 == runtime_lock.patches_sha256
 
 
 def test_locator_resolves_managed_oauth_helper(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:

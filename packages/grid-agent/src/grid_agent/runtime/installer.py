@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from grid_agent.runtime.lock import PiCommand, PiRuntimeIdentity, PiRuntimeLock
+from grid_agent.runtime.lock import PiCommand, PiRuntimeIdentity, PiRuntimeLock, PiRuntimePatch
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -37,6 +38,7 @@ class PiRuntimeInstaller:
         return self.pi_runtime_dir / "active"
 
     def install(self) -> PiCommand:
+        self._verify_patch_bytes()
         source = self.source_dir
         source.mkdir(parents=True, exist_ok=True)
 
@@ -46,6 +48,10 @@ class PiRuntimeInstaller:
         self._run(["git", "remote", "add", "origin", self.runtime_lock.repository])
         self._run(["git", "fetch", "--depth", "1", "origin", self.runtime_lock.commit])
         self._run(["git", "checkout", "--detach", self.runtime_lock.commit])
+        self._run(["git", "reset", "--hard", self.runtime_lock.commit])
+        self._run(["git", "clean", "-fd"])
+        for patch in self.runtime_lock.patches:
+            self._apply_patch(patch)
         self._run(["npm", "ci"], timeout=max(self.timeout_seconds, 300))
         self._run(["npm", "run", "build"], timeout=max(self.timeout_seconds, 300))
 
@@ -61,7 +67,10 @@ class PiRuntimeInstaller:
 
         self.active_marker.parent.mkdir(parents=True, exist_ok=True)
         self.active_marker.write_text(
-            f"{source}\ncommit={self.runtime_lock.commit}\nlock_sha256={self.runtime_lock.sha256}\n",
+            f"{source}\n"
+            f"commit={self.runtime_lock.commit}\n"
+            f"lock_sha256={self.runtime_lock.sha256}\n"
+            f"patches_sha256={self.runtime_lock.patches_sha256}\n",
             encoding="utf-8",
         )
         identity = PiRuntimeIdentity(
@@ -70,9 +79,29 @@ class PiRuntimeInstaller:
             commit=self.runtime_lock.commit,
             package_version=self.runtime_lock.package_version,
             lock_sha256=self.runtime_lock.sha256,
+            pi_ai_version=self.runtime_lock.pi_ai_version,
+            patches_sha256=self.runtime_lock.patches_sha256,
             version=version,
         )
         return PiCommand(argv=("node", str(cli)), identity=identity)
+
+    def _apply_patch(self, patch: PiRuntimePatch) -> None:
+        self._verify_patch_bytes(patch)
+        patch_path = str(patch.path)
+        self._run(["git", "apply", "--check", patch_path])
+        self._run(["git", "apply", patch_path])
+
+    def _verify_patch_bytes(self, patch: PiRuntimePatch | None = None) -> None:
+        patches = (patch,) if patch is not None else self.runtime_lock.patches
+        for item in patches:
+            try:
+                actual = hashlib.sha256(item.path.read_bytes()).hexdigest()
+            except OSError as exc:
+                raise PiRuntimeInstallerError(f"Pi runtime patch cannot be read: {item.path}") from exc
+            if actual != item.sha256:
+                raise PiRuntimeInstallerError(
+                    f"Pi runtime patch digest mismatch for {item.path}: expected {item.sha256}, got {actual}"
+                )
 
     def _probe_version(self, cli: Path) -> str:
         result = self._run(["node", str(cli), "--version"], timeout=15)

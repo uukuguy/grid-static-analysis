@@ -101,6 +101,8 @@ class PiRuntimeLocator:
             commit=commit,
             package_version=self.runtime_lock.package_version,
             lock_sha256=self.runtime_lock.sha256,
+            pi_ai_version=self.runtime_lock.pi_ai_version,
+            patches_sha256=self.runtime_lock.patches_sha256,
         )
 
     def _run(self, argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
