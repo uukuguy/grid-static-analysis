@@ -253,3 +253,69 @@ exit 1, no matches
 ### Residual
 
 The pinned Pi 0.80.6 dependency-audit finding remains out of scope and was not changed.
+
+## Third Review Fix: Runtime Root Containment
+
+### Finding
+
+Third review found a remaining MEDIUM containment gap: the installer validated containment against `self.pi_runtime_dir.resolve()`, so a symlinked `.grid-agent/runtime/pi` root could redirect the managed runtime root to an outside directory and still become the accepted containment base.
+
+### Change
+
+- Added managed runtime root validation before source validation, marker removal, patch verification, or any runner command.
+- Rejects symlinked `.grid-agent/runtime/pi` roots.
+- Creates a normal missing runtime root, then verifies it is a non-symlink directory.
+- Validates `source` as a child under the already validated, non-symlink runtime root.
+- Retains previous leaf `source` symlink protections.
+- On symlinked root state, `PiRuntimeInstallerError` is raised, runner is not called, stale outside marker remains unchanged, and outside data remains unchanged.
+
+### RED Evidence
+
+New regression before implementation:
+
+```text
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/runtime/test_installer.py::test_installer_rejects_symlink_runtime_root_before_runner_or_marker_mutation -q
+1 failed in 0.06s
+```
+
+Failure proved a symlinked runtime root was accepted and install proceeded.
+
+### GREEN Evidence
+
+New regression:
+
+```text
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/runtime/test_installer.py::test_installer_rejects_symlink_runtime_root_before_runner_or_marker_mutation -q
+1 passed in 0.33s
+```
+
+Focused runtime tests:
+
+```text
+uv run --project packages/grid-agent pytest packages/grid-agent/tests/runtime/test_installer.py packages/grid-agent/tests/runtime/test_locator.py -q
+29 passed in 0.20s
+```
+
+Full grid-agent tests:
+
+```text
+uv run --project packages/grid-agent pytest packages/grid-agent/tests -q
+537 passed, 1 warning in 73.34s
+```
+
+Additional checks:
+
+```text
+uv run --project packages/grid-agent python -m compileall -q packages/grid-agent/src/grid_agent/runtime packages/grid-agent/tests/runtime
+exit 0
+
+git diff --check
+exit 0
+
+rg "breakpoint\\(|pdb\\.set_trace|TODO DEBUG|print\\(" packages/grid-agent/src/grid_agent/runtime packages/grid-agent/tests/runtime/test_installer.py packages/grid-agent/tests/runtime/test_locator.py -n
+exit 1, no matches
+```
+
+### Residual
+
+The pinned Pi 0.80.6 dependency-audit finding remains out of scope and was not changed.

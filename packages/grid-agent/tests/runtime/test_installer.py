@@ -197,6 +197,30 @@ def test_installer_rejects_symlink_source_before_runner_or_marker_mutation(tmp_p
     assert outside.exists()
 
 
+def test_installer_rejects_symlink_runtime_root_before_runner_or_marker_mutation(
+    tmp_path: Path,
+    runtime_lock: PiRuntimeLock,
+) -> None:
+    paths = ProjectPaths.from_root(tmp_path)
+    outside_root = tmp_path / "outside-runtime"
+    outside_root.mkdir()
+    outside_data = outside_root / "source" / "keep.txt"
+    outside_data.parent.mkdir()
+    outside_data.write_text("keep", encoding="utf-8")
+    outside_marker = outside_root / "active"
+    outside_marker.write_text("stale marker\n", encoding="utf-8")
+    paths.pi_runtime_dir.parent.mkdir(parents=True)
+    paths.pi_runtime_dir.symlink_to(outside_root, target_is_directory=True)
+    runner = FakeRunner()
+
+    with pytest.raises(PiRuntimeInstallerError, match="runtime root"):
+        PiRuntimeInstaller(runtime_lock, paths.pi_runtime_dir, runner=runner).install()
+
+    assert runner.calls == []
+    assert outside_marker.read_text(encoding="utf-8") == "stale marker\n"
+    assert outside_data.read_text(encoding="utf-8") == "keep"
+
+
 def test_installer_normal_managed_source_proceeds_after_validation(
     tmp_path: Path,
     fake_runner: FakeRunner,

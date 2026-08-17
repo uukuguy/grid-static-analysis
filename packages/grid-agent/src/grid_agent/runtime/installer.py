@@ -86,7 +86,7 @@ class PiRuntimeInstaller:
         return PiCommand(argv=("node", str(cli)), identity=identity)
 
     def _prepare_source_dir(self) -> Path:
-        runtime_root = self.pi_runtime_dir.resolve()
+        runtime_root = self._prepare_runtime_root()
         source = self.source_dir
         if source.is_symlink():
             raise PiRuntimeInstallerError(f"Pi runtime source directory must not be a symlink: {source}")
@@ -106,6 +106,19 @@ class PiRuntimeInstaller:
                 f"Pi runtime source directory must stay inside the managed runtime root: {source}"
             ) from exc
         return source
+
+    def _prepare_runtime_root(self) -> Path:
+        runtime_root = self.pi_runtime_dir
+        if runtime_root.is_symlink():
+            raise PiRuntimeInstallerError(f"Pi runtime root must not be a symlink: {runtime_root}")
+
+        try:
+            runtime_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise PiRuntimeInstallerError(f"Pi runtime root could not be created: {runtime_root}") from exc
+        if runtime_root.is_symlink() or not runtime_root.is_dir():
+            raise PiRuntimeInstallerError(f"Pi runtime root is not a safe directory: {runtime_root}")
+        return runtime_root.resolve()
 
     def _clear_active_marker(self) -> None:
         try:
