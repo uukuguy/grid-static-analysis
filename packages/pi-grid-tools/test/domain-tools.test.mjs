@@ -67,6 +67,7 @@ test("analysis tools expose bounded context and bind answer to active turn", asy
     result_refs: [],
     claim_evidence_refs: [],
     claims: [],
+    submission_diagnostics: [],
   });
 
   assert.equal(context.isError, undefined);
@@ -81,6 +82,7 @@ test("analysis tools expose bounded context and bind answer to active turn", asy
     result_refs: [],
     claim_evidence_refs: [],
     claims: [],
+    submission_diagnostics: [],
   });
   assert.equal(submitted.details.result.turn_id, "analysis-test-t002");
   assert.equal(submitted.details.result.turn_nonce, "nonce-2");
@@ -116,6 +118,7 @@ test("analysis context tool is optional for legacy single-run launches", async (
     result_refs: [],
     claim_evidence_refs: [],
     claims: [],
+    submission_diagnostics: [],
   });
 });
 
@@ -157,7 +160,7 @@ test("records bounded decisions only against controller-known refs", async () =>
   assert.equal(outOfBounds.details.error.code, "invalid_decision");
 });
 
-test("answer submission rejects a mistyped evidence reference before writing a draft", async () => {
+test("answer submission omits an unknown reference and records a diagnostic", async () => {
   const { registered, root } = await configuredNativeTools();
   const evidence = "evidence:sha256:" + "a".repeat(64);
   await writeFile(
@@ -169,13 +172,73 @@ test("answer submission rejects a mistyped evidence reference before writing a d
   const result = await registered.find((tool) => tool.name === "grid_submit_answer").execute("submit-typo", {
     answer_output: "答案",
     result_refs: [],
-    claim_evidence_refs: [`${evidence}e`],
+    claim_evidence_refs: [`evidence:sha256:${"b".repeat(64)}`],
     claims: [],
   });
 
-  assert.equal(result.isError, true);
-  assert.equal(result.details.error.code, "unknown_answer_reference");
-  await assert.rejects(readFile(join(root, "run/answer-draft.json"), "utf8"));
+  assert.equal(result.isError, undefined);
+  const draft = JSON.parse(await readFile(join(root, "run/answer-draft.json"), "utf8"));
+  assert.deepEqual(draft.claim_evidence_refs, []);
+  assert.equal(draft.submission_diagnostics[0].category, "unknown_answer_reference");
+});
+
+test("answer submission normalizes misclassified references and records a diagnostic", async () => {
+  const { registered, root } = await configuredNativeTools();
+  const evidence = "evidence:sha256:" + "a".repeat(64);
+  await writeFile(
+    join(root, "run/context/trajectory-allowed-refs.json"),
+    JSON.stringify({ refs: [evidence] }),
+    "utf8",
+  );
+
+  const result = await registered.find((tool) => tool.name === "grid_submit_answer").execute("submit-wrong-kind", {
+    answer_output: "答案",
+    result_refs: [evidence],
+    claim_evidence_refs: [evidence],
+    claims: [{
+      statement: "拓扑结论",
+      category: "topology",
+      result_refs: [evidence],
+      evidence_refs: [evidence],
+    }],
+  });
+
+  assert.equal(result.isError, undefined);
+  const draft = JSON.parse(await readFile(join(root, "run/answer-draft.json"), "utf8"));
+  assert.deepEqual(draft.result_refs, []);
+  assert.deepEqual(draft.claim_evidence_refs, [evidence]);
+  assert.deepEqual(draft.claims[0].result_refs, []);
+  assert.deepEqual(draft.claims[0].evidence_refs, [evidence]);
+  assert.equal(
+    draft.submission_diagnostics.filter((item) => item.category === "misclassified_answer_reference").length,
+    2,
+  );
+});
+
+test("answer submission accepts text when the allowed-reference ledger is invalid", async () => {
+  const { registered, root } = await configuredNativeTools();
+  await writeFile(
+    join(root, "run/context/trajectory-allowed-refs.json"),
+    "{not-json",
+    "utf8",
+  );
+  const evidence = "evidence:sha256:" + "a".repeat(64);
+
+  const result = await registered.find((tool) => tool.name === "grid_submit_answer").execute(
+    "submit-ledger-invalid",
+    {
+      answer_output: "答案正文仍然有效",
+      result_refs: [],
+      claim_evidence_refs: [evidence],
+      claims: [],
+    },
+  );
+
+  assert.equal(result.isError, undefined);
+  const draft = JSON.parse(await readFile(join(root, "run/answer-draft.json"), "utf8"));
+  assert.equal(draft.answer_output, "答案正文仍然有效");
+  assert.deepEqual(draft.claim_evidence_refs, []);
+  assert.equal(draft.submission_diagnostics[0].category, "answer_reference_state_unavailable");
 });
 
 test("native request capture subscribes to before_model_request only", async () => {
@@ -498,6 +561,7 @@ test("answer submission atomically writes the configured draft path", async () =
     result_refs: [],
     claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
     claims: [],
+    submission_diagnostics: [],
   });
 });
 
@@ -531,6 +595,7 @@ test("answer submission atomically writes declared result refs", async () => {
     result_refs: [resultRef],
     claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
     claims: [],
+    submission_diagnostics: [],
   });
 });
 

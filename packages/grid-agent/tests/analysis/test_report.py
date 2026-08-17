@@ -109,6 +109,68 @@ def test_report_writes_detailed_trace_page_with_safe_input_output_and_raw_link(r
     assert RESULT_REF not in detail
 
 
+def test_report_uses_native_turn_scope_for_tools_without_context_observations(
+    report_fixture: ReportFixture,
+) -> None:
+    call_id = "submit-call"
+    with report_fixture.workspace.trace_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "sequence": 9,
+                    "timestamp": "2026-08-14T00:00:02Z",
+                    "event": "pi_event",
+                    "payload": {
+                        "type": "tool_execution_start",
+                        "tool_call_id": call_id,
+                        "tool_name": "grid_submit_answer",
+                        "args": {"answer_output": "done"},
+                    },
+                }
+            )
+            + "\n"
+        )
+        stream.write(
+            json.dumps(
+                {
+                    "sequence": 10,
+                    "timestamp": "2026-08-14T00:00:03Z",
+                    "event": "pi_event",
+                    "payload": {
+                        "type": "tool_result",
+                        "tool_call_id": call_id,
+                        "capability": "grid_submit_answer",
+                        "ok": True,
+                        "result": {"accepted": True},
+                    },
+                }
+            )
+            + "\n"
+        )
+    report_fixture.workspace.events_path.write_text(
+        json.dumps(
+            {
+                "event_type": "tool.completed",
+                "scope": {
+                    "turn_id": f"{report_fixture.workspace.analysis_id}-t001",
+                    "tool_call_id": call_id,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+
+    first_turn = report.split("## 1.", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+    assert "提交本题回答（`grid_submit_answer`，完成，1.00 秒）" in first_turn
+
+
 def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: ReportFixture) -> None:
     report = render_analysis_report(
         context=report_fixture.with_audit_error(),
@@ -166,6 +228,40 @@ def test_report_renders_failed_turns_and_unresolved_limitations(report_fixture: 
     assert "执行限制 / execution limitation" not in report
     assert "## 审计复核" in report
     assert "solver unavailable" in report
+
+    failed_trace = (report_fixture.workspace.turn_path(2) / "trace.md").read_text(
+        encoding="utf-8"
+    )
+    assert "### 失败诊断" in failed_trace
+    assert "solver unavailable" in failed_trace
+
+
+def test_report_preserves_reference_kind_when_redacting_failed_reference(
+    report_fixture: ReportFixture,
+) -> None:
+    context = _append_context_event(
+        report_fixture.workspace,
+        report_fixture.context,
+        ContextEventDraft(
+            event_type="limitation.recorded",
+            turn_id=f"{report_fixture.workspace.analysis_id}-t002",
+            payload={
+                "limitation_ref": "limitation:reference-kind",
+                "message": f"declared result_ref is invalid: {EVIDENCE_REF}",
+                "refs": [EVIDENCE_REF],
+            },
+        ),
+        integrity="diagnostic",
+    )
+
+    report = render_analysis_report(
+        context=context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+
+    assert "declared result_ref is invalid: [evidence 类型引用]" in report
+    assert EVIDENCE_REF not in report
 
 
 def test_report_deduplicates_multiple_baselines_by_source(tmp_path: Path) -> None:

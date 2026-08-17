@@ -140,6 +140,46 @@ def test_claim_refs_must_be_controller_known() -> None:
         )
 
 
+def test_submission_rejects_misclassified_answer_level_references() -> None:
+    with pytest.raises(ValueError, match="result_refs must contain only result"):
+        validate_submission(
+            submission_draft(
+                result_refs=[EVIDENCE_REF],
+                claims=[
+                    {
+                        "statement": "topology fact",
+                        "category": "topology",
+                        "result_refs": [EVIDENCE_REF],
+                        "evidence_refs": [EVIDENCE_REF],
+                    }
+                ],
+            ),
+            RecordingVerifier(),
+            {EVIDENCE_REF},
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="claim_evidence_refs must contain only evidence",
+    ):
+        validate_submission(
+            submission_draft(
+                result_refs=[RESULT_REF],
+                claim_evidence_refs=[RESULT_REF],
+                claims=[
+                    {
+                        "statement": "numerical fact",
+                        "category": "numerical_result",
+                        "result_refs": [RESULT_REF],
+                        "evidence_refs": [RESULT_REF],
+                    }
+                ],
+            ),
+            RecordingVerifier(),
+            {RESULT_REF},
+        )
+
+
 def test_claim_and_submission_bounds_are_closed() -> None:
     with pytest.raises(ValidationError, match="at most 1000 characters"):
         AnswerClaim(

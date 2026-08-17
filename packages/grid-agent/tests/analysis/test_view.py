@@ -21,7 +21,7 @@ from grid_agent.analysis.models import (
     TurnRecord,
     VerifiedFact,
 )
-from grid_agent.analysis.view import ContextViewTooLarge, build_context_view, materialize_context_view
+from grid_agent.analysis.view import MAX_VIEW_BYTES, build_context_view, materialize_context_view
 
 
 CONTEXT_REF = "context:sha256:" + "1" * 64
@@ -89,7 +89,7 @@ def test_materialize_context_view_writes_canonical_json(tmp_path: Path, context_
     assert path.read_text(encoding="utf-8").endswith("\n")
 
 
-def test_context_view_raises_instead_of_truncating_provenance(context_with_large_results: AnalysisContext) -> None:
+def test_context_view_compacts_oversize_history_without_blocking(context_with_large_results: AnalysisContext) -> None:
     oversize_facts = {
         f"fact:sha256:{index:064x}": VerifiedFact(
             fact_ref=f"fact:sha256:{index:064x}",
@@ -108,8 +108,42 @@ def test_context_view_raises_instead_of_truncating_provenance(context_with_large
     }
     context = context_with_large_results.model_copy(update={"verified_facts": oversize_facts})
 
-    with pytest.raises(ContextViewTooLarge):
-        build_context_view(context)
+    view = build_context_view(context)
+
+    assert len(json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")) <= MAX_VIEW_BYTES
+    assert (
+        view.get("omitted_records")
+        or view["verified_facts"]["oversized.text"][0]["value"]["omitted_characters"] > 0
+    )
+    assert view["active_model"]["model_id"] == "ieee39"
+    assert view["constraints"]
+
+
+def test_context_view_compacts_oversize_limitations_with_a_hard_final_budget(
+    context_with_large_results: AnalysisContext,
+) -> None:
+    limitations = [
+        LimitationRecord(
+            limitation_ref=f"limitation:oversize-{index}",
+            turn_id="analysis-test-t001",
+            message=f"limitation {index}: " + "x" * 5_000,
+            refs=[RESULT_REF],
+        )
+        for index in range(20)
+    ]
+    context = context_with_large_results.model_copy(
+        update={"unresolved_limitations": limitations}
+    )
+
+    view = build_context_view(context)
+
+    encoded = json.dumps(
+        view, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    assert len(encoded) <= MAX_VIEW_BYTES
+    assert all(
+        len(item["message"]) <= 2_050 for item in view["unresolved_limitations"]
+    )
 
 
 @pytest.fixture

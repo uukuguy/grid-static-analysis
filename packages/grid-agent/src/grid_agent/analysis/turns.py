@@ -159,10 +159,30 @@ class TurnController:
                 self._submission_allowed_refs(),
             )
         except (RuntimeError, ValueError) as exc:
-            error = AnswerDraftError(str(exc))
-            self._record_answer_rejection(handle)
-            raise error from exc
-        diagnostics = self._audit_answer(claim_evidence_refs, result_refs)
+            submission = AnswerSubmission(
+                submission_id=str(draft.get("submission_id", handle.turn_id)),
+                answer_output=answer,
+                result_refs=(),
+                claim_evidence_refs=(),
+                claims=(),
+            )
+            validation_diagnostics = (
+                ReferenceDiagnostic(
+                    category="submission_metadata_invalid",
+                    severity="warning",
+                    reference="",
+                    message=f"answer metadata was not admitted: {type(exc).__name__}: {exc}",
+                    impact="The answer text was accepted; invalid structured metadata was omitted.",
+                    remediation="Review the submission metadata recorded in the answer draft.",
+                ),
+            )
+        else:
+            validation_diagnostics = ()
+        diagnostics = (
+            *_draft_diagnostics(draft),
+            *validation_diagnostics,
+            *self._audit_answer(claim_evidence_refs, result_refs),
+        )
 
         turn_path = self._workspace.turn_path(handle.ordinal)
         archived_draft_path = turn_path / "answer-draft.json"
@@ -187,8 +207,8 @@ class TurnController:
                     "answer_path": str(answer_path.relative_to(self._workspace.root_path)),
                     "answer_sha256": sha256(answer_bytes).hexdigest(),
                     "answer_draft_path": str(archived_draft_path.relative_to(self._workspace.root_path)),
-                    "result_refs": list(result_refs),
-                    "claim_evidence_refs": list(claim_evidence_refs),
+                    "result_refs": list(submission.result_refs),
+                    "claim_evidence_refs": list(submission.claim_evidence_refs),
                 },
             )
         )
@@ -413,6 +433,40 @@ def _require_string_list(draft: Mapping[str, Any], key: str) -> tuple[str, ...]:
     ):
         raise AnswerDraftError(f"grid_submit_answer draft must include {key}")
     return tuple(value)
+
+
+def _draft_diagnostics(draft: Mapping[str, Any]) -> tuple[ReferenceDiagnostic, ...]:
+    value = draft.get("submission_diagnostics", ())
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return (
+            ReferenceDiagnostic(
+                category="submission_diagnostics_invalid",
+                severity="warning",
+                reference="",
+                message="submission diagnostics were malformed and could not be projected",
+                impact="The answer text was accepted without those diagnostic details.",
+                remediation="Inspect the archived answer draft for the raw value.",
+            ),
+        )
+    diagnostics: list[ReferenceDiagnostic] = []
+    for item in value[:50]:
+        if not isinstance(item, Mapping):
+            continue
+        category = item.get("category")
+        message = item.get("message")
+        if not isinstance(category, str) or not category or not isinstance(message, str) or not message:
+            continue
+        diagnostics.append(
+            ReferenceDiagnostic(
+                category=category,
+                severity="error" if item.get("severity") == "error" else "warning",
+                reference="",
+                message=message,
+                impact="The answer text was accepted after metadata normalization.",
+                remediation="Review the normalized structured references in the archived answer draft.",
+            )
+        )
+    return tuple(diagnostics)
 
 
 def _write_audit(path: Path, diagnostics: tuple[ReferenceDiagnostic, ...]) -> None:

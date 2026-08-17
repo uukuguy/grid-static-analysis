@@ -132,6 +132,8 @@ class NativeCaptureAdapter:
         self._last_request_index = 0
         self._seen_requests: set[str] = set()
         self._current_request: _RequestState | None = None
+        self._requests: list[_RequestState] = []
+        self._tool_round_request: _RequestState | None = None
         self._tool_calls: dict[str, _ToolState] = {}
         self._awaiting_tool_round_completion = False
         self._last_retry_attempt: int | None = None
@@ -145,6 +147,8 @@ class NativeCaptureAdapter:
         self._turn_id = turn_id
         self._step_ordinal = 0
         self._current_request = None
+        self._requests.clear()
+        self._tool_round_request = None
         self._tool_calls.clear()
         self._awaiting_tool_round_completion = False
         self._last_retry_attempt = None
@@ -153,10 +157,13 @@ class NativeCaptureAdapter:
     def drain_model_requests(self) -> None:
         turn_id = self._require_turn()
         for path in sorted(self.workspace.requests_path.glob("*/input.json")):
+            # The directory name is the request identity by contract.  Check
+            # it before loading the document so the high-frequency poll never
+            # reparses and rehashes the complete historical conversation.
+            if path.parent.name in self._seen_requests:
+                continue
             document = self._load_request_document(path)
             request_id = document.request_id
-            if request_id in self._seen_requests:
-                continue
             if document.turn_id != turn_id:
                 continue
             request_index = document.request_index
@@ -166,12 +173,6 @@ class NativeCaptureAdapter:
                 )
             if path.parent.name != request_id:
                 raise CaptureIntegrityError("model request path does not match request_id")
-            if self._current_request is not None and (
-                not self._current_request.settled
-                or self._awaiting_tool_round_completion
-            ):
-                break
-
             pointer = self.artifacts.register_existing(
                 "request-input", request_id, path
             )
@@ -189,6 +190,9 @@ class NativeCaptureAdapter:
                     payload={
                         "artifact_ref": pointer.ref,
                         "request_index": request_index,
+                        "semantic_digest_verified": document.semantic_digest_verified,
+                        "semantic_request_sha256": document.semantic_request_sha256,
+                        "expected_semantic_request_sha256": document.expected_semantic_request_sha256,
                     },
                     causation=(
                         Causation(parent_sequence=document.source_event_sequences[-1])
@@ -198,7 +202,7 @@ class NativeCaptureAdapter:
                 )
             )
             self._write_commit_acknowledgement(document, pointer, event.sequence)
-            self._current_request = _RequestState(
+            request = _RequestState(
                 request_id=request_id,
                 step_id=step_id,
                 request_index=request_index,
@@ -207,6 +211,8 @@ class NativeCaptureAdapter:
                 provider=document.provider,
                 model=document.model,
             )
+            self._current_request = request
+            self._requests.append(request)
             self._last_request_index = request_index
             self._seen_requests.add(request_id)
 
@@ -235,7 +241,8 @@ class NativeCaptureAdapter:
         if event_type == "agent_end":
             provider_error = _provider_error(event)
             if provider_error is not None and (
-                self._current_request is None or not self._current_request.settled
+                self._current_request is None
+                or any(not request.settled for request in self._requests)
             ):
                 self._fail_response("provider_error", provider_error)
             return
@@ -259,12 +266,14 @@ class NativeCaptureAdapter:
 
     def end_turn(self) -> None:
         self._require_turn()
-        if self._current_request is not None and not self._current_request.settled:
+        while any(not request.settled for request in self._requests):
             self._fail_response(
                 "interrupted", "turn ended before the provider request settled"
             )
         self._turn_id = None
         self._current_request = None
+        self._requests.clear()
+        self._tool_round_request = None
         self._tool_calls.clear()
         self._awaiting_tool_round_completion = False
         self._last_retry_attempt = None
@@ -326,6 +335,8 @@ class NativeCaptureAdapter:
         )
         request.settled = True
         self._awaiting_tool_round_completion = stop_reason == "toolUse"
+        if self._awaiting_tool_round_completion:
+            self._tool_round_request = request
 
     def _fail_response(self, error_type: str, message: str) -> None:
         request = self._require_unsettled_request()
@@ -340,6 +351,7 @@ class NativeCaptureAdapter:
         )
         request.settled = True
         self._awaiting_tool_round_completion = False
+        self._tool_round_request = None
 
     def _record_retry_started(self, event: Mapping[str, Any]) -> None:
         request = self._require_request()
@@ -393,7 +405,7 @@ class NativeCaptureAdapter:
         )
 
     def _record_tool_start(self, event: Mapping[str, Any]) -> None:
-        request = self._require_request()
+        request = self._tool_round_request or self._require_request()
         tool_call_id = self._required_string(event, "tool_call_id")
         if tool_call_id in self._tool_calls:
             raise CaptureIntegrityError(f"duplicate tool_call_id: {tool_call_id}")
@@ -441,16 +453,11 @@ class NativeCaptureAdapter:
         )
 
     def _record_tool_completion(self, event: Mapping[str, Any]) -> None:
-        request = self._require_request()
         tool_call_id = self._required_string(event, "tool_call_id")
         tool = self._tool_calls.get(tool_call_id)
         if tool is None:
             raise CaptureIntegrityError(
                 f"tool_call_id has no matching tool start: {tool_call_id}"
-            )
-        if tool.request_id != request.request_id:
-            raise CaptureIntegrityError(
-                f"tool_call_id belongs to a different request: {tool_call_id}"
             )
         capability = self._required_string(event, "capability")
         ok = event.get("ok")
@@ -506,6 +513,7 @@ class NativeCaptureAdapter:
         del self._tool_calls[tool_call_id]
         if not self._tool_calls:
             self._awaiting_tool_round_completion = False
+            self._tool_round_request = None
 
     def _validated_decision(
         self,
@@ -599,7 +607,10 @@ class NativeCaptureAdapter:
         return tuple(result_refs), tuple(evidence_refs)
 
     def _observe_first_token(self, value: object) -> None:
-        request = self._current_request
+        request = next(
+            (candidate for candidate in self._requests if not candidate.settled),
+            None,
+        )
         if (
             request is not None
             and not request.settled
@@ -611,15 +622,29 @@ class NativeCaptureAdapter:
 
     def _load_request_document(self, path: Path) -> CanonicalModelRequestDocument:
         try:
+            display_path = path.relative_to(self.workspace.root_path).as_posix()
+        except ValueError:
+            display_path = path.name
+        location = f"request_id={path.parent.name} input={display_path}"
+        try:
             document = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise CaptureIntegrityError(f"model request is not readable JSON: {path}") from exc
+            raise CaptureIntegrityError(
+                f"model request validation failed ({location}): unreadable JSON"
+            ) from exc
         if not isinstance(document, Mapping):
-            raise CaptureIntegrityError("model request must be a JSON object")
+            raise CaptureIntegrityError(
+                f"model request validation failed ({location}): request must be a JSON object"
+            )
         try:
-            return validate_canonical_model_request_document(document)
+            return validate_canonical_model_request_document(
+                document,
+                require_digest_match=False,
+            )
         except CanonicalRequestValidationError as exc:
-            raise CaptureIntegrityError(str(exc)) from exc
+            raise CaptureIntegrityError(
+                f"model request validation failed ({location}): {exc}"
+            ) from exc
 
     def _write_commit_acknowledgement(
         self,
@@ -869,9 +894,13 @@ class NativeCaptureAdapter:
         return self._current_request
 
     def _require_unsettled_request(self) -> _RequestState:
-        request = self._require_request()
-        if request.settled:
-            raise CaptureIntegrityError("current provider request is already settled")
+        self._require_turn()
+        request = next(
+            (candidate for candidate in self._requests if not candidate.settled),
+            None,
+        )
+        if request is None:
+            raise CaptureIntegrityError("capture has no unsettled provider request")
         return request
 
     def _request_scope(self, request: _RequestState) -> RunScope:

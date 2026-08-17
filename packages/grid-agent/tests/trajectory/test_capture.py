@@ -94,6 +94,24 @@ def capture_with_active_request(
     return recorder, adapter, workspace
 
 
+def test_request_poll_skips_seen_documents_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _recorder, adapter, _workspace = capture_with_active_request(tmp_path)
+    loaded: list[Path] = []
+    original = adapter._load_request_document
+
+    def track_load(path: Path):  # type: ignore[no-untyped-def]
+        loaded.append(path)
+        return original(path)
+
+    monkeypatch.setattr(adapter, "_load_request_document", track_load)
+
+    adapter.drain_model_requests()
+
+    assert loaded == []
+
+
 def semantic_request_fixture(
     *,
     provider: str = "scripted",
@@ -239,7 +257,7 @@ def test_model_request_commit_ack_uses_verified_declared_digest_after_event_appe
     assert response["model"] == "deepseek-v4"
 
 
-def test_model_request_digest_mismatch_does_not_ack_or_advance_state(
+def test_model_request_digest_mismatch_is_diagnostic_and_does_not_block_provider(
     tmp_path: Path,
 ) -> None:
     recorder, adapter, workspace = native_capture_fixture(tmp_path)
@@ -252,11 +270,14 @@ def test_model_request_digest_mismatch_does_not_ack_or_advance_state(
         semantic_request_sha256="f" * 64,
     )
 
-    with pytest.raises(CaptureIntegrityError, match="semantic_request_sha256"):
-        adapter.drain_model_requests()
+    adapter.drain_model_requests()
 
-    assert not acknowledgement_path(workspace, request_id).exists()
-    assert events(recorder) == ()
+    assert acknowledgement_path(workspace, request_id).exists()
+    started = events(recorder)[0]
+    assert started.event_type == "model.request.started"
+    assert started.payload["semantic_digest_verified"] is False
+    assert started.payload["semantic_request_sha256"] == "f" * 64
+    assert started.payload["expected_semantic_request_sha256"] != "f" * 64
 
 
 def test_malformed_model_request_does_not_ack_or_advance_state(
@@ -273,8 +294,12 @@ def test_malformed_model_request_does_not_ack_or_advance_state(
         encoding="utf-8",
     )
 
-    with pytest.raises(CaptureIntegrityError, match="runtime"):
+    with pytest.raises(CaptureIntegrityError) as captured:
         adapter.drain_model_requests()
+
+    assert request_id in str(captured.value)
+    assert f"requests/{request_id}/input.json" in str(captured.value)
+    assert "runtime" in str(captured.value)
 
     assert not acknowledgement_path(workspace, request_id).exists()
     assert events(recorder) == ()

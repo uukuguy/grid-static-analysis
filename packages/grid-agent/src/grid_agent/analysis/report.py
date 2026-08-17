@@ -33,7 +33,7 @@ def render_analysis_report(
     diagnostics: list[str] = []
     ledger = _read_context_events(workspace.context_events_path)
     diagnostics.extend(ledger.diagnostics)
-    trace = _read_trace_steps(workspace.trace_path)
+    trace = _read_trace_steps(workspace.trace_path, workspace.events_path)
     diagnostics.extend(trace.diagnostics)
     trace_pages = _write_turn_trace_pages(context, workspace, trace.steps, diagnostics)
     counts = {status: sum(turn.status == status for turn in context.turns) for status in ("success", "failed")}
@@ -59,6 +59,7 @@ def render_analysis_report(
 @dataclass(frozen=True, slots=True)
 class _TraceStep:
     sequence: int
+    turn_id: str | None
     tool_call_id: str | None
     capability: str
     args: Mapping[str, Any]
@@ -299,8 +300,23 @@ def _write_turn_trace_pages(
     paths: dict[str, str] = {}
     for turn in context.turns:
         path = workspace.turn_path(turn.ordinal) / "trace.md"
+        limitations = tuple(
+            item
+            for item in context.unresolved_limitations
+            if item.turn_id == turn.turn_id
+        )
         try:
-            _write_text_atomic(path, _render_turn_trace_page(turn, _steps_for_turn(context, turn.turn_id, trace_steps), workspace, path, diagnostics))
+            _write_text_atomic(
+                path,
+                _render_turn_trace_page(
+                    turn,
+                    _steps_for_turn(context, turn.turn_id, trace_steps),
+                    limitations,
+                    workspace,
+                    path,
+                    diagnostics,
+                ),
+            )
         except OSError:
             diagnostics.append(f"回合 {turn.ordinal} 详细执行轨迹不可写入")
             continue
@@ -311,11 +327,24 @@ def _write_turn_trace_pages(
 def _render_turn_trace_page(
     turn: TurnRecord,
     steps: Sequence[_TraceStep],
+    limitations: Sequence[LimitationRecord],
     workspace: AnalysisWorkspace,
     path: Path,
     diagnostics: list[str],
 ) -> str:
     lines = ["# 详细执行轨迹", "", f"## {turn.ordinal}. {_md(turn.instruction)}", ""]
+    if limitations:
+        lines.extend(
+            [
+                "### 失败诊断",
+                "",
+                *(
+                    f"- {_reader_diagnostic(limitation.message)}"
+                    for limitation in limitations
+                ),
+                "",
+            ]
+        )
     if not steps:
         lines.append("未观察到与本题关联的领域工具调用。")
         return "\n".join(lines) + "\n"
@@ -416,12 +445,19 @@ def _steps_for_turn(context: AnalysisContext, turn_id: str, trace_steps: Sequenc
             call_ids.add(str(producer["tool_call_id"]))
         if isinstance(producer.get("trace_sequence"), int):
             sequences.add(int(producer["trace_sequence"]))
-    return tuple(step for step in trace_steps if step.tool_call_id in call_ids or step.sequence in sequences)
+    return tuple(
+        step
+        for step in trace_steps
+        if step.turn_id == turn_id
+        or step.tool_call_id in call_ids
+        or step.sequence in sequences
+    )
 
 
-def _read_trace_steps(path: Path) -> _TraceRead:
+def _read_trace_steps(path: Path, native_events_path: Path) -> _TraceRead:
     if not path.is_file():
         return _TraceRead((), ("调用轨迹不可用：trace/events.jsonl 缺失",))
+    turns_by_call = _native_turns_by_call(native_events_path)
     starts: dict[str, tuple[int, datetime]] = {}
     steps: list[_TraceStep] = []
     diagnostics: list[str] = []
@@ -451,13 +487,26 @@ def _read_trace_steps(path: Path) -> _TraceRead:
             if isinstance(call_id, str) and call_id in starts:
                 # Arguments are recovered from the matching start record below when available.
                 pass
-            steps.append(_TraceStep(int(event.get("sequence", 0)), call_id if isinstance(call_id, str) else None, str(payload["capability"]), args, result, payload.get("ok") is True, duration))
+            normalized_call_id = call_id if isinstance(call_id, str) else None
+            steps.append(
+                _TraceStep(
+                    int(event.get("sequence", 0)),
+                    turns_by_call.get(normalized_call_id) if normalized_call_id is not None else None,
+                    normalized_call_id,
+                    str(payload["capability"]),
+                    args,
+                    result,
+                    payload.get("ok") is True,
+                    duration,
+                )
+            )
     # Populate arguments in a second pass without trusting result payloads.
     args_by_call = _trace_args_by_call(raw_lines)
     return _TraceRead(
         tuple(
             step.__class__(
                 step.sequence,
+                step.turn_id,
                 step.tool_call_id,
                 step.capability,
                 args_by_call.get(step.tool_call_id, {}) if step.tool_call_id is not None else {},
@@ -469,6 +518,34 @@ def _read_trace_steps(path: Path) -> _TraceRead:
         ),
         tuple(diagnostics),
     )
+
+
+def _native_turns_by_call(path: Path) -> dict[str, str]:
+    """Recover authoritative turn ownership from the native event scope.
+
+    Compatibility observations are intentionally selective, so they cannot be
+    used as the membership index for a complete execution narrative.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return {}
+    turns: dict[str, str] = {}
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        scope = event.get("scope") if isinstance(event, Mapping) else None
+        if not isinstance(scope, Mapping):
+            continue
+        call_id = scope.get("tool_call_id")
+        turn_id = scope.get("turn_id")
+        if isinstance(call_id, str) and isinstance(turn_id, str):
+            turns[call_id] = turn_id
+    return turns
 
 
 def _trace_args_by_call(lines: Sequence[str]) -> dict[str, Mapping[str, Any]]:
@@ -863,7 +940,18 @@ def _reader_answer(answer: str) -> str:
 
 
 def _reader_diagnostic(message: str) -> str:
-    return _redact_internal_refs(message)
+    labeled = re.sub(
+        r"\b(context|revision|result|evidence|observation|constraint):"
+        r"sha256:[0-9a-f]{4,64}(?:\.\.\.)?",
+        lambda match: f"[{match.group(1)} 类型引用]",
+        message,
+    )
+    labeled = re.sub(
+        r"\basset:([^\s:]+):sha256:[0-9a-f]{4,64}",
+        lambda match: f"[asset/{match.group(1)} 类型引用]",
+        labeled,
+    )
+    return _redact_internal_refs(labeled)
 
 
 def _redact_internal_refs(value: str) -> str:

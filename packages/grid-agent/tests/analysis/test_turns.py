@@ -96,15 +96,44 @@ def test_turn_controller_archives_audit_diagnostics_without_mutating_answer(harn
     completed = turns.finalize(turn, duration_seconds=0.5)
 
     assert completed.answer_output == "保持原文 result:sha256:" + "a" * 64
-    assert completed.audit_diagnostics == (diagnostic,)
+    assert diagnostic in completed.audit_diagnostics
     assert json.loads((harness.workspace.turn_path(1) / "answer.json").read_text(encoding="utf-8"))[
         "answer_output"
     ] == completed.answer_output
     assert json.loads(harness.workspace.answers_path.read_text(encoding="utf-8"))["answer_output"] == completed.answer_output
     audit = json.loads((harness.workspace.turn_path(1) / "answer-audit.json").read_text(encoding="utf-8"))
-    assert audit["diagnostics"][0]["message"] == diagnostic.message
+    assert any(item["message"] == diagnostic.message for item in audit["diagnostics"])
     assert harness.store.snapshot.diagnostics[-1].event_type == "audit.diagnostic.recorded"
     assert harness.store.snapshot.turns[-1].status == "success"
+
+
+def test_turn_controller_projects_submission_normalization_diagnostics(
+    harness: Harness,
+) -> None:
+    turn = harness.turns.start(1, "引用归类")
+    write_draft(
+        harness.workspace.active_answer_draft_path,
+        turn,
+        answer="答案正文照常接受",
+    )
+    draft = json.loads(
+        harness.workspace.active_answer_draft_path.read_text(encoding="utf-8")
+    )
+    draft["submission_diagnostics"] = [
+        {
+            "category": "misclassified_answer_reference",
+            "severity": "warning",
+            "message": "result_refs contained an evidence reference; it was moved",
+        }
+    ]
+    write_payload(harness.workspace.active_answer_draft_path, draft)
+
+    completed = harness.turns.finalize(turn, duration_seconds=0.5)
+
+    assert completed.status == "success"
+    assert completed.answer_output == "答案正文照常接受"
+    assert completed.audit_diagnostics[0].category == "misclassified_answer_reference"
+    assert harness.store.snapshot.diagnostics[-1].message.endswith("it was moved")
 
 
 def test_turn_controller_missing_draft_fails_turn_records_limitation_and_incremental_answer(harness: Harness) -> None:
@@ -305,8 +334,8 @@ def test_turn_finalization_emits_claims_only_for_accepted_submission(tmp_path: P
     assert claim.causation.parent_sequence == answer.sequence
 
 
-def test_rejected_submission_emits_rejection_without_claim_content(tmp_path: Path) -> None:
-    controller, recorder, _store, workspace, handle, _result_ref, _evidence_ref = answer_fixture(tmp_path)
+def test_invalid_submission_metadata_is_diagnostic_without_rejecting_answer(tmp_path: Path) -> None:
+    controller, recorder, store, workspace, handle, _result_ref, _evidence_ref = answer_fixture(tmp_path)
     write_bound_draft(
         workspace.active_answer_draft_path,
         handle,
@@ -320,15 +349,43 @@ def test_rejected_submission_emits_rejection_without_claim_content(tmp_path: Pat
         ],
     )
 
-    with pytest.raises(AnswerDraftError, match="simulator-backed claim"):
-        controller.finalize(handle, duration_seconds=1.0)
+    completed = controller.finalize(handle, duration_seconds=1.0)
 
     events = RunEventReader(recorder.events_path).read_prefix().events
+    assert completed.status == "success"
     assert not any(event.event_type == "business.claim.declared" for event in events)
-    rejection = next(event for event in events if event.event_type == "answer.rejected")
-    assert set(rejection.payload) == {"error_type", "message"}
-    assert "unsupported" not in json.dumps(rejection.payload)
-    assert not any(event.event_type == "answer.submitted" for event in events)
+    assert any(event.event_type == "answer.submitted" for event in events)
+    assert not any(event.event_type == "answer.rejected" for event in events)
+    assert store.snapshot.diagnostics[-1].message.startswith(
+        "answer metadata was not admitted"
+    )
+
+
+def test_invalid_submission_metadata_does_not_publish_raw_reference_lineage(
+    tmp_path: Path,
+) -> None:
+    controller, recorder, _store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
+    write_bound_draft(
+        workspace.active_answer_draft_path,
+        handle,
+        claims=[
+            {
+                "statement": "unsupported",
+                "category": "numerical_result",
+                "result_refs": [],
+                "evidence_refs": [],
+            }
+        ],
+        result_refs=[result_ref],
+        claim_evidence_refs=[evidence_ref],
+    )
+
+    controller.finalize(handle, duration_seconds=1.0)
+
+    events = RunEventReader(recorder.events_path).read_prefix().events
+    answer = next(event for event in events if event.event_type == "answer.submitted")
+    assert answer.payload["result_refs"] == []
+    assert answer.payload.get("claim_evidence_refs", []) == []
 
 
 def test_answer_commit_failure_emits_no_accepted_claims(

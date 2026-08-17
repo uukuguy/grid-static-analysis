@@ -317,36 +317,30 @@ function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined, all
       ),
     }),
     async execute(_id, params) {
+      let known;
+      const referenceStateDiagnostics = [];
       if (allowedRefsPath !== undefined) {
-        let known;
         try {
           known = await readAllowedRefs(allowedRefsPath);
         } catch (error) {
-          return toolError(
-            { code: "answer_reference_state_invalid", phase: "resolve", message: error instanceof Error ? error.message : String(error) },
-            "grid_submit_answer",
-          );
-        }
-        const references = [
-          ...params.result_refs,
-          ...params.claim_evidence_refs,
-          ...params.claims.flatMap((claim) => [...claim.result_refs, ...claim.evidence_refs]),
-        ];
-        if (references.some((reference) => !known.has(reference))) {
-          return toolError(
-            { code: "unknown_answer_reference", phase: "resolve", message: "answer references must be known in the current run" },
-            "grid_submit_answer",
-          );
+          known = new Set();
+          referenceStateDiagnostics.push({
+            category: "answer_reference_state_unavailable",
+            severity: "warning",
+            message: `answer reference state was unavailable; structured references were omitted: ${error instanceof Error ? error.message : String(error)}`,
+          });
         }
       }
+      const normalized = normalizeAnswerSubmission(params, known, referenceStateDiagnostics);
       const activeTurn = activeTurnPath === undefined ? {} : await readActiveTurn(activeTurnPath);
       const payload = {
         ...activeTurn,
         submission_id: randomUUID(),
         answer_output: params.answer_output,
-        result_refs: params.result_refs,
-        claim_evidence_refs: params.claim_evidence_refs,
-        claims: params.claims,
+        result_refs: normalized.resultRefs,
+        claim_evidence_refs: normalized.evidenceRefs,
+        claims: normalized.claims,
+        submission_diagnostics: normalized.diagnostics,
       };
       await writeJsonAtomic(answerDraftPath, payload);
       return {
@@ -356,11 +350,99 @@ function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined, all
           capability: "grid_submit_answer",
           ok: true,
           result: payload,
-          evidence_refs: params.claim_evidence_refs,
+          evidence_refs: normalized.evidenceRefs,
         },
       };
     },
   });
+}
+
+function normalizeAnswerSubmission(params, known, initialDiagnostics = []) {
+  const diagnostics = [...initialDiagnostics];
+  const resultRefs = new Set();
+  const evidenceRefs = new Set();
+
+  const admit = (reference, requestedField) => {
+    const kind = referenceKind(reference);
+    if (kind === undefined) {
+      diagnostics.push({
+        category: "invalid_answer_reference",
+        severity: "warning",
+        message: `${requestedField} contained an unsupported reference; it was omitted`,
+      });
+      return undefined;
+    }
+    if (known !== undefined && !known.has(reference)) {
+      diagnostics.push({
+        category: "unknown_answer_reference",
+        severity: "warning",
+        message: `${requestedField} contained a reference not observed in the current run; it was omitted`,
+      });
+      return undefined;
+    }
+    if ((requestedField.includes("result") && kind !== "result") ||
+        (requestedField.includes("evidence") && kind !== "evidence")) {
+      diagnostics.push({
+        category: "misclassified_answer_reference",
+        severity: "warning",
+        message: `${requestedField} contained a ${kind} reference; it was moved to the matching field`,
+      });
+    }
+    (kind === "result" ? resultRefs : evidenceRefs).add(reference);
+    return { kind, reference };
+  };
+
+  for (const reference of params.result_refs) admit(reference, "result_refs");
+  for (const reference of params.claim_evidence_refs) admit(reference, "claim_evidence_refs");
+  const claims = [];
+  for (const claim of params.claims) {
+    const claimResults = new Set();
+    const claimEvidence = new Set();
+    for (const reference of claim.result_refs) {
+      const admitted = admit(reference, "claims[].result_refs");
+      if (admitted?.kind === "result") claimResults.add(admitted.reference);
+      if (admitted?.kind === "evidence") claimEvidence.add(admitted.reference);
+    }
+    for (const reference of claim.evidence_refs) {
+      const admitted = admit(reference, "claims[].evidence_refs");
+      if (admitted?.kind === "result") claimResults.add(admitted.reference);
+      if (admitted?.kind === "evidence") claimEvidence.add(admitted.reference);
+    }
+    if (claim.category === "offline_information") {
+      if (claimResults.size > 0 || claimEvidence.size > 0) {
+        diagnostics.push({
+          category: "offline_claim_lineage_removed",
+          severity: "warning",
+          message: "offline_information claim references were omitted",
+        });
+      }
+      claims.push({ ...claim, result_refs: [], evidence_refs: [] });
+    } else if (claimResults.size === 0 && claimEvidence.size === 0) {
+      diagnostics.push({
+        category: "unsupported_structured_claim",
+        severity: "warning",
+        message: "a simulator-backed structured claim had no usable current-run reference and was omitted",
+      });
+    } else {
+      claims.push({
+        ...claim,
+        result_refs: [...claimResults],
+        evidence_refs: [...claimEvidence],
+      });
+    }
+  }
+  return {
+    resultRefs: [...resultRefs],
+    evidenceRefs: [...evidenceRefs],
+    claims,
+    diagnostics,
+  };
+}
+
+function referenceKind(reference) {
+  if (/^result:sha256:[0-9a-f]{64}$/.test(reference)) return "result";
+  if (/^evidence:sha256:[0-9a-f]{64}$/.test(reference)) return "evidence";
+  return undefined;
 }
 
 function decisionValidationError(params) {

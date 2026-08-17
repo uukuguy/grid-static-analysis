@@ -169,8 +169,17 @@ def _record_answer_submission(state: AnalysisContext, draft: ContextEventDraft) 
     if not isinstance(claimed_refs, list) or not all(isinstance(item, str) for item in claimed_refs):
         raise ContextTransitionError("answer.submitted claim_evidence_refs must be strings")
     # Submission is accepted independently of audit findings; unknown claim
-    # references are recorded by the subsequent diagnostic events.
-    return state
+    # references are recorded by the subsequent diagnostic events.  Known
+    # references are dependency edges of this answer, not newly produced
+    # artifacts, and must survive into the finalized turn/report.
+    known_refs = set(state.baselines) | set(state.results) | set(state.evidence)
+    consumed_refs = [
+        reference
+        for reference in (*result_refs, *claimed_refs)
+        if reference in known_refs
+    ]
+    current_turn = _merge_turn_refs(turn, consumed_refs=consumed_refs)
+    return state.model_copy(update={"current_turn": current_turn})
 
 
 def _register_result(state: AnalysisContext, draft: ContextEventDraft) -> AnalysisContext:

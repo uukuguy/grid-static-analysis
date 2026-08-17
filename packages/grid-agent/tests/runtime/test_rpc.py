@@ -480,6 +480,44 @@ def test_rpc_surfaces_pi_capture_fatal_exit_instead_of_generic_eof(
         client.stop()
 
 
+def test_rpc_preserves_capture_fatal_diagnostic_without_legacy_marker(
+    tmp_path: Path,
+) -> None:
+    fake = tmp_path / "fake_pi_capture_detail.py"
+    fake.write_text(
+        "import json,sys\n"
+        "json.loads(input())\n"
+        "print('model request capture failed: invalid acknowledgement request_id', file=sys.stderr, flush=True)\n"
+        "raise SystemExit(86)\n",
+        encoding="utf-8",
+    )
+    command = PiCommand(
+        argv=(sys.executable, str(fake)),
+        identity=PiRuntimeIdentity(
+            path=fake,
+            source="explicit_override",
+            package_version="0.80.6",
+            lock_sha256="lock",
+        ),
+    )
+    workspace = RunWorkspace.create(tmp_path / "runs")
+    client = PiRpcClient(
+        command,
+        workspace,
+        JsonlTraceWriter(workspace.events_path),
+    )
+
+    client.start()
+    try:
+        with pytest.raises(
+            CaptureIntegrityError,
+            match="invalid acknowledgement request_id",
+        ):
+            client.prompt_and_wait("question")
+    finally:
+        client.stop()
+
+
 def test_rpc_surfaces_provider_error_from_agent_end(tmp_path: Path) -> None:
     fake = tmp_path / "fake_pi.py"
     fake.write_text(
@@ -593,10 +631,10 @@ def test_rpc_polls_model_request_commits_while_pi_is_blocked(
         " with provider_count_path.open('a',encoding='utf-8') as stream: stream.write(document['request_id']+'\\n')\n"
         "commit_request(documents[0])\n"
         "emit({'type':'response','command':'prompt','success':True})\n"
+        "commit_request(documents[1])\n"
         "emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'toolCall','id':'call-1','name':'grid_context_open','arguments':{}}],'stopReason':'toolUse'}})\n"
         "emit({'type':'tool_execution_start','toolCallId':'call-1','toolName':'grid_context_open','args':{}})\n"
         "emit({'type':'tool_execution_end','toolCallId':'call-1','toolName':'grid_context_open','isError':False,'result':{'details':{'event':'tool_result','capability':'context.open','ok':True,'result':{},'evidence_refs':[]}}})\n"
-        "commit_request(documents[1])\n"
         "emit({'type':'response','command':'prompt','success':True})\n"
         "emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'answer'}],'stopReason':'stop'}})\n"
         "emit({'type':'text_delta','text':'answer'})\n"
@@ -628,12 +666,16 @@ def test_rpc_polls_model_request_commits_while_pi_is_blocked(
     assert provider_invocations == ["analysis-test-t001-r001", "analysis-test-t001-r002"]
     assert [event.scope.request_id for event in started] == provider_invocations
     assert len({event.payload["artifact_ref"] for event in started}) == 2
+    tool_events = [event for event in recorded if event.event_type.startswith("tool.")]
+    assert {event.scope.request_id for event in tool_events} == {
+        "analysis-test-t001-r001"
+    }
     assert [event.event_type for event in recorded] == [
+        "model.request.started",
         "model.request.started",
         "model.response.completed",
         "tool.started",
         "tool.completed",
-        "model.request.started",
         "model.response.completed",
     ]
 

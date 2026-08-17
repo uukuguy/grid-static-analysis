@@ -69,6 +69,15 @@ def test_n_minus_one_uses_stable_branch_ref_and_reports_overload_evidence(grid, 
     assert all(item["constraint_ref"].startswith("constraint:sha256:") for item in threshold_violations)
     assert all(item["constraint_source"] == "model" for item in threshold_violations)
 
+    loaded = grid.call("evidence.get", {"evidence_ref": scenario["evidence_ref"]})
+    assert loaded["document"]["evidence_type"] == "contingency_scenario"
+    assert loaded["document"]["facts"]["min_vm_pu"] == pytest.approx(
+        scenario["min_vm_pu"]
+    )
+    assert loaded["document"]["facts"]["constraint_evaluation"] == scenario[
+        "constraint_evaluation"
+    ]
+
 
 def test_n_minus_one_rejects_uncontracted_threshold_argument(grid, context_ref: str, line_refs: list[str]) -> None:
     error = grid.call_error(

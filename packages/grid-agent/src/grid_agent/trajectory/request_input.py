@@ -56,10 +56,14 @@ class CanonicalModelRequestDocument:
     provider: str
     model: str
     semantic_request_sha256: str
+    expected_semantic_request_sha256: str
+    semantic_digest_verified: bool
 
 
 def validate_canonical_model_request_document(
     document: Mapping[str, Any],
+    *,
+    require_digest_match: bool = True,
 ) -> CanonicalModelRequestDocument:
     if document.get("schema_version") != "grid-model-request-input/2.0":
         raise CanonicalRequestValidationError("model request schema_version is invalid")
@@ -105,7 +109,7 @@ def validate_canonical_model_request_document(
             "semantic_request_sha256 must be a sha256 digest"
         )
     expected_digest = semantic_request_sha256(semantic_request)
-    if supplied_digest != expected_digest:
+    if require_digest_match and supplied_digest != expected_digest:
         raise CanonicalRequestValidationError(
             "semantic_request_sha256 does not match semantic_request"
         )
@@ -118,6 +122,8 @@ def validate_canonical_model_request_document(
         provider=_required_string(model, "provider"),
         model=_required_string(model, "id"),
         semantic_request_sha256=supplied_digest,
+        expected_semantic_request_sha256=expected_digest,
+        semantic_digest_verified=supplied_digest == expected_digest,
     )
 
 
@@ -145,11 +151,42 @@ def semantic_request_sha256(value: object) -> str:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
-    # Pi writes this artifact with JSON.stringify().  Python retains a leading
-    # zero in exponent padding (1e-08), while JavaScript emits 1e-8.  Digest
-    # the shared wire representation, not Python's display convention.
-    encoded = re.sub(rb"e([+-])0+(\d+)", rb"e\1\2", encoded)
+    encoded = _normalize_json_number_exponents(encoded)
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _normalize_json_number_exponents(encoded: bytes) -> bytes:
+    """Match JSON.stringify exponent padding without modifying JSON strings."""
+    output = bytearray()
+    index = 0
+    in_string = False
+    escaped = False
+    while index < len(encoded):
+        byte = encoded[index]
+        if in_string:
+            output.append(byte)
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+            index += 1
+            continue
+        if byte == 0x22:
+            in_string = True
+            output.append(byte)
+            index += 1
+            continue
+        if byte == 0x65 and index + 2 < len(encoded) and encoded[index + 1] in (0x2B, 0x2D):
+            output.extend(encoded[index : index + 2])
+            index += 2
+            while index + 1 < len(encoded) and encoded[index] == 0x30 and 0x30 <= encoded[index + 1] <= 0x39:
+                index += 1
+            continue
+        output.append(byte)
+        index += 1
+    return bytes(output)
 
 
 def _validate_runtime(value: object) -> None:

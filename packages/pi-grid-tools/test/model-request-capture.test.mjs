@@ -41,83 +41,20 @@ test("captures a canonical v2 model request from before_model_request only", asy
   assert.equal(JSON.stringify(request).includes("private chain"), false);
 });
 
-test("blocks provider continuation until a correlated commit acknowledgement is durable", async () => {
+test("durably captures the request without waiting for the observer acknowledgement", async () => {
   const root = await makeModelRequestFixture();
   const handlers = new Map();
   configureModelRequestCapture(
     { on: (name, handler) => handlers.set(name, handler) },
     fixturePaths(root, { acknowledgements: true }),
   );
-  let providerEntered = false;
+  const startedAt = performance.now();
+  await handlers.get("before_model_request")(modelRequestEvent());
 
-  const provider = handlers.get("before_model_request")(modelRequestEvent()).then(() => {
-    providerEntered = true;
-  });
+  assert.ok(performance.now() - startedAt < 500);
   const request = await waitForCapturedRequest(root, "analysis-test-t007-r001");
-
-  await sleep(75);
-  assert.equal(providerEntered, false);
-
-  await writeCommitAcknowledgement(root, request);
-  await provider;
-  assert.equal(providerEntered, true);
-});
-
-test("rejects malformed commit acknowledgements before provider continuation", async () => {
-  const cases = [
-    ["wrong request id", { request_id: "analysis-test-t007-r999" }, /request_id/],
-    ["digest mismatch", { semantic_request_sha256: "f".repeat(64) }, /semantic_request_sha256/],
-    ["failed status", { status: "failed" }, /status/],
-    ["unsafe acknowledgement root", null, /absolute/],
-  ];
-
-  for (const [name, override, expected] of cases) {
-    const root = await makeModelRequestFixture();
-    const failures = [];
-    const handlers = new Map();
-    configureModelRequestCapture(
-      { on: (event, handler) => handlers.set(event, handler) },
-      fixturePaths(root, {
-        acknowledgements: true,
-        acknowledgementPath: name === "unsafe acknowledgement root" ? "relative/acks" : undefined,
-      }),
-      fatalCollector(failures),
-    );
-    let providerEntered = false;
-    const provider = handlers.get("before_model_request")(modelRequestEvent()).then(() => {
-      providerEntered = true;
-    });
-
-    if (override !== null) {
-      const request = await waitForCapturedRequest(root, "analysis-test-t007-r001");
-      await writeCommitAcknowledgement(root, request, override);
-    }
-
-    await assert.rejects(provider, /fatal-86/);
-    assert.match(failures[0], expected);
-    assert.equal(providerEntered, false);
-  }
-});
-
-test("times out waiting for a commit acknowledgement before provider continuation", async () => {
-  const root = await makeModelRequestFixture();
-  const failures = [];
-  const handlers = new Map();
-  configureModelRequestCapture(
-    { on: (event, handler) => handlers.set(event, handler) },
-    fixturePaths(root, { acknowledgements: true, acknowledgementTimeoutMs: 30, acknowledgementPollIntervalMs: 5 }),
-    fatalCollector(failures),
-  );
-  let providerEntered = false;
-  const provider = handlers.get("before_model_request")(modelRequestEvent()).then(() => {
-    providerEntered = true;
-  });
-
-  await waitForCapturedRequest(root, "analysis-test-t007-r001");
-  await assert.rejects(provider, /fatal-86/);
-
-  assert.match(failures[0], /timed out/);
-  assert.equal(providerEntered, false);
+  assert.equal(request.request_id, "analysis-test-t007-r001");
+  await assert.rejects(access(join(root, "acks/analysis-test-t007-r001.committed.json")));
 });
 
 test("semantic digest is deterministic across provider identities and changes with model identity", async () => {

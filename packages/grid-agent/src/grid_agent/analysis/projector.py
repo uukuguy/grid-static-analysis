@@ -29,7 +29,14 @@ _TOOL_NAME_TO_CAPABILITY: Mapping[str, str] = {
     "grid_analysis_contingency_n_minus_one": "analysis.contingency.n_minus_one.run",
 }
 
-_ORCHESTRATION_CAPABILITIES = frozenset({"grid_submit_answer"})
+_NON_SIMULATOR_CAPABILITIES = frozenset(
+    {
+        "grid_analysis_context_get",
+        "grid_guide_open",
+        "grid_record_decision",
+        "grid_submit_answer",
+    }
+)
 
 
 class AnalysisContextProjector:
@@ -61,7 +68,7 @@ class AnalysisContextProjector:
         if not isinstance(capability, str):
             return
         call_id = _tool_call_id(event)
-        if capability in _ORCHESTRATION_CAPABILITIES:
+        if capability in _NON_SIMULATOR_CAPABILITIES:
             if call_id is not None:
                 self._starts.pop(call_id, None)
             return

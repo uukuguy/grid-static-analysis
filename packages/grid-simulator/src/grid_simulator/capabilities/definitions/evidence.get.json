@@ -34,7 +34,6 @@
           "capability_id",
           "context_ref",
           "revision_ref",
-          "facts",
           "provenance"
         ],
         "properties": {
@@ -42,8 +41,10 @@
           "capability_id": {"type": "string", "enum": ["topology.branch.endpoints.get", "model.constraints.describe", "analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run"]},
           "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
           "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
-          "subject_ref": {"type": "string"},
+          "subject_ref": {"type": ["string", "null"]},
           "result_ref": {"type": "string", "pattern": "^result:sha256:[0-9a-f]{64}$"},
+          "diagnostic": {"type": "string"},
+          "allowed_recovery_actions": {"type": "array", "items": {"type": "string"}},
           "facts": {
             "type": "object",
             "additionalProperties": false,
@@ -55,7 +56,20 @@
               "branch_result_count": {"type": "integer", "minimum": 0},
               "status": {"type": "string", "enum": ["succeeded", "partial", "failed", "non_converged"]},
               "max_loading_percent": {"type": "number"},
+              "min_vm_pu": {"type": "number"},
+              "max_vm_pu": {"type": "number"},
               "violation_count": {"type": "integer", "minimum": 0},
+              "constraint_evaluation": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["status", "source", "evaluated_quantities", "unevaluated_quantities"],
+                "properties": {
+                  "status": {"type": "string", "enum": ["evaluated", "partially_evaluated", "not_defined"]},
+                  "source": {"type": "string", "enum": ["model"]},
+                  "evaluated_quantities": {"type": "array", "items": {"type": "string"}},
+                  "unevaluated_quantities": {"type": "array", "items": {"type": "string"}}
+                }
+              },
               "constraints": {
                 "type": "array",
                 "items": {

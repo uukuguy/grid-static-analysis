@@ -46,6 +46,9 @@ class TurnTerminalPayload(StrictFrozenModel):
 class ModelRequestPayload(StrictFrozenModel):
     artifact_ref: str
     request_index: int = Field(ge=1)
+    semantic_digest_verified: bool = True
+    semantic_request_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    expected_semantic_request_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class ModelResponsePayload(StrictFrozenModel):

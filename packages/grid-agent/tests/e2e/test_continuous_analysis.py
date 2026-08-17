@@ -142,7 +142,10 @@ def test_continuous_analysis_generalizes_active_model_constraints_and_result_reu
         assert powerflow_ref in context.domain_state.calculations
         assert n1_ref in context.domain_state.calculations
         assert context.domain_state.scenarios
-        assert context.turns[3].consumed_refs == [powerflow_ref]
+        assert context.turns[3].consumed_refs == [
+            powerflow_ref,
+            *context.results[powerflow_ref].evidence_refs,
+        ]
         assert context.turns[4].consumed_refs
         for turn, answer in zip(context.turns, answers, strict=True):
             assert turn.answer_path is not None

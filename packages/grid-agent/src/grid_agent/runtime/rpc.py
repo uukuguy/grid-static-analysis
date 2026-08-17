@@ -196,8 +196,11 @@ class PiRpcClient:
             ),
             None,
         )
+        stderr_lines = [line.strip() for line in stderr_text.splitlines() if line.strip()]
         if returncode == CAPTURE_FATAL_EXIT_CODE or marker_line is not None:
-            detail = marker_line or CAPTURE_FATAL_MARKER
+            detail = marker_line or (
+                stderr_lines[-1][:500] if stderr_lines else CAPTURE_FATAL_MARKER
+            )
             return CaptureIntegrityError(
                 f"Pi capture-fatal exit {returncode}: {detail}"
             )

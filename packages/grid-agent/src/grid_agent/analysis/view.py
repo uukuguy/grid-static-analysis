@@ -12,6 +12,7 @@ CONTEXT_VIEW_VERSION = "analysis-context-view/1.0"
 MAX_VIEW_BYTES = 64_000
 MAX_FACTS_PER_PREDICATE = 20
 MAX_DOMAIN_RECORDS = 20
+MAX_TEXT_CHARS = 2_000
 
 _LARGE_FIELD_NAMES = frozenset(
     {
@@ -28,7 +29,7 @@ _LARGE_FIELD_NAMES = frozenset(
 
 
 class ContextViewTooLarge(RuntimeError):
-    """Raised when the provenance-preserving model-facing view exceeds its budget."""
+    """Legacy exception retained for callers; bounded views no longer raise it."""
 
 
 def build_context_view(context: AnalysisContext) -> dict[str, Any]:
@@ -50,8 +51,7 @@ def build_context_view(context: AnalysisContext) -> dict[str, Any]:
         "verified_facts": _verified_facts(context),
         "unresolved_limitations": _unresolved_limitations(context),
     }
-    _assert_within_budget(view)
-    return view
+    return _fit_within_budget(view)
 
 
 def materialize_context_view(context: AnalysisContext, path: Path) -> None:
@@ -205,7 +205,6 @@ def _reusable_results(context: AnalysisContext) -> list[dict[str, Any]]:
             "path": result.path,
             "evidence_refs": sorted(result.evidence_refs),
             "solver_summary": _compact_mapping(result.solver_summary),
-            "producer_observation": _compact_mapping(result.producer_observation),
         }
         for result in sorted(context.results.values(), key=lambda item: item.result_ref)
         if model is None or result.revision_ref == model.revision_ref
@@ -226,6 +225,15 @@ def _verified_facts(context: AnalysisContext) -> dict[str, list[dict[str, Any]]]
 def _compact_fact(fact: VerifiedFact) -> dict[str, Any]:
     statement = _statement_payload(fact)
     predicate = str(statement.pop("predicate", "fact"))
+    # These fields duplicate the native trajectory and the top-level evidence
+    # lineage.  Keeping them in every promoted fact made the prompt view grow
+    # quadratically with repeated observations.
+    for key in (
+        "evidence_refs",
+        "producer_observation",
+        "source_observation_id",
+    ):
+        statement.pop(key, None)
     compact = {
         "fact_ref": fact.fact_ref,
         "predicate": predicate,
@@ -256,7 +264,7 @@ def _unresolved_limitations(context: AnalysisContext) -> list[dict[str, Any]]:
         {
             "limitation_ref": limitation.limitation_ref,
             "turn_id": limitation.turn_id,
-            "message": limitation.message,
+            "message": _compact_text(limitation.message),
             "refs": sorted(limitation.refs),
         }
         for limitation in sorted(context.unresolved_limitations, key=lambda item: item.limitation_ref)
@@ -274,13 +282,131 @@ def _compact_mapping(value: Any) -> Any:
         if len(value) > 20:
             return {"omitted_count": len(value)}
         return [_compact_mapping(item) for item in value]
+    if isinstance(value, str) and len(value) > MAX_TEXT_CHARS:
+        return {
+            "text_prefix": value[:MAX_TEXT_CHARS],
+            "omitted_characters": len(value) - MAX_TEXT_CHARS,
+        }
     return value
 
 
-def _assert_within_budget(view: dict[str, Any]) -> None:
-    size = len(_canonical_json(view).encode("utf-8"))
-    if size > MAX_VIEW_BYTES:
-        raise ContextViewTooLarge(f"analysis context view is {size} bytes; maximum is {MAX_VIEW_BYTES}")
+def _compact_text(value: str) -> str:
+    if len(value) <= MAX_TEXT_CHARS:
+        return value
+    omitted = len(value) - MAX_TEXT_CHARS
+    return f"{value[:MAX_TEXT_CHARS]}… [{omitted} characters omitted]"
+
+
+def _fit_within_budget(view: dict[str, Any]) -> dict[str, Any]:
+    """Deterministically shed historical detail without blocking execution."""
+    if _view_size(view) <= MAX_VIEW_BYTES:
+        return view
+
+    omissions: dict[str, int] = {}
+    view["omitted_records"] = omissions
+
+    facts = view["verified_facts"]
+    while _view_size(view) > MAX_VIEW_BYTES and any(facts.values()):
+        for predicate in sorted(facts):
+            records = facts[predicate]
+            if records:
+                records.pop()
+                key = f"verified_facts.{predicate}"
+                omissions[key] = omissions.get(key, 0) + 1
+            if _view_size(view) <= MAX_VIEW_BYTES:
+                break
+
+    # Reusable calculation summaries already carry the stable result/evidence
+    # lineage, so detailed result records and historical scenarios are the next
+    # safe material to shed.  Keep the most recently appended records.
+    for key in (
+        "reusable_results",
+        "scenarios",
+        "completed_turns",
+        "reusable_calculations",
+        "unresolved_limitations",
+    ):
+        records = view[key]
+        while _view_size(view) > MAX_VIEW_BYTES and len(records) > 1:
+            records.pop(0)
+            omissions[key] = omissions.get(key, 0) + 1
+
+    if _view_size(view) <= MAX_VIEW_BYTES:
+        return view
+
+    # This is a model-facing convenience projection, never an authority.  In
+    # the pathological case retain only the live identity and operational
+    # constraints; the complete history remains in the native trajectory.
+    minimal = {
+        key: view[key]
+        for key in (
+            "schema_version",
+            "analysis_id",
+            "revision",
+            "state_hash",
+            "status",
+            "active_baseline",
+            "active_model",
+            "capability_status",
+            "constraints",
+            "current_turn",
+            "unresolved_limitations",
+        )
+    }
+    minimal["reusable_calculations"] = view["reusable_calculations"][-1:]
+    minimal["scenarios"] = []
+    minimal["completed_turns"] = view["completed_turns"][-1:]
+    minimal["reusable_results"] = view["reusable_results"][-1:]
+    minimal["verified_facts"] = {}
+    minimal["omitted_records"] = {**omissions, "fallback_projection": 1}
+    for key in ("unresolved_limitations", "capability_status", "constraints"):
+        records = minimal[key]
+        while _view_size(minimal) > MAX_VIEW_BYTES and records:
+            records.pop(0)
+            omission_key = f"fallback.{key}"
+            minimal["omitted_records"][omission_key] = (
+                minimal["omitted_records"].get(omission_key, 0) + 1
+            )
+    if _view_size(minimal) <= MAX_VIEW_BYTES:
+        return minimal
+
+    # Absolute last resort: preserve bounded live identity only.  All omitted
+    # detail remains available in the native trajectory and report artifacts.
+    active_model = minimal.get("active_model")
+    bounded_model = None
+    if isinstance(active_model, dict):
+        bounded_model = {
+            key: _bounded_identity(active_model.get(key))
+            for key in ("context_ref", "revision_ref", "model_id", "source")
+            if active_model.get(key) is not None
+        }
+    current_turn = minimal.get("current_turn")
+    bounded_turn = None
+    if isinstance(current_turn, dict):
+        bounded_turn = {
+            "turn_id": _bounded_identity(current_turn.get("turn_id")),
+            "ordinal": current_turn.get("ordinal"),
+        }
+    return {
+        "schema_version": CONTEXT_VIEW_VERSION,
+        "analysis_id": _bounded_identity(minimal.get("analysis_id")),
+        "revision": minimal.get("revision"),
+        "state_hash": _bounded_identity(minimal.get("state_hash")),
+        "status": _bounded_identity(minimal.get("status")),
+        "active_model": bounded_model,
+        "current_turn": bounded_turn,
+        "omitted_records": {**minimal["omitted_records"], "identity_only_projection": 1},
+    }
+
+
+def _bounded_identity(value: Any) -> Any:
+    if isinstance(value, str):
+        return value[:256]
+    return value
+
+
+def _view_size(view: dict[str, Any]) -> int:
+    return len(_canonical_json(view).encode("utf-8"))
 
 
 def _canonical_json(value: dict[str, Any]) -> str:

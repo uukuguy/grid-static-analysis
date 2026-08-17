@@ -169,6 +169,29 @@ def context_with_simulator_evidence():
     )
 
 
+def test_answer_submission_records_known_lineage_as_consumed_dependencies() -> None:
+    state = context_with_simulator_evidence()
+
+    state = reduce_context(
+        state,
+        ContextEventDraft(
+            event_type="answer.submitted",
+            turn_id="analysis-test-t001",
+            payload={
+                "turn_id": "analysis-test-t001",
+                "answer_path": "turns/001/answer.json",
+                "answer_sha256": "d" * 64,
+                "answer_draft_path": "turns/001/answer-draft.json",
+                "result_refs": [RESULT_REF, "result:sha256:" + "9" * 64],
+                "claim_evidence_refs": [EVIDENCE_REF],
+            },
+        ),
+    )
+
+    assert state.current_turn is not None
+    assert state.current_turn.consumed_refs == [RESULT_REF, EVIDENCE_REF]
+
+
 def test_domain_projection_tracks_active_model_and_result_applicability() -> None:
     state = context_with_baseline()
     state = reduce_context(

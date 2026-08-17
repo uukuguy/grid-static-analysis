@@ -274,18 +274,32 @@ def test_projector_requires_start_for_success_but_not_for_normal_failure(
     )
 
 
-def test_projector_ignores_answer_submission_orchestration_tool(
+@pytest.mark.parametrize(
+    "capability",
+    [
+        "grid_analysis_context_get",
+        "grid_guide_open",
+        "grid_record_decision",
+        "grid_submit_answer",
+    ],
+)
+def test_projector_ignores_non_simulator_tools(
     context_harness: ContextHarness,
+    capability: str,
 ) -> None:
     context_harness.start_turn("analysis-test-t001", ordinal=1)
     revision_before = context_harness.store.snapshot.revision
 
     context_harness.projector.observe(
-        tool_start("submit-1", "grid_submit_answer", {"answer_output": "答案"}),
+        tool_start("non-simulator-1", capability, {"answer_output": "答案"}),
         turn_id="analysis-test-t001",
     )
     context_harness.projector.observe(
-        tool_result("submit-1", "grid_submit_answer", {"turn_id": "analysis-test-t001"}),
+        tool_result(
+            "non-simulator-1",
+            capability,
+            {"turn_id": "analysis-test-t001"},
+        ),
         turn_id="analysis-test-t001",
     )
 
