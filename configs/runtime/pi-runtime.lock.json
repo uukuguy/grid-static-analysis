@@ -14,7 +14,8 @@
   },
   "runtime": {
     "node_minimum": "22.19.0",
-    "pi_ai_version": "0.80.6"
+    "pi_ai_version": "0.80.6",
+    "pi_ai_npm_integrity": "sha512-7xfLk8sANBp+bpPEbjoOZTbPxsa+++b1JXAoSJsNa3vbs9AHHEclmvg54XLQcxH+fuwaeti/g2jeIfJ+mVYLpA=="
   },
   "patches": [
     {

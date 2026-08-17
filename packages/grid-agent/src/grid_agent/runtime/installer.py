@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -10,11 +13,6 @@ from grid_agent.runtime.lock import PiCommand, PiRuntimeIdentity, PiRuntimeLock,
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
-_NODE_FETCH_PROXY_PRELOAD = ".grid-agent-node-fetch-proxy.cjs"
-_NODE_FETCH_PROXY_SOURCE = """const { ProxyAgent, setGlobalDispatcher } = require(\"undici\");
-const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-if (proxy) setGlobalDispatcher(new ProxyAgent(proxy));
-"""
 
 
 class PiRuntimeInstallerError(RuntimeError):
@@ -61,6 +59,7 @@ class PiRuntimeInstaller:
         for patch in self.runtime_lock.patches:
             self._apply_patch(patch)
         self._run(["npm", "ci"], timeout=max(self.timeout_seconds, 300))
+        self._hydrate_pinned_pi_ai()
         self._run_pi_build()
 
         cli = source / self.runtime_lock.executable
@@ -159,23 +158,38 @@ class PiRuntimeInstaller:
         return _parse_version(result.stdout)
 
     def _run_pi_build(self) -> None:
-        preload = self.source_dir / _NODE_FETCH_PROXY_PRELOAD
-        build_environment: dict[str, str] | None = None
-        if self.environ.get("HTTPS_PROXY") or self.environ.get("HTTP_PROXY"):
-            preload.write_text(_NODE_FETCH_PROXY_SOURCE, encoding="utf-8")
-            build_environment = dict(self.environ)
-            required = f"--require=./{preload.name}"
-            existing = build_environment.get("NODE_OPTIONS", "").strip()
-            build_environment["NODE_OPTIONS"] = f"{existing} {required}".strip()
-        try:
-            self._run(["npm", "run", "build"], timeout=max(self.timeout_seconds, 300), env=build_environment)
-        finally:
+        for workspace in (
+            "@earendil-works/pi-tui",
+            "@earendil-works/pi-agent-core",
+            "@earendil-works/pi-coding-agent",
+        ):
+            self._run(["npm", "run", "build", "--workspace", workspace], timeout=max(self.timeout_seconds, 300))
+
+    def _hydrate_pinned_pi_ai(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grid-agent-pi-ai-") as temporary:
+            result = self._run(
+                ["npm", "pack", "--json", "--pack-destination", temporary, f"@earendil-works/pi-ai@{self.runtime_lock.pi_ai_version}"],
+                timeout=max(self.timeout_seconds, 300),
+            )
             try:
-                preload.unlink()
-            except FileNotFoundError:
-                pass
-            except OSError as exc:
-                raise PiRuntimeInstallerError(f"Pi build proxy preload could not be removed: {preload}") from exc
+                packages = json.loads(result.stdout)
+                package = packages[0]
+                filename = package["filename"]
+                integrity = package["integrity"]
+            except (IndexError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                raise PiRuntimeInstallerError("npm pack did not return pinned pi-ai package metadata") from exc
+            if integrity != self.runtime_lock.pi_ai_npm_integrity:
+                raise PiRuntimeInstallerError("Pinned pi-ai package integrity mismatch")
+            archive = Path(temporary, filename)
+            if archive.parent != Path(temporary) or not archive.is_file():
+                raise PiRuntimeInstallerError("npm pack did not produce the pinned pi-ai archive")
+            self._run(["tar", "-xzf", str(archive), "-C", temporary])
+            source_dist = Path(temporary, "package", "dist")
+            target_dist = self.source_dir / "packages" / "ai" / "dist"
+            if not source_dist.is_dir() or target_dist.is_symlink():
+                raise PiRuntimeInstallerError("Pinned pi-ai archive does not contain a safe dist directory")
+            shutil.rmtree(target_dist, ignore_errors=True)
+            shutil.copytree(source_dist, target_dist)
 
     def _run(
         self,

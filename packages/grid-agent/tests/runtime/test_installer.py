@@ -60,7 +60,21 @@ class FakeRunner:
             stale_cli = cwd / "packages/coding-agent/dist/cli.js"
             if stale_cli.exists():
                 stale_cli.unlink()
-        if list(argv) == ["npm", "run", "build"]:
+        if list(argv)[:2] == ["npm", "pack"]:
+            destination = Path(list(argv)[list(argv).index("--pack-destination") + 1])
+            archive = destination / "pi-ai.tgz"
+            archive.write_text("fixture", encoding="utf-8")
+            return subprocess.CompletedProcess(
+                list(argv), 0,
+                '[{"filename":"pi-ai.tgz","integrity":"sha512-7xfLk8sANBp+bpPEbjoOZTbPxsa+++b1JXAoSJsNa3vbs9AHHEclmvg54XLQcxH+fuwaeti/g2jeIfJ+mVYLpA=="}]', "",
+            )
+        if list(argv)[:3] == ["tar", "-xzf", ""]:
+            raise AssertionError("unreachable")
+        if list(argv)[:2] == ["tar", "-xzf"]:
+            destination = Path(list(argv)[-1]) / "package/dist"
+            destination.mkdir(parents=True, exist_ok=True)
+            destination.joinpath("cli.js").write_text("#!/usr/bin/env node\n", encoding="utf-8")
+        if list(argv)[:3] == ["npm", "run", "build"]:
             if self.fail_build:
                 return subprocess.CompletedProcess(list(argv), 1, "", "build exploded")
             cli = cwd / "packages/coding-agent/dist/cli.js"
@@ -94,6 +108,7 @@ def lock_data(*, patches: list[dict[str, str]] | None = None) -> dict[str, Any]:
         "runtime": {
             "node_minimum": "22.19.0",
             "pi_ai_version": "0.80.6",
+            "pi_ai_npm_integrity": "sha512-7xfLk8sANBp+bpPEbjoOZTbPxsa+++b1JXAoSJsNa3vbs9AHHEclmvg54XLQcxH+fuwaeti/g2jeIfJ+mVYLpA==",
         },
     }
     if patches is not None:
@@ -147,7 +162,9 @@ def test_installer_uses_detached_pinned_commit(tmp_path: Path, fake_runner: Fake
     assert ["git", "apply", "--check", str(runtime_lock.patches[0].path)] in fake_runner.calls
     assert ["git", "apply", str(runtime_lock.patches[0].path)] in fake_runner.calls
     assert ["npm", "ci"] in fake_runner.calls
-    assert ["npm", "run", "build"] in fake_runner.calls
+    assert ["npm", "run", "build", "--workspace", "@earendil-works/pi-tui"] in fake_runner.calls
+    assert ["npm", "run", "build", "--workspace", "@earendil-works/pi-agent-core"] in fake_runner.calls
+    assert ["npm", "run", "build", "--workspace", "@earendil-works/pi-coding-agent"] in fake_runner.calls
     assert fake_runner.calls.index(["git", "checkout", "--detach", runtime_lock.commit]) < fake_runner.calls.index(
         ["git", "reset", "--hard", runtime_lock.commit]
     )
@@ -179,7 +196,7 @@ def test_installer_uses_arrays_cwd_timeouts_and_captured_stderr(
     assert all(isinstance(kwargs["timeout"], int | float) and kwargs["timeout"] > 0 for kwargs in fake_runner.kwargs)
 
 
-def test_installer_configures_proxy_aware_node_build_without_leaving_preload(
+def test_installer_hydrates_pinned_pi_ai_before_building_patched_components(
     tmp_path: Path,
     fake_runner: FakeRunner,
     runtime_lock: PiRuntimeLock,
@@ -189,16 +206,15 @@ def test_installer_configures_proxy_aware_node_build_without_leaving_preload(
         runtime_lock,
         ProjectPaths.from_root(tmp_path).pi_runtime_dir,
         runner=fake_runner,
-        environ={"HTTPS_PROXY": "http://127.0.0.1:7897", "NODE_OPTIONS": "--trace-warnings"},
+        environ={},
     )
 
     installer.install()
 
-    build_index = fake_runner.calls.index(["npm", "run", "build"])
-    build_environment = fake_runner.kwargs[build_index]["env"]
-    preload = source / ".grid-agent-node-fetch-proxy.cjs"
-    assert build_environment["NODE_OPTIONS"] == f"--trace-warnings --require=./{preload.name}"
-    assert not preload.exists()
+    pack_index = next(index for index, call in enumerate(fake_runner.calls) if call[:2] == ["npm", "pack"])
+    tui_index = fake_runner.calls.index(["npm", "run", "build", "--workspace", "@earendil-works/pi-tui"])
+    assert pack_index < tui_index
+    assert (source / "packages/ai/dist/cli.js").is_file()
 
 
 def test_installer_rejects_symlink_source_before_runner_or_marker_mutation(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:

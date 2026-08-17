@@ -73,6 +73,7 @@ class PiRuntimeLock:
     npm_integrity: str
     node_minimum: str
     pi_ai_version: str
+    pi_ai_npm_integrity: str
     patches: tuple[PiRuntimePatch, ...]
     patches_sha256: str
     sha256: str
@@ -103,6 +104,7 @@ class PiRuntimeLock:
             npm_integrity=package["npm_integrity"],
             node_minimum=runtime["node_minimum"],
             pi_ai_version=runtime["pi_ai_version"],
+            pi_ai_npm_integrity=runtime["pi_ai_npm_integrity"],
             patches=patches,
             patches_sha256=cls._patches_sha256(lock_path, patches),
             sha256=hashlib.sha256(raw).hexdigest(),
@@ -131,7 +133,7 @@ class PiRuntimeLock:
 
         required_source = {"repository", "commit"}
         required_package = {"name", "version", "directory", "executable", "oauth_helper", "npm_integrity"}
-        required_runtime = {"node_minimum", "pi_ai_version"}
+        required_runtime = {"node_minimum", "pi_ai_version", "pi_ai_npm_integrity"}
         missing = required_source - source.keys() or required_package - package.keys() or required_runtime - runtime.keys()
         if missing:
             raise PiRuntimeLockError(f"Pi runtime lock missing required fields: {', '.join(sorted(missing))}")
@@ -146,6 +148,8 @@ class PiRuntimeLock:
             raise PiRuntimeLockError("Pi runtime lock package version is not pinned to 0.80.6")
         if runtime["pi_ai_version"] != "0.80.6":
             raise PiRuntimeLockError("Pi runtime lock pi-ai version is not pinned to 0.80.6")
+        if runtime["pi_ai_npm_integrity"] != "sha512-7xfLk8sANBp+bpPEbjoOZTbPxsa+++b1JXAoSJsNa3vbs9AHHEclmvg54XLQcxH+fuwaeti/g2jeIfJ+mVYLpA==":
+            raise PiRuntimeLockError("Pi runtime lock pi-ai integrity is not pinned")
         if package["npm_integrity"] != "sha512-vcfD6tOk402isLl3Cm/qbn2O10TvgroMp1+/fEGM24ZdvETFCdOYv5VZ7m59EI5fPsjfSJh+CpQ5bhBrhfOg7g==":
             raise PiRuntimeLockError("Pi runtime lock package integrity is not the pinned value")
 
