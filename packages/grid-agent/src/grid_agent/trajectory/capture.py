@@ -351,7 +351,7 @@ class NativeCaptureAdapter:
         )
 
     def _record_tool_start(self, event: Mapping[str, Any]) -> None:
-        request = self._require_unsettled_request()
+        request = self._require_request()
         tool_call_id = self._required_string(event, "tool_call_id")
         if tool_call_id in self._tool_calls:
             raise CaptureIntegrityError(f"duplicate tool_call_id: {tool_call_id}")

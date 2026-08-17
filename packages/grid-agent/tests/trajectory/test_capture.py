@@ -156,6 +156,53 @@ def test_capture_orders_request_response_and_tool_events(tmp_path: Path) -> None
     assert response["usage"] == {"input": 10, "output": 3}
 
 
+def test_capture_records_tool_use_after_its_completed_model_response(
+    tmp_path: Path,
+) -> None:
+    recorder, adapter, _workspace = capture_with_active_request(tmp_path)
+
+    adapter.on_raw_event(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "call-1"}],
+                "stopReason": "toolUse",
+            },
+        }
+    )
+    adapter.on_semantic_event(
+        {
+            "type": "tool_execution_start",
+            "tool_call_id": "call-1",
+            "tool_name": "grid_model_list",
+            "args": {},
+        },
+        20,
+    )
+    adapter.on_semantic_event(
+        {
+            "event": "tool_result",
+            "tool_call_id": "call-1",
+            "capability": "model.list",
+            "ok": True,
+            "result": {},
+            "evidence_refs": [],
+        },
+        21,
+    )
+
+    recorded = events(recorder)
+    assert [event.event_type for event in recorded] == [
+        "model.request.started",
+        "model.response.completed",
+        "tool.started",
+        "tool.completed",
+    ]
+    assert recorded[2].scope.request_id == recorded[0].scope.request_id
+    assert recorded[3].causation.parent_sequence == recorded[2].sequence
+
+
 def test_stream_deltas_only_update_ttft_and_never_persist_hidden_reasoning(
     tmp_path: Path,
 ) -> None:
