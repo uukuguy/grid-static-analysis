@@ -102,7 +102,11 @@ export default function domainToolsExtension(pi) {
   if (paths.trajectoryAllowedRefsPath !== undefined && paths.activeTurnPath !== undefined) {
     pi.registerTool(createRecordDecisionTool(paths.trajectoryAllowedRefsPath, paths.activeTurnPath));
   }
-  pi.registerTool(createSubmitAnswerTool(paths.answerDraftPath, paths.activeTurnPath));
+  pi.registerTool(createSubmitAnswerTool(
+    paths.answerDraftPath,
+    paths.activeTurnPath,
+    paths.trajectoryAllowedRefsPath,
+  ));
 }
 
 function runGridctl(payload, workspacePath = requiredExistingRealPath(process.env, "GRID_AGENT_WORKSPACE")) {
@@ -284,7 +288,7 @@ function createRecordDecisionTool(allowedRefsPath, activeTurnPath) {
   });
 }
 
-function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined) {
+function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined, allowedRefsPath = undefined) {
   return defineTool({
     name: "grid_submit_answer",
     label: "grid_submit_answer",
@@ -313,6 +317,28 @@ function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined) {
       ),
     }),
     async execute(_id, params) {
+      if (allowedRefsPath !== undefined) {
+        let known;
+        try {
+          known = await readAllowedRefs(allowedRefsPath);
+        } catch (error) {
+          return toolError(
+            { code: "answer_reference_state_invalid", phase: "resolve", message: error instanceof Error ? error.message : String(error) },
+            "grid_submit_answer",
+          );
+        }
+        const references = [
+          ...params.result_refs,
+          ...params.claim_evidence_refs,
+          ...params.claims.flatMap((claim) => [...claim.result_refs, ...claim.evidence_refs]),
+        ];
+        if (references.some((reference) => !known.has(reference))) {
+          return toolError(
+            { code: "unknown_answer_reference", phase: "resolve", message: "answer references must be known in the current run" },
+            "grid_submit_answer",
+          );
+        }
+      }
       const activeTurn = activeTurnPath === undefined ? {} : await readActiveTurn(activeTurnPath);
       const payload = {
         ...activeTurn,

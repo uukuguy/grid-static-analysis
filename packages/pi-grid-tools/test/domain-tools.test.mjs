@@ -157,6 +157,27 @@ test("records bounded decisions only against controller-known refs", async () =>
   assert.equal(outOfBounds.details.error.code, "invalid_decision");
 });
 
+test("answer submission rejects a mistyped evidence reference before writing a draft", async () => {
+  const { registered, root } = await configuredNativeTools();
+  const evidence = "evidence:sha256:" + "a".repeat(64);
+  await writeFile(
+    join(root, "run/context/trajectory-allowed-refs.json"),
+    JSON.stringify({ refs: [evidence] }),
+    "utf8",
+  );
+
+  const result = await registered.find((tool) => tool.name === "grid_submit_answer").execute("submit-typo", {
+    answer_output: "答案",
+    result_refs: [],
+    claim_evidence_refs: [`${evidence}e`],
+    claims: [],
+  });
+
+  assert.equal(result.isError, true);
+  assert.equal(result.details.error.code, "unknown_answer_reference");
+  await assert.rejects(readFile(join(root, "run/answer-draft.json"), "utf8"));
+});
+
 test("native request capture subscribes to before_model_request only", async () => {
   const root = await makeFixtureRoot();
   await configureAnalysisPaths(
