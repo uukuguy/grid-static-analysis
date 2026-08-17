@@ -11,6 +11,7 @@ const HIDDEN_REASONING_KEYS = new Set([
   "reasoning_content",
   "thinking_content",
 ]);
+const OMIT_JSON_PROPERTY = Symbol("omit-json-property");
 
 export function configureTrajectoryCapture(pi, paths, fatal = captureFatal) {
   let requestIndex = 0;
@@ -21,7 +22,7 @@ export function configureTrajectoryCapture(pi, paths, fatal = captureFatal) {
       const state = validateCaptureState(await readJson(paths.captureStatePath));
       validatePublicIdentifier(paths.providerId, "providerId");
       validatePublicIdentifier(paths.modelId, "modelId");
-      validateJsonPayload(event?.payload);
+      const providerPayload = normalizeJsonPayload(event?.payload);
 
       const requestId = `${turn.turn_id}-r${String(requestIndex).padStart(3, "0")}`;
       const document = {
@@ -35,7 +36,7 @@ export function configureTrajectoryCapture(pi, paths, fatal = captureFatal) {
         source_event_sequences: state.source_event_sequences,
         context_revision: state.context_revision,
         context_state_hash: state.context_state_hash,
-        provider_payload: event.payload,
+        provider_payload: providerPayload,
       };
       await writeJsonAtomicFsync(join(paths.requestsPath, requestId, "input.json"), document);
       return undefined;
@@ -101,15 +102,18 @@ function validatePublicIdentifier(value, name) {
   }
 }
 
-function validateJsonPayload(value, ancestors = new Set()) {
+function normalizeJsonPayload(value, ancestors = new Set(), arrayValue = false) {
+  if (value === undefined) {
+    return arrayValue ? null : OMIT_JSON_PROPERTY;
+  }
   if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return;
+    return value;
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw new Error("non-JSON provider payload value");
     }
-    return;
+    return value;
   }
   if (typeof value !== "object") {
     throw new Error("non-JSON provider payload value");
@@ -124,21 +128,23 @@ function validateJsonPayload(value, ancestors = new Set()) {
       if (Object.keys(value).length !== value.length) {
         throw new Error("non-JSON provider payload array");
       }
-      for (const item of value) {
-        validateJsonPayload(item, ancestors);
-      }
-      return;
+      return value.map((item) => normalizeJsonPayload(item, ancestors, true));
     }
     if (!isPlainObject(value) || Reflect.ownKeys(value).some((key) => typeof key !== "string")) {
       throw new Error("non-JSON provider payload object");
     }
+    const normalized = {};
     for (const [key, item] of Object.entries(value)) {
       const normalizedKey = normalizeKey(key);
       if (CREDENTIAL_KEY_PATTERN.test(key) || HIDDEN_REASONING_KEYS.has(normalizedKey)) {
         throw new Error(`prohibited provider payload key: ${key}`);
       }
-      validateJsonPayload(item, ancestors);
+      const normalizedItem = normalizeJsonPayload(item, ancestors);
+      if (normalizedItem !== OMIT_JSON_PROPERTY) {
+        normalized[key] = normalizedItem;
+      }
     }
+    return normalized;
   } finally {
     ancestors.delete(value);
   }

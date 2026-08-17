@@ -36,6 +36,29 @@ test("captures exact provider payload before the hook returns", async () => {
   assert.deepEqual(Object.keys(request), [...Object.keys(request)].sort());
 });
 
+test("captures Pi undefined values using JSON transport semantics", async () => {
+  const root = await makeTrajectoryFixture();
+  const handlers = new Map();
+  configureTrajectoryCapture({ on: (name, handler) => handlers.set(name, handler) }, fixturePaths(root));
+
+  await handlers.get("before_provider_request")({
+    type: "before_provider_request",
+    payload: {
+      optional: undefined,
+      nested: { omitted: undefined, retained: "yes" },
+      messages: [undefined, { content: "Q1", optional: undefined }],
+    },
+  });
+
+  const request = JSON.parse(
+    await readFile(join(root, "requests/analysis-test-t007-r001/input.json"), "utf8"),
+  );
+  assert.deepEqual(request.provider_payload, {
+    nested: { retained: "yes" },
+    messages: [null, { content: "Q1" }],
+  });
+});
+
 test("increments the request index for successive durable captures", async () => {
   const root = await makeTrajectoryFixture();
   const handlers = new Map();
@@ -115,7 +138,6 @@ test("rejects missing or invalid capture state", async () => {
 
 test("capture rejects non-JSON payload values before creating a request document", async () => {
   for (const payload of [
-    { value: undefined },
     { value: Number.NaN },
     { value: 1n },
   ]) {
