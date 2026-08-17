@@ -67,6 +67,16 @@ def test_locator_marks_explicit_command_unmanaged(tmp_path: Path) -> None:
     assert command.identity.source == "explicit_override"
 
 
+def test_locator_requires_verified_managed_runtime_for_native_capture(tmp_path: Path) -> None:
+    locator = PiRuntimeLocator(
+        ProjectPaths.from_root(tmp_path).pi_runtime_dir,
+        {"GRID_AGENT_PI_COMMAND": "/opt/homebrew/bin/pi"},
+    )
+
+    with pytest.raises(PiRuntimeLocatorError, match="active marker"):
+        locator.resolve(require_managed=True)
+
+
 def test_locator_prefers_managed_runtime_over_path_pi(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:
     create_managed_runtime(tmp_path, runtime_lock)
     paths = ProjectPaths.from_root(tmp_path)

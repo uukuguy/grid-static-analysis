@@ -45,7 +45,14 @@ class PiRuntimeLocator:
     def active_marker(self) -> Path:
         return self.pi_runtime_dir / "active"
 
-    def resolve(self) -> PiCommand:
+    def resolve(self, *, require_managed: bool = False) -> PiCommand:
+        if require_managed:
+            cli = self.source_dir / self.runtime_lock.executable
+            self._require_valid_active_marker()
+            if not cli.is_file():
+                raise PiRuntimeLocatorError(f"Managed Pi executable is missing: {cli}")
+            identity = self._identity(path=cli, source="managed", commit=self.runtime_lock.commit)
+            return PiCommand(argv=("node", str(cli)), identity=identity)
         explicit = self.environ.get(ENV_PI_COMMAND)
         if explicit:
             path = Path(explicit)
