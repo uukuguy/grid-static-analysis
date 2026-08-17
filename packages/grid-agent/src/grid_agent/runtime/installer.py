@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from grid_agent.runtime.lock import PiCommand, PiRuntimeIdentity, PiRuntimeLock, PiRuntimePatch
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+_NODE_FETCH_PROXY_PRELOAD = ".grid-agent-node-fetch-proxy.cjs"
+_NODE_FETCH_PROXY_SOURCE = """const { ProxyAgent, setGlobalDispatcher } = require(\"undici\");
+const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+if (proxy) setGlobalDispatcher(new ProxyAgent(proxy));
+"""
 
 
 class PiRuntimeInstallerError(RuntimeError):
@@ -23,11 +29,13 @@ class PiRuntimeInstaller:
         *,
         runner: Runner | None = None,
         timeout_seconds: int = 120,
+        environ: Mapping[str, str] | None = None,
     ) -> None:
         self.runtime_lock = runtime_lock
         self.pi_runtime_dir = Path(pi_runtime_dir)
         self.runner = runner or subprocess.run
         self.timeout_seconds = timeout_seconds
+        self.environ = dict(os.environ if environ is None else environ)
 
     @property
     def source_dir(self) -> Path:
@@ -53,7 +61,7 @@ class PiRuntimeInstaller:
         for patch in self.runtime_lock.patches:
             self._apply_patch(patch)
         self._run(["npm", "ci"], timeout=max(self.timeout_seconds, 300))
-        self._run(["npm", "run", "build"], timeout=max(self.timeout_seconds, 300))
+        self._run_pi_build()
 
         cli = source / self.runtime_lock.executable
         if not cli.is_file():
@@ -150,12 +158,32 @@ class PiRuntimeInstaller:
         result = self._run(["node", str(cli), "--version"], timeout=15)
         return _parse_version(result.stdout)
 
+    def _run_pi_build(self) -> None:
+        preload = self.source_dir / _NODE_FETCH_PROXY_PRELOAD
+        build_environment: dict[str, str] | None = None
+        if self.environ.get("HTTPS_PROXY") or self.environ.get("HTTP_PROXY"):
+            preload.write_text(_NODE_FETCH_PROXY_SOURCE, encoding="utf-8")
+            build_environment = dict(self.environ)
+            required = f"--require={preload}"
+            existing = build_environment.get("NODE_OPTIONS", "").strip()
+            build_environment["NODE_OPTIONS"] = f"{existing} {required}".strip()
+        try:
+            self._run(["npm", "run", "build"], timeout=max(self.timeout_seconds, 300), env=build_environment)
+        finally:
+            try:
+                preload.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise PiRuntimeInstallerError(f"Pi build proxy preload could not be removed: {preload}") from exc
+
     def _run(
         self,
         argv: Sequence[str],
         *,
         timeout: int | None = None,
         check: bool = True,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = list(argv)
         try:
@@ -166,6 +194,7 @@ class PiRuntimeInstaller:
                 shell=False,
                 capture_output=True,
                 text=True,
+                env=dict(env) if env is not None else None,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise PiRuntimeInstallerError(f"Pi runtime command failed to start: {command!r}: {exc}") from exc

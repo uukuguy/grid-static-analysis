@@ -179,6 +179,28 @@ def test_installer_uses_arrays_cwd_timeouts_and_captured_stderr(
     assert all(isinstance(kwargs["timeout"], int | float) and kwargs["timeout"] > 0 for kwargs in fake_runner.kwargs)
 
 
+def test_installer_configures_proxy_aware_node_build_without_leaving_preload(
+    tmp_path: Path,
+    fake_runner: FakeRunner,
+    runtime_lock: PiRuntimeLock,
+) -> None:
+    source = ProjectPaths.from_root(tmp_path).pi_runtime_dir / "source"
+    installer = PiRuntimeInstaller(
+        runtime_lock,
+        ProjectPaths.from_root(tmp_path).pi_runtime_dir,
+        runner=fake_runner,
+        environ={"HTTPS_PROXY": "http://127.0.0.1:7897", "NODE_OPTIONS": "--trace-warnings"},
+    )
+
+    installer.install()
+
+    build_index = fake_runner.calls.index(["npm", "run", "build"])
+    build_environment = fake_runner.kwargs[build_index]["env"]
+    preload = source / ".grid-agent-node-fetch-proxy.cjs"
+    assert build_environment["NODE_OPTIONS"] == f"--trace-warnings --require={preload}"
+    assert not preload.exists()
+
+
 def test_installer_rejects_symlink_source_before_runner_or_marker_mutation(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:
     paths = ProjectPaths.from_root(tmp_path)
     outside = tmp_path / "outside-source"
