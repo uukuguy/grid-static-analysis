@@ -145,6 +145,10 @@ def semantic_request_sha256(value: object) -> str:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
+    # Pi writes this artifact with JSON.stringify().  Python retains a leading
+    # zero in exponent padding (1e-08), while JavaScript emits 1e-8.  Digest
+    # the shared wire representation, not Python's display convention.
+    encoded = re.sub(rb"e([+-])0+(\d+)", rb"e\1\2", encoded)
     return hashlib.sha256(encoded).hexdigest()
 
 
