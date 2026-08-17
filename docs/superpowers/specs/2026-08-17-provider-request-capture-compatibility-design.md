@@ -1,5 +1,9 @@
 # Provider Request Capture Compatibility Design
 
+> Superseded on 2026-08-17 by
+> `2026-08-17-unified-llm-runtime-boundary-design.md`. This document records an
+> interim repair and is not the authority for new-run request capture.
+
 ## Goal
 
 Make `make analysis` accept Pi provider-request payloads containing JavaScript

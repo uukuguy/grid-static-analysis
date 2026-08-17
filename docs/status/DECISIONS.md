@@ -1,5 +1,21 @@
 # Architectural Decisions
 
+## 2026-08-17 — Unified LLM runtime boundary
+
+- **Decision:** Provider-specific request and response fields remain exclusively
+  inside `pi-ai` adapters. Pi exposes the final provider-independent invocation
+  before network I/O, and trajectory records the exact canonical request rather
+  than the raw provider payload.
+- **Reason:** Raw `before_provider_request` capture made valid provider evolution
+  capable of terminating the core `make analysis` flow. The repository already
+  depends on a multi-provider normalization layer; the framework must consume its
+  stable contract instead of duplicating provider logic.
+- **Replay:** A request is durably committed before provider I/O with its canonical
+  context, tools, public options, correlations, runtime/adapter versions, and hash.
+  Wire-level diagnostics remain adapter-owned and non-authoritative.
+- **Specification:**
+  `docs/superpowers/specs/2026-08-17-unified-llm-runtime-boundary-design.md`
+
 ## 2026-08-14 — Unified trajectory event spine and workbench
 
 - **Status:** approved design; implementation not started

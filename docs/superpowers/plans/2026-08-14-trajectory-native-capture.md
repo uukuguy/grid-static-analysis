@@ -1,5 +1,11 @@
 # Native Trajectory Capture Implementation Plan
 
+> Architecture correction, 2026-08-17: the exact raw-provider-payload capture
+> portions of this historical plan are superseded by
+> `../specs/2026-08-17-unified-llm-runtime-boundary-design.md`. New runs capture
+> the exact canonical LLM request before provider adaptation; trajectory code
+> must not inspect provider payloads.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make new continuous Analysis runs write complete native lifecycle, exact model-request, public response, retry, tool, context, decision, claim, answer, and audit events to the verified event spine.
