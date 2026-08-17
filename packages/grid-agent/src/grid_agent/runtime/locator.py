@@ -41,6 +41,10 @@ class PiRuntimeLocator:
     def source_dir(self) -> Path:
         return self.pi_runtime_dir / "source"
 
+    @property
+    def active_marker(self) -> Path:
+        return self.pi_runtime_dir / "active"
+
     def resolve(self) -> PiCommand:
         explicit = self.environ.get(ENV_PI_COMMAND)
         if explicit:
@@ -49,7 +53,7 @@ class PiRuntimeLocator:
             return PiCommand(argv=(str(path),), identity=identity)
 
         cli = self.source_dir / self.runtime_lock.executable
-        if cli.is_file():
+        if cli.is_file() and self._has_valid_active_marker():
             identity = self._identity(path=cli, source="managed", commit=self.runtime_lock.commit)
             return PiCommand(argv=("node", str(cli)), identity=identity)
 
@@ -76,6 +80,7 @@ class PiRuntimeLocator:
             return PiOAuthHelper(argv=("node", str(helper)), identity=identity)
 
         helper = self.source_dir / self.runtime_lock.oauth_helper
+        self._require_valid_active_marker()
         if not helper.is_file():
             raise PiRuntimeLocatorError(f"Managed Pi OAuth helper is missing: {helper}")
         identity = self._identity(path=helper, source="managed", commit=self.runtime_lock.commit)
@@ -104,6 +109,43 @@ class PiRuntimeLocator:
             pi_ai_version=self.runtime_lock.pi_ai_version,
             patches_sha256=self.runtime_lock.patches_sha256,
         )
+
+    def _has_valid_active_marker(self) -> bool:
+        if not self.active_marker.exists():
+            return False
+        self._require_valid_active_marker()
+        return True
+
+    def _require_valid_active_marker(self) -> None:
+        marker = self.active_marker
+        if not marker.is_file():
+            raise PiRuntimeLocatorError(f"Managed Pi active marker is missing or invalid: {marker}")
+
+        try:
+            lines = marker.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise PiRuntimeLocatorError(f"Managed Pi active marker cannot be read: {marker}") from exc
+
+        if len(lines) != 4:
+            raise PiRuntimeLocatorError(f"Managed Pi active marker is malformed: {marker}")
+        marker_source = Path(lines[0])
+        if not marker_source.is_absolute() or marker_source.resolve() != self.source_dir.resolve():
+            raise PiRuntimeLocatorError("Managed Pi active marker source path does not match the managed source directory")
+
+        values: dict[str, str] = {}
+        for line in lines[1:]:
+            key, separator, value = line.partition("=")
+            if not separator or not key or key in values:
+                raise PiRuntimeLocatorError(f"Managed Pi active marker is malformed: {marker}")
+            values[key] = value
+
+        expected = {
+            "commit": self.runtime_lock.commit,
+            "lock_sha256": self.runtime_lock.sha256,
+            "patches_sha256": self.runtime_lock.patches_sha256,
+        }
+        if values != expected:
+            raise PiRuntimeLocatorError("Managed Pi active marker identity does not match the runtime lock")
 
     def _run(self, argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
         command = list(argv)

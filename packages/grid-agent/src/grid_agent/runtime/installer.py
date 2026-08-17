@@ -38,6 +38,7 @@ class PiRuntimeInstaller:
         return self.pi_runtime_dir / "active"
 
     def install(self) -> PiCommand:
+        self._clear_active_marker()
         self._verify_patch_bytes()
         source = self.source_dir
         source.mkdir(parents=True, exist_ok=True)
@@ -49,7 +50,7 @@ class PiRuntimeInstaller:
         self._run(["git", "fetch", "--depth", "1", "origin", self.runtime_lock.commit])
         self._run(["git", "checkout", "--detach", self.runtime_lock.commit])
         self._run(["git", "reset", "--hard", self.runtime_lock.commit])
-        self._run(["git", "clean", "-fd"])
+        self._run(["git", "clean", "-fdx"])
         for patch in self.runtime_lock.patches:
             self._apply_patch(patch)
         self._run(["npm", "ci"], timeout=max(self.timeout_seconds, 300))
@@ -84,6 +85,14 @@ class PiRuntimeInstaller:
             version=version,
         )
         return PiCommand(argv=("node", str(cli)), identity=identity)
+
+    def _clear_active_marker(self) -> None:
+        try:
+            self.active_marker.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise PiRuntimeInstallerError(f"Pi runtime active marker could not be removed: {self.active_marker}") from exc
 
     def _apply_patch(self, patch: PiRuntimePatch) -> None:
         self._verify_patch_bytes(patch)

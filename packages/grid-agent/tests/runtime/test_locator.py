@@ -28,14 +28,36 @@ class FakeRunner:
         return subprocess.CompletedProcess(list(argv), 0, self.version + "\n", "")
 
 
-def create_managed_runtime(state_dir: Path, runtime_lock: PiRuntimeLock) -> Path:
-    source = ProjectPaths.from_root(state_dir).pi_runtime_dir / "source"
+def write_active_marker(state_dir: Path, runtime_lock: PiRuntimeLock, source: Path, **overrides: str) -> Path:
+    marker = ProjectPaths.from_root(state_dir).pi_runtime_dir / "active"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    values = {
+        "commit": runtime_lock.commit,
+        "lock_sha256": runtime_lock.sha256,
+        "patches_sha256": runtime_lock.patches_sha256,
+        **overrides,
+    }
+    marker.write_text(
+        f"{source}\n"
+        f"commit={values['commit']}\n"
+        f"lock_sha256={values['lock_sha256']}\n"
+        f"patches_sha256={values['patches_sha256']}\n",
+        encoding="utf-8",
+    )
+    return marker
+
+
+def create_managed_runtime(state_dir: Path, runtime_lock: PiRuntimeLock, *, active_marker: bool = True) -> Path:
+    paths = ProjectPaths.from_root(state_dir)
+    source = paths.pi_runtime_dir / "source"
     cli = source / runtime_lock.executable
     helper = source / runtime_lock.oauth_helper
     cli.parent.mkdir(parents=True, exist_ok=True)
     helper.parent.mkdir(parents=True, exist_ok=True)
     cli.write_text("#!/usr/bin/env node\n", encoding="utf-8")
     helper.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    if active_marker:
+        write_active_marker(state_dir, runtime_lock, source)
     return source
 
 
@@ -56,6 +78,46 @@ def test_locator_prefers_managed_runtime_over_path_pi(tmp_path: Path, runtime_lo
 
     assert command.identity.source == "managed"
     assert command.path == paths.pi_runtime_dir / "source" / runtime_lock.executable
+
+
+def test_locator_falls_back_to_path_when_managed_executable_has_no_active_marker(
+    tmp_path: Path,
+    runtime_lock: PiRuntimeLock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create_managed_runtime(tmp_path, runtime_lock, active_marker=False)
+    monkeypatch.setattr("grid_agent.runtime.locator.shutil.which", lambda *_args, **_kwargs: "/opt/homebrew/bin/pi")
+
+    command = PiRuntimeLocator(ProjectPaths.from_root(tmp_path).pi_runtime_dir, {"PATH": "/opt/homebrew/bin"}).resolve()
+
+    assert command.argv == ("/opt/homebrew/bin/pi",)
+    assert command.identity.source == "path"
+
+
+@pytest.mark.parametrize(
+    "marker_text",
+    [
+        "not enough\n",
+        "/tmp/other/source\ncommit=2b3fda9921b5590f285165287bd442a25817f17b\nlock_sha256=lock\npatches_sha256=patches\n",
+        None,
+    ],
+)
+def test_locator_rejects_invalid_managed_active_marker(
+    tmp_path: Path,
+    runtime_lock: PiRuntimeLock,
+    monkeypatch: pytest.MonkeyPatch,
+    marker_text: str | None,
+) -> None:
+    source = create_managed_runtime(tmp_path, runtime_lock)
+    marker = ProjectPaths.from_root(tmp_path).pi_runtime_dir / "active"
+    if marker_text is None:
+        write_active_marker(tmp_path, runtime_lock, source, lock_sha256="0" * 64)
+    else:
+        marker.write_text(marker_text, encoding="utf-8")
+    monkeypatch.setattr("grid_agent.runtime.locator.shutil.which", lambda *_args, **_kwargs: "/opt/homebrew/bin/pi")
+
+    with pytest.raises(PiRuntimeLocatorError, match="active marker"):
+        PiRuntimeLocator(ProjectPaths.from_root(tmp_path).pi_runtime_dir, {"PATH": "/opt/homebrew/bin"}).resolve()
 
 
 def test_locator_uses_pi_from_path_when_no_explicit_or_managed_runtime(

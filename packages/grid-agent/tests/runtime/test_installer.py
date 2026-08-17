@@ -10,6 +10,7 @@ import pytest
 
 from grid_agent.application.paths import ProjectPaths
 from grid_agent.runtime.installer import PiRuntimeInstaller, PiRuntimeInstallerError
+from grid_agent.runtime.locator import PiRuntimeLocator, PiRuntimeLocatorError
 from grid_agent.runtime.lock import PiRuntimeLock, PiRuntimeLockError
 
 
@@ -55,6 +56,10 @@ class FakeRunner:
             return subprocess.CompletedProcess(list(argv), 1, "", "patch does not apply")
         if list(argv)[:2] == ["git", "apply"] and self.fail_patch_apply:
             return subprocess.CompletedProcess(list(argv), 1, "", "patch apply exploded")
+        if list(argv) == ["git", "clean", "-fdx"]:
+            stale_cli = cwd / "packages/coding-agent/dist/cli.js"
+            if stale_cli.exists():
+                stale_cli.unlink()
         if list(argv) == ["npm", "run", "build"]:
             if self.fail_build:
                 return subprocess.CompletedProcess(list(argv), 1, "", "build exploded")
@@ -138,7 +143,7 @@ def test_installer_uses_detached_pinned_commit(tmp_path: Path, fake_runner: Fake
     assert ["git", "fetch", "--depth", "1", "origin", runtime_lock.commit] in fake_runner.calls
     assert ["git", "checkout", "--detach", runtime_lock.commit] in fake_runner.calls
     assert ["git", "reset", "--hard", runtime_lock.commit] in fake_runner.calls
-    assert ["git", "clean", "-fd"] in fake_runner.calls
+    assert ["git", "clean", "-fdx"] in fake_runner.calls
     assert ["git", "apply", "--check", str(runtime_lock.patches[0].path)] in fake_runner.calls
     assert ["git", "apply", str(runtime_lock.patches[0].path)] in fake_runner.calls
     assert ["npm", "ci"] in fake_runner.calls
@@ -147,9 +152,9 @@ def test_installer_uses_detached_pinned_commit(tmp_path: Path, fake_runner: Fake
         ["git", "reset", "--hard", runtime_lock.commit]
     )
     assert fake_runner.calls.index(["git", "reset", "--hard", runtime_lock.commit]) < fake_runner.calls.index(
-        ["git", "clean", "-fd"]
+        ["git", "clean", "-fdx"]
     )
-    assert fake_runner.calls.index(["git", "clean", "-fd"]) < fake_runner.calls.index(
+    assert fake_runner.calls.index(["git", "clean", "-fdx"]) < fake_runner.calls.index(
         ["git", "apply", "--check", str(runtime_lock.patches[0].path)]
     )
     assert fake_runner.calls.index(["git", "apply", str(runtime_lock.patches[0].path)]) < fake_runner.calls.index(["npm", "ci"])
@@ -217,6 +222,30 @@ def test_failed_build_never_becomes_active(tmp_path: Path, runtime_lock: PiRunti
 
     active = tmp_path / ".grid-agent/runtime/pi/active"
     assert not active.exists()
+
+
+def test_failed_build_removes_stale_marker_and_ignored_cli_output(tmp_path: Path, runtime_lock: PiRuntimeLock) -> None:
+    paths = ProjectPaths.from_root(tmp_path)
+    source = paths.pi_runtime_dir / "source"
+    stale_cli = source / runtime_lock.executable
+    stale_cli.parent.mkdir(parents=True, exist_ok=True)
+    stale_cli.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    paths.pi_runtime_dir.mkdir(parents=True, exist_ok=True)
+    (paths.pi_runtime_dir / "active").write_text(
+        f"{source}\n"
+        f"commit={runtime_lock.commit}\n"
+        f"lock_sha256={runtime_lock.sha256}\n"
+        f"patches_sha256={runtime_lock.patches_sha256}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PiRuntimeInstallerError, match="npm run build"):
+        PiRuntimeInstaller(runtime_lock, paths.pi_runtime_dir, runner=FakeRunner(fail_build=True)).install()
+
+    assert not (paths.pi_runtime_dir / "active").exists()
+    assert not stale_cli.exists()
+    with pytest.raises(PiRuntimeLocatorError):
+        PiRuntimeLocator(paths.pi_runtime_dir, {}).resolve()
 
 
 def test_active_marker_records_lock_and_patch_identity(
