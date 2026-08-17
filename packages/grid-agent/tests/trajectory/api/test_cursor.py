@@ -39,7 +39,8 @@ def test_cursor_round_trip_and_tamper_detection(tmp_path: Path) -> None:
 
     assert codec.decode(encoded, expected=expected_cursor()) == state
     decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-    tampered = base64.urlsafe_b64encode(decoded[:-1] + b"x").decode("ascii").rstrip("=")
+    tampered_bytes = decoded[:-1] + bytes((decoded[-1] ^ 1,))
+    tampered = base64.urlsafe_b64encode(tampered_bytes).decode("ascii").rstrip("=")
     with pytest.raises(CursorError, match="tampered"):
         codec.decode(tampered, expected=expected_cursor())
 
