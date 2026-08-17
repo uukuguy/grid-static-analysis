@@ -14,6 +14,7 @@ import pytest
 from grid_agent.analysis.models import AnalysisContext
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.contracts import AnswerEnvelope
+from grid_agent.runtime.lock import PiRuntimeLock
 from grid_agent.trajectory.reader import RunEventReader
 
 
@@ -53,7 +54,6 @@ class ScriptedAnalysis:
             cwd=self.project_root,
             env={
                 **os.environ,
-                "GRID_AGENT_PI_COMMAND": str(self.pi_path),
                 "GRID_AGENT_LLM_PROVIDER": "openai",
                 "GRID_AGENT_LLM_MODEL": "gpt-5.5",
                 "OPENAI_API_KEY": "test-only-secret",
@@ -71,7 +71,21 @@ def scripted_analysis(tmp_path: Path) -> ScriptedAnalysis:
     pi_path = tmp_path / "scripted-continuous-pi.py"
     pi_path.write_text(_SCRIPTED_PI, encoding="utf-8")
     pi_path.chmod(0o755)
-    return ScriptedAnalysis(project_root=ROOT, pi_path=pi_path, artifact_root=artifact_root, tmp_path=tmp_path)
+    cli = ROOT / ".grid-agent/runtime/pi/source" / PiRuntimeLock.load(ROOT / "configs/runtime/pi-runtime.lock.json").executable
+    original = cli.read_bytes()
+    scripted_path = cli.with_name("grid-agent-scripted-pi.py")
+    scripted_path.write_bytes(pi_path.read_bytes())
+    cli.write_text(
+        'import { spawnSync } from "node:child_process";\n'
+        'const result = spawnSync(process.env.PYTHON ?? "python3", [new URL("./grid-agent-scripted-pi.py", import.meta.url).pathname, ...process.argv.slice(2)], { stdio: "inherit" });\n'
+        'process.exit(result.status ?? 1);\n',
+        encoding="utf-8",
+    )
+    try:
+        yield ScriptedAnalysis(project_root=ROOT, pi_path=pi_path, artifact_root=artifact_root, tmp_path=tmp_path)
+    finally:
+        cli.write_bytes(original)
+        scripted_path.unlink(missing_ok=True)
 
 
 def test_continuous_analysis_generalizes_active_model_constraints_and_result_reuse(
