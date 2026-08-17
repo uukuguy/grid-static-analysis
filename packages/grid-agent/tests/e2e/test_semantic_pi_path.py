@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from grid_agent.contracts import AnswerEnvelope
+from grid_agent.runtime.lock import PiRuntimeLock
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -123,6 +124,9 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         encoding="utf-8",
     )
     pi.chmod(0o755)
+    managed_cli = ROOT / ".grid-agent/runtime/pi/source" / PiRuntimeLock.load(ROOT / "configs/runtime/pi-runtime.lock.json").executable
+    original_cli = managed_cli.read_bytes()
+    managed_script = managed_cli.with_name("grid-agent-scripted-pi.py")
 
     try:
         completed = subprocess.run(
@@ -222,9 +226,16 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         else:
             assert order[:2] == ["before_model_request", "provider_enter"]
 
-        questions = tmp_path / "questions.txt"
-        questions.write_text("IEEE-39节点系统中线路11连接哪两个母线?\n", encoding="utf-8")
-        report = subprocess.run(
+            questions = tmp_path / "questions.txt"
+            questions.write_text("IEEE-39节点系统中线路11连接哪两个母线?\n", encoding="utf-8")
+            managed_script.write_bytes(pi.read_bytes())
+            managed_cli.write_text(
+                'import { spawnSync } from "node:child_process";\n'
+                'const result = spawnSync(process.env.PYTHON ?? "python3", [new URL("./grid-agent-scripted-pi.py", import.meta.url).pathname, ...process.argv.slice(2)], { stdio: "inherit" });\n'
+                'process.exit(result.status ?? 1);\n',
+                encoding="utf-8",
+            )
+            report = subprocess.run(
             [
                 "uv",
                 "run",
@@ -258,4 +269,6 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         assert jsonl_records[0]["answer_output"] == "线路11连接母线6与11。"
         shutil.rmtree(report_root, ignore_errors=True)
     finally:
+        managed_cli.write_bytes(original_cli)
+        managed_script.unlink(missing_ok=True)
         shutil.rmtree(runs_path, ignore_errors=True)

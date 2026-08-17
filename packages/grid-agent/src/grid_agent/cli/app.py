@@ -688,7 +688,7 @@ def run(
                 max_retries=resolved.config.max_retries,
             )
             runtime_lock = PiRuntimeLock.load(project_paths.runtime_lock)
-            command = PiRuntimeLocator(project_paths.pi_runtime_dir, runtime_environment, runtime_lock=runtime_lock).resolve(require_managed=True)
+            command = PiRuntimeLocator(project_paths.pi_runtime_dir, runtime_environment, runtime_lock=runtime_lock).resolve()
             _install_gridctl(workspace)
             gridctl = GridctlClient(
                 executable=workspace.bin_path / "gridctl",
