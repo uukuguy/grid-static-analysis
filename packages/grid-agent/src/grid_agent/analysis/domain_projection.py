@@ -138,7 +138,14 @@ def _calculation(
 ) -> DomainStateDelta:
     result_ref = _required_string(result, "result_ref")
     summary = {}
-    for field in ("total_active_loss", "constraint_evaluation", "status", "operation", "dataset_count"):
+    for field in (
+        "total_active_loss",
+        "constraint_evaluation",
+        "status",
+        "operation",
+        "dataset_count",
+        "summary",
+    ):
         if field in result:
             summary[field] = result[field]
     calculation = CalculationState(

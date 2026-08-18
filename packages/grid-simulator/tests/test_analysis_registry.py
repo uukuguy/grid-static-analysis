@@ -9,7 +9,9 @@ def test_analysis_operation_catalog_describes_closed_powerflow_schema(grid) -> N
     described = grid.call("analysis.operation.describe", {"operation": "powerflow.ac"})
     assert described["operation"] == "powerflow.ac"
     assert described["options_schema"]["additionalProperties"] is False
-    assert described["options_schema"]["properties"]["algorithm"]["enum"] == ["nr", "iwamoto_nr", "bfsw"]
+    assert described["options_schema"]["properties"]["algorithm"]["enum"] == [
+        "nr", "iwamoto_nr", "bfsw", "gs", "fdbx", "fdxb"
+    ]
 
 
 def test_analysis_run_rejects_unknown_operation_options_before_execution(grid, context_ref: str) -> None:

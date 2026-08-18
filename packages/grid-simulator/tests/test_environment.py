@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 
-def test_environment_distinguishes_future_capability_families(grid) -> None:
+def test_environment_distinguishes_published_and_excluded_capability_families(grid) -> None:
     result = grid.call("environment.describe", {})
 
     families = {item["id"]: item["availability"] for item in result["capability_families"]}
     assert families["power-flow"] == "published"
     assert families["contingency"] == "published"
-    assert families["opf"] == "not_published"
-    assert families["short-circuit"] == "not_published"
-    assert families["state-estimation"] == "not_published"
+    assert families["opf"] == "published"
+    assert families["short-circuit"] == "published"
+    assert families["state-estimation"] == "published"
+    assert families["diagnostic"] == "published"
     assert families["time-series"] == "not_published"
     assert families["model-lifecycle"] == "published"
 

@@ -33,7 +33,7 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 - `topology.components.get`: returns connected component summaries.
 - `analysis.operation.list`: lists published static analysis operations.
 - `analysis.operation.describe`: returns the closed options schema for one operation.
-- `analysis.run`: executes a registered operation and persists every generated `res_*` table.
+- `analysis.run`: executes registered AC/DC/three-phase flow, AC/DC OPF, IEC 60909, state-estimation/chi-square/bad-data, or diagnostic operations; it returns a stable summary and persists every generated `res_*` table.
 - `analysis.powerflow.ac.run`: runs AC steady-state power flow.
 - `result.dataset.list`: lists all result tables stored under a `result_ref`.
 - `result.dataset.describe`: reports result fields, types, units, nullability, and provenance.
@@ -65,6 +65,9 @@ The catalog reports capability IDs and tool names. Model context outputs include
 
 - Endpoint answer: `context.open` -> `topology.branch.endpoints.get` -> cite `evidence_ref`.
 - Generic result lookup: `context.open` -> `analysis.operation.describe` -> `analysis.run` -> `result.dataset.list` -> describe/query.
+- Short circuit: open or create a model with IEC 60909 source/element parameters -> describe `short_circuit.iec60909` -> run -> query `result.res_bus_sc` and optional branch tables.
+- State estimation: prepare model measurements -> run `state_estimation.estimate`; use the separately described chi-square and bad-data-removal operations when requested.
+- OPF: ensure model flexibilities, constraints, and costs are present -> run `opf.ac` or `opf.dc` -> inspect `summary`, `result.res_objective`, and network result tables.
 - Highest loaded lines: `context.open` -> `analysis.powerflow.ac.run` -> `result.branches.rank`.
 - Scenario delta: run the same operation on parent and derived contexts, then call `result.compare` with explicit dataset, keys, and fields.
 - N-1 of critical branches: `context.open` -> resolve or rank branch refs -> `analysis.contingency.n_minus_one.run`.

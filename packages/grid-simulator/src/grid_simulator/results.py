@@ -101,6 +101,7 @@ class ResultStore:
             "result_ref": result_ref,
             "facts": {
                 "status": outcome.status,
+                "summary": outcome.metadata,
                 "datasets": [
                     {"dataset": name, "row_count": data["row_count"]}
                     for name, data in datasets.items()

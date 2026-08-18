@@ -7,7 +7,7 @@ description: Analyze registered power-system networks with pandapower 3.4.0 doma
 
 ## Operating Rules
 
-Use this Skill when a user asks about a registered power-system model, network facts, topology, AC steady-state power flow, branch ranking, N-1 static contingencies, result interpretation, or evidence-backed grid conclusions.
+Use this Skill for registered power-system models, network facts, topology, AC/DC/three-phase flow, OPF, IEC 60909 short circuit, state estimation, diagnostics, contingencies, result interpretation, or evidence-backed grid conclusions.
 
 The model resolves natural language, entity names, aliases, and analysis intent. The framework validates typed capability calls, argument schemas, current-run references, and evidence. Do not treat the model's text recognition as validation.
 
@@ -26,7 +26,7 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 - Model, creator, and runtime catalogs: [capability-map](references/capability-map.md), [model-and-context](references/model-and-context.md).
 - Network elements and datasets: call `model.dataset.list`, then use [network-elements](references/network-elements.md) for describe/query and element resolution.
 - Topology endpoints and components: [topology-analysis](references/topology-analysis.md).
-- Registered analysis discovery and execution: call `analysis.operation.list`, then `analysis.operation.describe` and `analysis.run`; see [ac-powerflow](references/ac-powerflow.md) for AC semantics.
+- Registered analysis discovery and execution: call `analysis.operation.list`, then `analysis.operation.describe` and `analysis.run`; operations include AC/DC/three-phase flow, AC/DC OPF, IEC 60909, estimation/chi-square/bad-data removal, and diagnostics. See [ac-powerflow](references/ac-powerflow.md) for the dedicated AC compatibility contract.
 - N-1 static contingency: [contingency-analysis](references/contingency-analysis.md).
 - Model-owned voltage and loading limits: `model.constraints.describe` with the active `context_ref`; identify model, user, or named-standard sources explicitly.
 - Complete result-table access, aggregation, comparison, branch ranking, and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
@@ -66,6 +66,6 @@ If evidence cannot be read, preserve the original reference and report the artif
 
 ## Capability Status
 
-Published executable capabilities are returned by `environment.describe`. The model/data surface includes `model.creator.list`, `model.creator.describe`, `model.create`, `model.revision.derive`, `model.dataset.list`, `model.dataset.describe`, `model.dataset.query`, universal `model.element.get`, and the versioned multi-network catalog. The analysis/result substrate includes `analysis.operation.list`, `analysis.operation.describe`, `analysis.run`, `result.dataset.list`, `result.dataset.describe`, `result.dataset.query`, `result.aggregate`, and `result.compare`.
+Published executable capabilities are returned by `environment.describe`. The model/data surface includes `model.creator.list`, `model.creator.describe`, `model.create`, `model.revision.derive`, `model.dataset.list`, `model.dataset.describe`, `model.dataset.query`, universal `model.element.get`, and the versioned multi-network catalog. The analysis/result substrate includes the complete registered native static-analysis family through `analysis.run`, plus `result.dataset.list`, `result.dataset.describe`, `result.dataset.query`, `result.aggregate`, and `result.compare`.
 
 The complete pandapower static-analysis surface is current implementation scope. Until a matrix row is published in `environment.describe`, report that exact runtime gap without substituting another calculation. Time-series/control, plotting, arbitrary I/O/Python and unpinned external solver backends are intentional exclusions.

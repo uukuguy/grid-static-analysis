@@ -115,11 +115,11 @@
 **Interfaces:**
 - Registers: `powerflow.ac`, `powerflow.dc`, `powerflow.three_phase`, `opf.ac`, `opf.dc`, `short_circuit.iec60909`, `state_estimation.*`, `diagnostic.run`.
 
-- [ ] Add RED/GREEN cycles for AC, DC and three-phase power flow with all documented native options.
-- [ ] Add RED/GREEN cycles for AC/DC OPF including objective cost result tables and infeasibility outcomes.
-- [ ] Add RED/GREEN cycles for IEC 60909 max/min, fault types, selected buses and branch results.
-- [ ] Add RED/GREEN cycles for state estimation, observability/chi-square and bad-data removal.
-- [ ] Add RED/GREEN cycles for diagnostics with normalized findings.
+- [x] Add RED/GREEN cycles for AC, DC and three-phase power flow with all documented native options.
+- [x] Add RED/GREEN cycles for AC/DC OPF including objective cost result tables and infeasibility outcomes.
+- [x] Add RED/GREEN cycles for IEC 60909 max/min, fault types, selected buses and branch results.
+- [x] Add RED/GREEN cycles for state estimation, observability/chi-square and bad-data removal.
+- [x] Add RED/GREEN cycles for diagnostics with normalized findings.
 
 ### Task 7: Complete topology, contingency, risk, equivalent and protection packages
 

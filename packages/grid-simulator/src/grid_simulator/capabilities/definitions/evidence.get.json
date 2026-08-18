@@ -57,6 +57,7 @@
               "branch_result_count": {"type": "integer", "minimum": 0},
               "datasets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["dataset", "row_count"], "properties": {"dataset": {"type": "string", "pattern": "^result\\.res_[a-z0-9_]+$"}, "row_count": {"type": "integer", "minimum": 0}}}},
               "status": {"type": "string", "enum": ["succeeded", "partial", "failed", "non_converged"]},
+              "summary": {"type": "object", "x-schema-described": true, "additionalProperties": {}},
               "max_loading_percent": {"type": "number"},
               "min_vm_pu": {"type": "number"},
               "max_vm_pu": {"type": "number"},

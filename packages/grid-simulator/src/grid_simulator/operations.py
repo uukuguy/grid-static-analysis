@@ -290,9 +290,14 @@ def _analysis_run(
     except Exception as exc:
         raise _failure(
             "analysis_failed",
-            f"Analysis operation {operation!r} failed inside pandapower",
+            f"Analysis operation {operation!r} failed inside pandapower: {exc}",
             phase="execute",
             allowed_recovery_actions=("inspect_network_diagnostics", "report_failure"),
+            details={
+                "operation": operation,
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+            },
         ) from exc
     try:
         persisted = ResultStore(workspace).persist(
@@ -309,6 +314,7 @@ def _analysis_run(
         "revision_ref": context.revision_ref,
         "operation": outcome.operation,
         "status": outcome.status,
+        "summary": outcome.metadata,
         "datasets": [
             {"dataset": name, "row_count": data["row_count"]}
             for name, data in persisted.document["datasets"].items()

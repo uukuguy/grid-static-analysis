@@ -21,9 +21,10 @@ CAPABILITY_FAMILIES = (
     CapabilityFamilyStatus(id="result-analysis", availability="published", reason="Typed result summaries and rankings"),
     CapabilityFamilyStatus(id="contingency", availability="published", reason="Static single-branch outage analysis"),
     CapabilityFamilyStatus(id="evidence", availability="published", reason="Content-addressed result evidence"),
-    CapabilityFamilyStatus(id="opf", availability="not_published", reason="No project semantic OPF capability is published"),
-    CapabilityFamilyStatus(id="short-circuit", availability="not_published", reason="No project semantic short-circuit capability is published"),
-    CapabilityFamilyStatus(id="state-estimation", availability="not_published", reason="No project semantic state-estimation capability is published"),
+    CapabilityFamilyStatus(id="diagnostic", availability="published", reason="Normalized pandapower network diagnostics"),
+    CapabilityFamilyStatus(id="opf", availability="published", reason="AC and DC optimal power flow with typed outcomes"),
+    CapabilityFamilyStatus(id="short-circuit", availability="published", reason="IEC 60909 short-circuit analysis"),
+    CapabilityFamilyStatus(id="state-estimation", availability="published", reason="Estimation, chi-square analysis, and bad-data removal"),
     CapabilityFamilyStatus(id="time-series", availability="not_published", reason="No project semantic time-series capability is published"),
     CapabilityFamilyStatus(id="model-lifecycle", availability="published", reason="Registered catalog, declarative creation, and immutable typed revisions"),
 )
