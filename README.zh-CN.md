@@ -116,7 +116,7 @@ make validate
 | --- | --- |
 | `packages/grid-agent/` | CLI、Pi/LLM 运行时、上下文、轨迹、报告和答案封装 |
 | `packages/grid-simulator/` | `gridctl`、登记模型、pandapower 执行、结果和证据 |
-| `packages/pi-grid-tools/` | 项目限定的 Pi 工具、指南、请求捕获和答案提交 |
+| `packages/pi-grid-tools/` | 项目限定的 Pi 工具、指南和请求捕获 |
 | `packages/trajectory-workbench/` | 只读 React/TypeScript 轨迹调查 UI |
 | `configs/` | 版本化能力、策略、Provider 目录和运行配置 |
 | `validation/` | 离线、脚本 Pi、语义和可选 Provider 验证套件 |

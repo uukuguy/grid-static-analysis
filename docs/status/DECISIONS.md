@@ -1,5 +1,13 @@
 # Architectural Decisions
 
+## 2026-08-19 — Answer submission is controller-owned
+
+- **Decision:** Pi/LLM may use only project-defined grid tools and `grid_guide_open`; after tool use it returns ordinary reader-facing final text. `grid-agent` deterministically commits that text and binds the current turn's consumed and produced result/evidence lineage.
+- **Rationale:** provider and model tool-call behavior must not decide whether a valid analysis answer is persisted. Moving submission into the controller makes online `run` and continuous `analysis` provider-independent while preserving the simulator boundary.
+- **Report consequence:** reports are evidence-first projections: recorded simulator/tool results appear before model prose, failed turns retain successful tool values, and integrity diagnostics may report broken artifacts or references without semantically re-evaluating simulator facts.
+- **Specification:** `docs/superpowers/specs/2026-08-18-controller-owned-answer-submission-and-evidence-first-report-design.md`
+- **Plan:** `docs/superpowers/plans/2026-08-19-controller-owned-answer-submission-and-evidence-first-report.md`
+
 ## 2026-08-18 — Model-facing contracts must publish exact composition syntax
 
 - **Decision:** dynamic creator contracts publish the exact `{"element_ref":"<earlier_local_id>"}` encoding and transaction ordering rule; guide tools enumerate only the resource IDs present in the generated guide index.

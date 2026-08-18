@@ -30,8 +30,10 @@ static analysis of registered power-system networks.
 
 ## Model Capability Boundary
 
-Pi/LLM may use only project-defined grid tools, `grid_guide_open`, bounded
-context/decision tools published by the project, and `grid_submit_answer`.
+Pi/LLM may use only project-defined grid tools, including bounded
+context/decision tools published by the project, and `grid_guide_open`. The
+model returns reader-facing final text; `grid-agent` binds current-turn
+result/evidence references and commits the answer deterministically.
 
 Do not expose or add model capabilities for:
 

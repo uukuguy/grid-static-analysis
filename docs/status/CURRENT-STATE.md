@@ -12,13 +12,13 @@
 ## Current Architecture
 
 - CLI: `grid-agent` writes exactly one JSON answer envelope to stdout; progress and diagnostics stay on stderr.
-- Agent runtime: managed Pi exposes only project grid tools, guides, bounded context/decision tools, and answer submission; the LLM boundary owns provider-specific formats.
+- Agent runtime: managed Pi exposes only project grid tools, guides, and bounded context/decision tools; the LLM boundary owns provider-specific formats, while `grid-agent` commits ordinary model final text with controller-bound current-turn result/evidence lineage.
 - Canonical capture: Pi atomically persists provider-independent model inputs before provider I/O without waiting for observer acknowledgement.
 - Native trajectory: a Python-owned typed event spine records model requests/responses, tools, decisions, claims, context revisions, results, and evidence as the authoritative chronology.
-- Observation: polling skips already-seen request artifacts before parsing; projection, validation, and report checks are advisory and cannot terminate valid agent work.
+- Observation: polling skips already-seen request artifacts before parsing; projection, validation, and integrity diagnostics are deterministic consumers of recorded execution and cannot semantically replace simulator truth.
 - Simulator: `gridctl` exclusively owns registered network access and deterministic pandapower 3.4.0 calculations through `grid-capability` protocol 1.0.
 - Analysis context: bounded model-facing views retain active model, sourced constraints, reusable calculations, scenarios, facts, lineage, and explicit omission metadata.
-- Reporting: reports reconstruct per-turn execution from native event scope and link persisted current-run result/evidence artifacts.
+- Reporting: reports render recorded simulator/tool results before model prose, preserve successful tool values in failed turns, and link persisted current-run result/evidence artifacts.
 - Workbench: the loopback read-only trajectory API and Business/Agent/Context/Evidence workbench consume deterministic projections without mutating runs.
 - Verification: unit, E2E, offline/scripted validation, and provider-backed continuous Analysis cover the stdout contract, capability boundary, trajectory replay, evidence, and reports.
 

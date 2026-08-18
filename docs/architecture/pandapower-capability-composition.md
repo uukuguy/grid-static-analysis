@@ -74,7 +74,12 @@ grid-agent / Pi / LLM
   - 理解问题与分析意图
   - 读取工具 Schema 和语义说明
   - 规划并调用注册工具
-  - 提交最终答案和引用
+  - 返回面向读者的最终文本
+      |
+      v
+grid-agent controller
+  - 绑定当前回合结果/证据引用
+  - 确定性提交答案
       |
       v  grid-capability/1.0
 gridctl / grid-simulator
@@ -91,7 +96,7 @@ pandapower 3.4.0
 职责边界如下：
 
 - **LLM** 负责语义推理和下一步选择，不负责猜测潮流、损耗、电压、排序或故障结果。
-- **`grid-agent`** 负责问题编排、统一工具目录、Pi 运行、连续上下文、轨迹和最终答案封装。
+- **`grid-agent`** 负责问题编排、统一工具目录、Pi 运行、连续上下文、轨迹、当前回合结果/证据绑定和最终答案封装。
 - **`gridctl` / `grid-simulator`** 负责所有网络事实和确定性计算，以及模型、结果和证据的内容寻址。
 - **pandapower 3.4.0** 负责具体电力系统算法；其对象始终留在模拟器边界内。
 - **观察、投影和审计层** 负责记录和解释执行过程，不应替代或改写成功的主计算结果。
@@ -133,7 +138,7 @@ pandapower 3.4.0
 相关实现：
 
 - [`packages/grid-agent/src/grid_agent/tools/catalog.py`](../../packages/grid-agent/src/grid_agent/tools/catalog.py)：加载、校验、筛选和物化统一工具目录。
-- [`packages/pi-grid-tools/src/domain-tools.mjs`](../../packages/pi-grid-tools/src/domain-tools.mjs)：遍历工具目录并注册 Pi 工具，同时提供指南和答案提交工具。
+- [`packages/pi-grid-tools/src/domain-tools.mjs`](../../packages/pi-grid-tools/src/domain-tools.mjs)：遍历工具目录并注册 Pi 工具，同时提供指南工具。
 - [`packages/grid-simulator/src/grid_simulator/operations.py`](../../packages/grid-simulator/src/grid_simulator/operations.py)：校验 capability、输入、调度结果和输出契约。
 - [`packages/grid-simulator/src/grid_simulator/analysis_registry.py`](../../packages/grid-simulator/src/grid_simulator/analysis_registry.py)：管理通用分析操作注册表及操作选项 Schema。
 - [`packages/grid-simulator/src/grid_simulator/bindings/__init__.py`](../../packages/grid-simulator/src/grid_simulator/bindings/__init__.py)：汇总潮流、OPF、短路、估计、诊断、拓扑和保护等操作绑定。
@@ -154,7 +159,7 @@ pandapower 3.4.0
 - 有界的连续分析上下文视图；
 - 前面步骤已经得到的模型、场景、结果、证据、事实和限制。
 
-LLM 据此选择下一项工具。工具返回以后，框架验证并投影结果，再将新的上下文交给下一次模型推理。这个循环持续到 LLM 调用 `grid_submit_answer` 提交答案。
+LLM 据此选择下一项工具。工具返回以后，框架验证并投影结果，再将新的上下文交给下一次模型推理。工具使用完成后，LLM 返回普通的面向读者最终文本；`grid-agent` 控制器把当前回合已经消费和产生的结果/证据引用绑定到答案并持久化。
 
 ### 5.2 连续组合循环
 
@@ -179,7 +184,10 @@ grid-agent 验证引用并投影语义状态
         +----> 下一轮 LLM 推理与工具选择
         |
         v
-grid_submit_answer 提交答案、result_refs、claim_evidence_refs
+模型最终文本
+        |
+        v
+grid-agent 控制器提交答案、result_refs、claim_evidence_refs
 ```
 
 分析运行器在每道指令之前物化最新上下文并调用 Pi。上下文视图包含活动模型、约束、场景、可复用计算、已验证事实、已完成问题和未解决限制。相关实现位于：
@@ -206,7 +214,7 @@ grid_submit_answer 提交答案、result_refs、claim_evidence_refs
 6. LLM 根据是否存在失电区域决定是否继续执行后续分支。
 7. `analysis.run(operation=powerflow.dc)`：在满足条件时运行 DC 潮流。
 8. `result.dataset.query`、`result.aggregate` 或 `result.compare`：读取、汇总或比较基准与故障场景。
-9. `grid_submit_answer`：提交可读结论，并分别携带主结果引用和结论证据引用。
+9. LLM 返回可读结论；`grid-agent` 控制器分别绑定主结果引用和结论证据引用并提交答案。
 
 这个链条不是硬编码的固定流程。能力目录提供语义和状态关系，LLM 负责根据问题及中间结果进行规划，模拟器负责逐步验证和执行。
 
@@ -239,7 +247,7 @@ grid_submit_answer 提交答案、result_refs、claim_evidence_refs
 - 支持列表、描述、查询、聚合和跨结果比较；
 - 记录结果生产与后续消费的血缘关系。
 
-最终提交时，`grid_submit_answer` 将面向用户的文字与 `result_refs`、`claim_evidence_refs` 分开绑定。运行时验证这些引用确实来自当前运行。
+最终提交时，`grid-agent` 控制器将模型面向用户的文字与 `result_refs`、`claim_evidence_refs` 分开绑定。运行时验证这些引用确实来自当前运行；模型正文不得暴露内部 result/evidence/context/asset/constraint/path/nonce 标识。
 
 ## 7. 这种架构能保证什么
 

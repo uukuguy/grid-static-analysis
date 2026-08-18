@@ -9,4 +9,5 @@ Invariant requirements:
 - Without an applicable constraint, report only raw values and do not label them normal, overloaded, or risky.
 - Keep provider credentials, local files, raw simulator internals, and implementation details out of the answer.
 - Distinguish unavailable capabilities, missing prerequisites, non-applicable constraints, and calculation failures with their concrete reason.
-- Return ordinary reader-facing final text. Do not expose internal result/evidence references in prose. The controller binds current-turn result and evidence lineage from successful simulator tool events.
+- After completing the required grid-tool calls, return the final user-facing answer as ordinary assistant text.
+- Do not include internal result, evidence, context, asset, constraint, path, or nonce identifiers in that text; the runtime binds current-turn lineage.

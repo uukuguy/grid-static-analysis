@@ -8,13 +8,16 @@ for the append-only ledger event format.
 ## Ownership Boundaries
 
 `grid-agent` owns the continuous analysis workspace, copied input ledger,
-turn lifecycle, Pi runtime launch, compact model-facing context view, answer
-draft acceptance, trace redaction, and final report projection. `gridctl`
-owns simulator-side state, pandapower execution, deterministic result/evidence
-artifacts, and every numerical or network-specific claim. Pi may only interact
-with project-defined grid tools, `grid_guide_open`, and `grid_submit_answer`;
-it must not receive shell, generic file I/O, raw pandapower objects, arbitrary
-Python, or legacy query aliases.
+turn lifecycle, Pi runtime launch, compact model-facing context view,
+controller-owned answer submission, trace redaction, and final report
+projection. `gridctl` owns simulator-side state, pandapower execution,
+deterministic result/evidence artifacts, and every numerical or
+network-specific claim. Pi may only interact with project-defined grid tools
+and `grid_guide_open`; it must not receive shell, generic file I/O, raw
+pandapower objects, arbitrary Python, legacy query aliases, or a model-visible
+answer persistence tool. The model returns reader-facing final text, and
+`grid-agent` binds current-turn result/evidence references before committing
+the answer deterministically.
 
 Simulator-backed runs write current-run evidence under `runs/<analysis_id>/`.
 Offline informational answers do not create analysis context evidence.
@@ -99,10 +102,12 @@ A ledger begins with `analysis.started`, which materializes input/runtime
 records and revision 1. Each instruction then opens exactly one active turn
 with `turn.started`. During the active turn, semantic tool events are reduced
 into observations, baselines, results, evidence, facts, diagnostics, and
-limitations. `turn.completed` closes the active turn and snapshots consumed
-and produced references. After all turns close successfully,
-`analysis.completed` finalizes the run; terminal setup, Pi, simulator, or
-integrity failures record `analysis.failed` when no active turn remains.
+limitations. `answer.submitted` records the controller-owned answer commit,
+then `turn.completed` closes the active turn and snapshots consumed and
+produced references. After all turns close successfully, `analysis.completed`
+finalizes the run; terminal setup, Pi, simulator, empty model-final-text,
+controller-submission, or integrity failures record `analysis.failed` when no
+active turn remains.
 
 No new turn may begin while `current_turn` is set. Result and evidence
 registration requires an active matching turn unless the reducer explicitly
@@ -131,13 +136,13 @@ and producer-turn provenance.
 `tool.failed`, `audit.diagnostic.recorded`, and diagnostic
 `limitation.recorded` events preserve failure evidence without inventing an
 answer. `limitation.resolved` removes an unresolved limitation by reference.
-`turn.completed` archives the accepted answer JSON path and freezes per-turn
-ref lineage. `analysis.completed` and `analysis.failed` set terminal status.
 `answer.submitted` is the authoritative ledger event for an accepted answer.
-It is appended before `turn.completed` and records the turn binding, accepted
-answer artifact path and hash, archived draft path, result refs, and claimed
-evidence refs. `turn.completed` then freezes the turn lifecycle and answer
-artifact summary.
+It is emitted by the controller, not by a model tool call. The event is
+appended before `turn.completed` and records the turn binding, accepted answer
+artifact path and hash, archived controller draft path, result refs, and
+claimed evidence refs. `turn.completed` then archives the accepted answer JSON
+path, freezes per-turn ref lineage, and records the answer artifact summary.
+`analysis.completed` and `analysis.failed` set terminal status.
 
 ## Content Integrity and Failure Boundaries
 
@@ -169,11 +174,12 @@ for every model injection, but never enter the authoritative context ledger or
 change its revision. Tool-derived context events retain their compact RPC
 `trace_sequence` in that ledger.
 
-Context projection and answer audit are advisory consumers of the successful
-tool conversation. A projection failure records a concrete diagnostic and may
-leave a semantic record absent, but it does not overwrite an accepted answer
-or terminate later turns. Simulator failures and reference integrity failures
-remain visible and are not relabeled as a generic execution limitation.
+Context projection and integrity diagnostics are deterministic consumers of the
+successful tool conversation. A projection failure records a concrete
+diagnostic and may leave a semantic record absent, but it does not overwrite an
+accepted answer or semantically re-evaluate simulator facts. Simulator failures
+and reference integrity failures remain visible and are not relabeled as a
+generic execution limitation.
 
 ## Typed Domain State
 
@@ -229,24 +235,25 @@ are not offered as applicable inputs to the next instruction.
 
 `report.md` is a projection from the finalized context and workspace files.
 It is organized for an operator reading one instruction at a time: **question
-→ accepted answer → execution information → simulation context → actual tool
-process → evidence sources**. Tool steps are reconstructed from the recorded
-start/result trace and are presented with semantic descriptions and durations.
-Evidence is associated with a turn by its produced and consumed references,
-because an evidence artifact can be registered globally while still supporting
-one specific answer. The main report links each turn to `turns/<ordinal>/trace.md`;
-that page records redacted tool inputs, structured outputs, timing, and links to
-the corresponding raw tool-result artifact.
-Internal content-addressed references are replaced by a provenance marker in
-the answer body so that conclusions are not
-buried under hashes; the accepted original answer remains linked as an
-artifact. Tool execution is derived only from recorded observations and shows
-the tool purpose, relevant human-readable input, and compact verified outcome;
-it does not reproduce hidden model reasoning. Runtime metadata, baseline,
-diagnostics, forensic artifact links, and the full result/evidence/observation
-reference index appear only in the collapsed audit appendix. Report diagnostics
-may explain missing or malformed artifacts, but the report must not infer
-simulator facts absent from the context.
+→ simulator and tool results → model conclusion → execution status and
+evidence → integrity diagnostics**. Tool steps are reconstructed from the
+recorded start/result trace and are presented with semantic descriptions,
+durations, and bounded structured result values before model prose. Evidence
+is associated with a turn by its produced and consumed references, because an
+evidence artifact can be registered globally while still supporting one
+specific answer. The main report links each turn to `turns/<ordinal>/trace.md`;
+that page records redacted tool inputs, structured outputs, timing, and links
+to the corresponding raw tool-result artifact.
+Internal content-addressed references are excluded from reader-facing prose so
+that conclusions are not buried under hashes; the accepted original answer
+remains linked as an artifact. Tool execution is derived only from recorded
+observations and shows the tool purpose, relevant human-readable input, and
+compact verified outcome; it does not reproduce hidden model reasoning.
+Runtime metadata, baseline, diagnostics, forensic artifact links, and the full
+result/evidence/observation reference index appear only in integrity
+diagnostic sections or linked artifacts. Report diagnostics may explain missing
+or malformed artifacts, but the report must not infer simulator facts absent
+from the context.
 
 ## Schema Evolution Rules
 

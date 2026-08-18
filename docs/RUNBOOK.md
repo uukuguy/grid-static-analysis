@@ -105,7 +105,7 @@ make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 ```
 
-`make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。Pi 只暴露项目生成的 `grid_*` domain tools、`grid_guide_open` 和 `grid_submit_answer`；不会启用通用 shell/read/write/edit 内置工具。
+`make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。Pi 只暴露项目生成的 `grid_*` domain tools 和 `grid_guide_open`；不会启用通用 shell/read/write/edit 内置工具。模型完成必要工具使用后返回普通面向读者的最终文本，`grid-agent` 控制器再确定性绑定当前回合的结果/证据引用并完成答案持久化。
 
 `make run-llm` 的 stdout 仍只输出最终 JSON；实时进度写到 stderr，包括运行耗时、provider/model、生效的超时与重试参数、输入与输出前 200 字摘要、Pi 工具事件、重试事件，以及超过 10 秒无事件时的等待提示。密钥字段会被隐藏。
 
@@ -113,7 +113,7 @@ make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪
 
 ## Skill 与工具边界
 
-Pi 只能访问项目发布的 grid domain tools、`grid_guide_open` 和 `grid_submit_answer`。工具描述由发布的 capability 契约生成；`skills/grid-static-analysis/` 说明如何组合不可变模型、完整网络/结果数据集、分析和证据。
+Pi 只能访问项目发布的 grid domain tools 和 `grid_guide_open`。工具描述由发布的 capability 契约生成；`skills/grid-static-analysis/` 说明如何组合不可变模型、完整网络/结果数据集、分析和证据。模型不得在回答正文中暴露内部 result/evidence/context/asset/constraint/path/nonce 标识；运行时根据当前回合已消费和已产生的 lineage 提交答案。
 
 当前发布面覆盖 60 个注册网络、声明式创建与不可变修订、全静态表访问、拓扑、AC/DC/三相潮流、AC/DC OPF、IEC 60909、状态估计、诊断、AC/DC N-1、模型约束越限、风险排序、电网等值和静态保护。`configs/capabilities/pandapower-3.4.0-static-analysis.json` 是范围矩阵，`environment.describe` 是运行时权威；动态仿真、时序控制、任意文件导入、任意 Python/I/O 和未固定的外部求解器仍是明确排除项。
 
@@ -124,9 +124,11 @@ Pi 只能访问项目发布的 grid domain tools、`grid_guide_open` 和 `grid_s
 - `runs/<question_id>/events.jsonl`：Pi 事件、工具调用和结果 trace。
 - `runs/<question_id>/tool-results/`：工具侧结果暂存目录。
 - `runs/<question_id>/evidence/`：当前运行的 context、model、network-fact、analysis 和 result 证据。
-- `runs/<question_id>/answer.json` 或 `answer-draft.json`：最终或提交草稿。
+- `runs/<question_id>/answer.json` 或 `answer-draft.json`：最终答案或控制器生成的提交草稿；连续分析中逐回合草稿位于 `turns/NNN/answer-draft.json`。
 
-在线答案草稿必须通过 `grid_submit_answer` 写入 `answer_output`、`result_refs` 和 `claim_evidence_refs`。验证器只检查这些结构化声明，不从 `answer_output` 文本中解析引用；`result_refs` 用来声明直接支撑最终结论的主结果，分析证据中已经关联的结果也会被自动定位、校验其当前运行归属和上下文一致性。拓扑事实可使用空 `result_refs`；AC、排序和 N-1 等结果型结论必须提供当前运行的主结果或与其相连的分析证据。
+在线运行不要求模型使用答案持久化工具。模型返回普通最终文本后，控制器写入 `answer_output`、`result_refs` 和 `claim_evidence_refs`，并验证这些引用确实来自当前运行；验证器不从 `answer_output` 文本中解析引用。`result_refs` 用来声明直接支撑最终结论的主结果，分析证据中已经关联的结果也会被自动定位、校验其当前运行归属和上下文一致性。拓扑事实可使用空 `result_refs`；AC、排序和 N-1 等结果型结论必须有当前运行的主结果或与其相连的分析证据。
+
+连续分析的 stderr 应显示分析工具调用和一次正常模型完成；trace 不应包含模型发起的 `grid_submit_answer` 调用。若任一必需回合失败，运行状态为 `failed`、CLI 退出码为 `1`，且 `report.md` 必须保留该回合已经成功返回的工具结果。
 
 最终答案只能引用当前运行中实际存在的 `evidence:sha256:*` 或 `result:sha256:*`。迁移和清理不会删除用户主工作树中的既有 `var/` 数据；本分支只使用新的 ignored `runs/` 和 `.grid-agent/` 布局。
 

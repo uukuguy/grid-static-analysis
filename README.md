@@ -149,7 +149,7 @@ explicit credentials, and may incur provider charges.
 | --- | --- |
 | `packages/grid-agent/` | CLI, Pi/LLM runtime, context, trajectory, reports, and answer envelope |
 | `packages/grid-simulator/` | `gridctl`, registered models, pandapower execution, results, and evidence |
-| `packages/pi-grid-tools/` | Project-scoped Pi tools, guides, request capture, and answer submission |
+| `packages/pi-grid-tools/` | Project-scoped Pi tools, guides, and request capture |
 | `packages/trajectory-workbench/` | Read-only React/TypeScript trajectory investigation UI |
 | `configs/` | Versioned capabilities, policies, provider catalog, and runtime configuration |
 | `validation/` | Offline, scripted-Pi, semantic, and optional provider validation suites |
