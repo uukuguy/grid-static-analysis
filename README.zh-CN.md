@@ -52,7 +52,7 @@ make doctor
 执行确定性离线冒烟检查：
 
 ```sh
-make run QUESTION="IEEE-39 节点系统中线路 11 连接哪两个母线？"
+make run QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 ```
 
 执行主要的自然语言代理路径：

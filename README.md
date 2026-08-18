@@ -70,7 +70,7 @@ make doctor
 Run a deterministic offline smoke check:
 
 ```sh
-make run
+make run QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 ```
 
 Run the primary natural-language agent path:
