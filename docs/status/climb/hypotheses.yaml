@@ -1,0 +1,8 @@
+{
+  "hypotheses": [
+    {"id":"H-001","description":"An executable coverage matrix prevents test-question-driven capability patches","parent_paradigm":"contract-driven-static-analysis","expected_lift":"measurable truthful baseline","cost_h":1,"ranking":1.0,"status":"confirmed","created_at":"2026-08-18T04:40:00+08:00","results":[{"session":"2026-08-18-full-capability","cycle":1,"run":"baseline-climb-h001","local":8.333333333333334,"verdict":"confirmed: truthful executable baseline established","decision_reason":"24 in-scope rows; only 2 published"}]},
+    {"id":"H-002","description":"A complete model/revision/dataset substrate unlocks network-independent composition","parent_paradigm":"contract-driven-static-analysis","expected_lift":"model and data subscores to 100","cost_h":4,"ranking":0.95,"status":"in-flight","created_at":"2026-08-18T04:40:00+08:00","results":[]},
+    {"id":"H-003","description":"A typed analysis registry plus generic result datasets unlocks all native solver families without per-question tools","parent_paradigm":"contract-driven-static-analysis","expected_lift":"analysis and result subscores to 100","cost_h":8,"ranking":0.9,"status":"pending","created_at":"2026-08-18T04:40:00+08:00","results":[]},
+    {"id":"H-004","description":"Contract-derived Pi tools and semantic oracles generalize beyond authored questions","parent_paradigm":"contract-driven-static-analysis","expected_lift":"agent and validation subscores to 100","cost_h":6,"ranking":0.85,"status":"pending","created_at":"2026-08-18T04:40:00+08:00","results":[]}
+  ]
+}

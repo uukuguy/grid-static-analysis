@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -u
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -d docs/status/climb ] || exit 0
+[ -n "${CLIMB_HOOK_RUNNING:-}" ] && exit 0
+export CLIMB_HOOK_RUNNING=1
+CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+if echo "$CHANGED" | grep -qE 'docs/status/climb/(hypotheses|runs|calibration|pending-lb|session-state)'; then
+  python3 tools/climb/regen-tree.py >/dev/null 2>&1 || true
+fi

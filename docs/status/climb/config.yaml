@@ -1,0 +1,8 @@
+score_name: static_analysis_coverage_percent
+score_direction: max
+subscores: [model, data, analyses, results, agent, validation]
+push_mode: local-gate
+state_dir: docs/status/climb
+artifact_dir: runs/climb
+run_tag_marker: -climb-
+paradigm_field: capability_architecture

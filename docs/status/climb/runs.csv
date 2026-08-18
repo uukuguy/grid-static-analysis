@@ -1,0 +1,2 @@
+run_id,cycle,session,hypothesis_id,paradigm,parent_run,pushed_at,lb_landed_at,local_score,local_model,local_data,local_analyses,local_results,local_agent,local_validation,online_score,gap,push_decision,decision_reason,verdict,train_cost_h,manifest_path
+baseline-climb-h001,1,2026-08-18-full-capability,H-001,contract-driven-static-analysis,,,2026-08-18T05:05:00+08:00,8.333333333333334,0.0,0.0,4.166666666666667,50.0,0.0,0.0,,,CONTINUE,"matrix incomplete; advance next implementation hypothesis","confirmed: truthful baseline established",0.4,

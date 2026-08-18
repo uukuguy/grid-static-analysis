@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "engine": "pandapower",
+  "engine_version": "3.4.0",
+  "release_threshold": 1.0,
+  "status_values": ["published", "partial", "missing", "excluded"],
+  "rows": [
+    {"id":"model.catalog","package":"model-lifecycle","scope":"in_scope","binding":"pandapower.networks allowlisted factories","status":"partial","evidence":"only ieee39 registered"},
+    {"id":"model.create","package":"model-lifecycle","scope":"in_scope","binding":"create_empty_network + versioned creator registry","status":"missing","evidence":"no executable contract"},
+    {"id":"model.revision.derive","package":"model-lifecycle","scope":"in_scope","binding":"typed immutable patches","status":"missing","evidence":"registered revisions are read-only"},
+    {"id":"network.datasets","package":"model-data","scope":"in_scope","binding":"pandapower element tables","status":"partial","evidence":"only network.buses and network.branches"},
+    {"id":"topology.core","package":"topology","scope":"in_scope","binding":"pandapower.topology + networkx","status":"partial","evidence":"endpoints and components only"},
+    {"id":"diagnostic.run","package":"diagnostic","scope":"in_scope","binding":"pandapower.diagnostic","status":"missing","evidence":"no executable contract"},
+    {"id":"powerflow.ac","package":"power-flow","scope":"in_scope","binding":"pandapower.runpp","status":"published","evidence":"analysis.powerflow.ac.run"},
+    {"id":"powerflow.dc","package":"power-flow","scope":"in_scope","binding":"pandapower.rundcpp","status":"missing","evidence":"no executable contract"},
+    {"id":"powerflow.three_phase","package":"power-flow","scope":"in_scope","binding":"pandapower.runpp_3ph","status":"missing","evidence":"no executable contract"},
+    {"id":"opf.ac","package":"opf","scope":"in_scope","binding":"pandapower.runopp","status":"missing","evidence":"family not_published"},
+    {"id":"opf.dc","package":"opf","scope":"in_scope","binding":"pandapower.rundcopp","status":"missing","evidence":"family not_published"},
+    {"id":"short_circuit.iec60909","package":"short-circuit","scope":"in_scope","binding":"pandapower.shortcircuit.calc_sc","status":"missing","evidence":"family not_published"},
+    {"id":"state_estimation.estimate","package":"state-estimation","scope":"in_scope","binding":"pandapower.estimation.estimate","status":"missing","evidence":"family not_published"},
+    {"id":"state_estimation.bad_data","package":"state-estimation","scope":"in_scope","binding":"chi2_analysis + remove_bad_data","status":"missing","evidence":"family not_published"},
+    {"id":"contingency.n_minus_one","package":"contingency","scope":"in_scope","binding":"pandapower.contingency / deterministic branch scenarios","status":"partial","evidence":"single branch-oriented AC slice published"},
+    {"id":"constraints.violations","package":"policy-risk","scope":"in_scope","binding":"model constraints + result evaluation","status":"partial","evidence":"constraints described; general result evaluation absent"},
+    {"id":"risk.rank","package":"policy-risk","scope":"in_scope","binding":"typed violations and contingency outcomes","status":"missing","evidence":"no executable contract"},
+    {"id":"result.datasets","package":"result-analysis","scope":"in_scope","binding":"all generated res_* tables","status":"partial","evidence":"full AC artifact exists but only branch rank is queryable"},
+    {"id":"result.query","package":"result-analysis","scope":"in_scope","binding":"schema-described select/filter/sort/page","status":"missing","evidence":"no executable contract"},
+    {"id":"result.aggregate","package":"result-analysis","scope":"in_scope","binding":"stored result datasets","status":"missing","evidence":"no executable contract"},
+    {"id":"result.compare","package":"result-analysis","scope":"in_scope","binding":"stored result datasets and revision lineage","status":"missing","evidence":"no executable contract"},
+    {"id":"grid_equivalents","package":"model-lifecycle","scope":"in_scope","binding":"pandapower.grid_equivalents","status":"missing","evidence":"no executable contract"},
+    {"id":"protection.static","package":"protection","scope":"in_scope","binding":"pandapower.protection static evaluation","status":"missing","evidence":"no executable contract"},
+    {"id":"evidence.current_run","package":"evidence","scope":"in_scope","binding":"content-addressed current-run facts/results","status":"published","evidence":"evidence.get and persisted AC/N-1 facts"},
+
+    {"id":"timeseries.control","package":"time-series","scope":"excluded","binding":"pandapower.timeseries + control","status":"excluded","evidence":"quasi-static/dynamic workflow, outside static-analysis product"},
+    {"id":"plotting","package":"presentation","scope":"excluded","binding":"pandapower.plotting","status":"excluded","evidence":"presentation, not analysis"},
+    {"id":"file_database_io","package":"io","scope":"excluded","binding":"file_io/sql_io/converter","status":"excluded","evidence":"arbitrary external I/O prohibited at model boundary"},
+    {"id":"external_solver_backends","package":"external-runtime","scope":"excluded","binding":"runpm/runpp_pgm","status":"excluded","evidence":"requires unpinned Julia or optional external engine"}
+  ]
+}

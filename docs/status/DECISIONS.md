@@ -1,5 +1,14 @@
 # Architectural Decisions
 
+## 2026-08-18 — Full pandapower static-analysis capability is current scope
+
+- **Decision:** all pandapower 3.4.0 capabilities relevant to static power-system analysis are current release scope, not future WP-B work. Test questions probe the capability surface and never define it.
+- **Architecture:** publish a contract-driven model/revision/dataset/analysis/result substrate and bind complete static-analysis families behind `gridctl`; Pi tools are generated from the same contracts.
+- **Boundary:** raw Python, DataFrames, pandapowerNet objects, arbitrary file/database I/O, plotting, time-series/control simulation and unpinned optional external solver runtimes remain intentionally excluded.
+- **Release:** every `in_scope` row in `configs/capabilities/pandapower-3.4.0-static-analysis.json` must reach 100% deterministic release coverage.
+- **Specification:** `docs/superpowers/specs/2026-08-18-pandapower-static-analysis-full-capability-design.md`
+- **Plan:** `docs/superpowers/plans/2026-08-18-pandapower-static-analysis-full-capability.md`
+
 ## 2026-08-17 — Unified LLM runtime boundary
 
 - **Decision:** Provider-specific request and response fields remain exclusively

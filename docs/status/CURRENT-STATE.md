@@ -4,49 +4,63 @@
 
 - Project: grid-static-analysis
 - Current branch: main
-- Theme-level focus: unified agent/business trajectory and full-lifecycle context workbench
+- Theme-level focus: full pandapower 3.4.0 static-analysis capability delivery
 - Project route: direct
-- Canonical worklist: `docs/superpowers/plans/2026-08-14-unified-trajectory-implementation-roadmap.md`
-- Active work package: approved design and five-plan implementation roadmap; execution mode selection pending
+- Canonical worklist: `docs/superpowers/plans/2026-08-18-pandapower-static-analysis-full-capability.md`
+- Active work package: H-001 executable coverage baseline, followed by model/data and analysis/result substrate
 
 ## Current Architecture
 
-- CLI: `grid-agent` returns a single JSON answer envelope on stdout; offline routing handles narrow informational requests before workspace creation.
-- Agent path: Pi/LLM receives only direct `grid_*` domain tools, guides, and answer submission; language/entity interpretation stays with the model.
-- Simulator: `gridctl` owns registered read-only IEEE-39 access, typed semantic capabilities, pandapower 3.4.0 execution, result persistence, and evidence.
-- Integrity: online drafts declare primary `result_refs` and `claim_evidence_refs`; current-run documents, digests, immutable simulation contexts, and evidence-associated result links are verified without parsing answer prose.
-- Context engineering: each simulator-backed question opens a typed, immutable simulation-environment context (registered model source, pandapower version, semantic version, network counts and context reference); batch reports render that actual context rather than a guessed label.
-- Validation: deterministic offline/scripted suites and provider-backed continuous Analysis validate structured results, capability boundaries, evidence, reports, and the output envelope.
+- CLI: `grid-agent` writes exactly one JSON answer envelope to stdout; progress and diagnostics stay on stderr.
+- Agent runtime: managed Pi exposes only project grid tools, guides, bounded context/decision tools, and answer submission; the LLM boundary owns provider-specific formats.
+- Canonical capture: Pi atomically persists provider-independent model inputs before provider I/O without waiting for observer acknowledgement.
+- Native trajectory: a Python-owned typed event spine records model requests/responses, tools, decisions, claims, context revisions, results, and evidence as the authoritative chronology.
+- Observation: polling skips already-seen request artifacts before parsing; projection, validation, and report checks are advisory and cannot terminate valid agent work.
+- Simulator: `gridctl` exclusively owns registered network access and deterministic pandapower 3.4.0 calculations through `grid-capability` protocol 1.0.
+- Analysis context: bounded model-facing views retain active model, sourced constraints, reusable calculations, scenarios, facts, lineage, and explicit omission metadata.
+- Reporting: reports reconstruct per-turn execution from native event scope and link persisted current-run result/evidence artifacts.
+- Workbench: the loopback read-only trajectory API and Business/Agent/Context/Evidence workbench consume deterministic projections without mutating runs.
+- Verification: unit, E2E, offline/scripted validation, and provider-backed continuous Analysis cover the stdout contract, capability boundary, trajectory replay, evidence, and reports.
 
 ## Open Problems (theme-level)
 
-- The trajectory platform has not entered implementation; execute the five plans in dependency order, beginning with the event spine.
-- Durable live streaming remains deferred until historical replay semantics are verified.
+- Current executable capability surface is the narrow WP-A slice, not the required full static-analysis product.
+- Model catalog, immutable derivation, complete datasets/results, DC/OPF/short-circuit/state-estimation and semantic validation are incomplete.
+- Provider latency remains externally variable; capability expansion must preserve non-blocking trajectory observation.
 
 ## Key Files
+
+### Loaded every agent session
+
+- `AGENTS.md` — repository contract and simulator boundary
 
 ### State / handoff
 
 - `docs/status/RESUME-NEXT-SESSION.md` — current session handoff
-- `docs/status/JOURNAL.md` — append-only event log
+- `docs/status/JOURNAL.md` — append-only durable event log
 - `docs/status/CURRENT-STATE.md` — this structural snapshot
+- `docs/status/DECISIONS.md` — architectural decision ledger
 
 ### Implementation entry points
 
-- `docs/TASK.md` — evaluation requirements and examples
-- `Makefile` — supported setup, execution, validation, and test commands
-- `docs/RUNBOOK.md` — runtime/provider/evidence operations
-- `docs/MANUAL-VALIDATION.md` — human acceptance procedure aligned to Makefile
-- `docs/architecture/analysis-context.md` — continuous Analysis context and report architecture
-- `docs/superpowers/specs/2026-08-14-unified-trajectory-workbench-design.md` — approved unified trajectory protocol, projections, importer, API, and workbench contract
-- `docs/superpowers/plans/2026-08-14-unified-trajectory-implementation-roadmap.md` — canonical five-plan delivery order, cross-plan interfaces, and verification gates
-- `docs/superpowers/mockups/2026-08-14-trajectory-workbench.html` — approved durable visual hierarchy baseline
-- `validation/questions/task.md.txt` — canonical provider-backed Analysis instruction set
-- `skills/grid-static-analysis/SKILL.md` — agent operating manual
+- `packages/grid-agent/src/grid_agent/analysis/runner.py` — continuous Analysis orchestration
+- `packages/grid-agent/src/grid_agent/trajectory/capture.py` — native Pi event/request observation
+- `packages/grid-agent/src/grid_agent/analysis/projector.py` — simulator result projection into continuous context
+- `packages/grid-agent/src/grid_agent/analysis/view.py` — bounded model-facing context view
+- `packages/grid-agent/src/grid_agent/analysis/report.py` — native-event-backed report generation
+- `packages/pi-grid-tools/src/model-request-capture.mjs` — canonical pre-provider request persistence
+- `packages/pi-grid-tools/src/domain-tools.mjs` — bounded Pi grid/orchestration tools
+- `packages/grid-simulator/src/grid_simulator/capabilities/` — deterministic simulator capabilities and contracts
+- `configs/capabilities/pandapower-3.4.0-static-analysis.json` — executable product coverage source of truth
+- `docs/status/climb/research-tree.md` — active autonomous implementation hypothesis state
+- `packages/trajectory-workbench/` — read-only trajectory investigation UI
+- `validation/questions/task.md.txt` — canonical provider-backed continuous Analysis suite
+- `Makefile` — supported setup, execution, and verification commands
 
 ## Resume Instructions
 
 1. Read this file, then `RESUME-NEXT-SESSION.md` and the tail of `JOURNAL.md`.
-2. Run `git status --short` and `make doctor`.
+2. Run `git status --short`, `git log --oneline -5`, and `make doctor`.
 3. Use `make test`, `make test-e2e`, and `make validate` before changing a verified boundary.
-4. Start new work from tag `v0.2`; read the approved specification and roadmap, then execute `2026-08-14-trajectory-event-spine.md` first. Do not revive the retired GSE implementation.
+4. Use `runs/analysis-20260817T192329Z/` as the latest clean provider-backed trajectory baseline.
+5. Preserve the invariant that observation and validation may diagnose primary execution but may not introduce provider backpressure or reject a valid answer.
