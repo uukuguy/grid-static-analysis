@@ -1,0 +1,611 @@
+{
+  "engine": "pandapower",
+  "engine_version": "3.4.0",
+  "generation_rule": "zero-required-argument functions defined under pandapower.networks.*",
+  "models": [
+    {
+      "aliases": [
+        "case39",
+        "IEEE-39节点系统",
+        "IEEE 39 bus system",
+        "New England 39-bus system",
+        "pandapower.networks.case39"
+      ],
+      "factory": "case39",
+      "model_id": "ieee39",
+      "source": "pandapower.networks.case39",
+      "title": "IEEE 39-bus system"
+    },
+    {
+      "aliases": [
+        "GBnetwork",
+        "pandapower.networks.GBnetwork"
+      ],
+      "factory": "GBnetwork",
+      "model_id": "GBnetwork",
+      "source": "pandapower.networks.GBnetwork",
+      "title": "Calls the json file GBnetwork.json which data is provided by `W. A. Bukhsh, Ken McKinnon,     Network data of real transmission networks, April 2013      <http://www.maths.ed.ac.uk/optenergy/NetworkDa"
+    },
+    {
+      "aliases": [
+        "GBreducednetwork",
+        "pandapower.networks.GBreducednetwork"
+      ],
+      "factory": "GBreducednetwork",
+      "model_id": "GBreducednetwork",
+      "source": "pandapower.networks.GBreducednetwork",
+      "title": "Calls the json file GBreducednetwork.json which data is provided by `W. A. Bukhsh, Ken     McKinnon, Network data of real transmission networks, April 2013      <http://www.maths.ed.ac.uk/optenergy/Ne"
+    },
+    {
+      "aliases": [
+        "case118",
+        "pandapower.networks.case118"
+      ],
+      "factory": "case118",
+      "model_id": "case118",
+      "source": "pandapower.networks.case118",
+      "title": "Calls the json file case118.json which data origin is     `PYPOWER <https:/pypi.python.org/pypi/PYPOWER>`_."
+    },
+    {
+      "aliases": [
+        "case11_iwamoto",
+        "pandapower.networks.case11_iwamoto"
+      ],
+      "factory": "case11_iwamoto",
+      "model_id": "case11_iwamoto",
+      "source": "pandapower.networks.case11_iwamoto",
+      "title": "Calls the json file case11_iwamoto.json which represents     the 11 bus example from `S. Iwamoto ; Y. Tamura ,     A Load Flow Calculation Method for Ill-Conditioned Power Systems"
+    },
+    {
+      "aliases": [
+        "case1354pegase",
+        "pandapower.networks.case1354pegase"
+      ],
+      "factory": "case1354pegase",
+      "model_id": "case1354pegase",
+      "source": "pandapower.networks.case1354pegase",
+      "title": "This grid represents a part of the European high voltage transmission network. The data is     provided by `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_."
+    },
+    {
+      "aliases": [
+        "case14",
+        "pandapower.networks.case14"
+      ],
+      "factory": "case14",
+      "model_id": "case14",
+      "source": "pandapower.networks.case14",
+      "title": "Calls the json file case14.json which data origin is     `PYPOWER <https:/pypi.python.org/pypi/PYPOWER>`_."
+    },
+    {
+      "aliases": [
+        "case145",
+        "pandapower.networks.case145"
+      ],
+      "factory": "case145",
+      "model_id": "case145",
+      "source": "pandapower.networks.case145",
+      "title": "Calls the json file case145.json which data origin is"
+    },
+    {
+      "aliases": [
+        "case1888rte",
+        "pandapower.networks.case1888rte"
+      ],
+      "factory": "case1888rte",
+      "model_id": "case1888rte",
+      "source": "pandapower.networks.case1888rte",
+      "title": "This case accurately represents the size and complexity of French very high voltage and high     voltage transmission network. The data is provided by `MATPOWER     <http://www.pserc.cornell.edu/matpo"
+    },
+    {
+      "aliases": [
+        "case24_ieee_rts",
+        "pandapower.networks.case24_ieee_rts"
+      ],
+      "factory": "case24_ieee_rts",
+      "model_id": "case24_ieee_rts",
+      "source": "pandapower.networks.case24_ieee_rts",
+      "title": "The IEEE 24-bus reliability test system was developed by the IEEE reliability subcommittee     and published in 1979."
+    },
+    {
+      "aliases": [
+        "case2848rte",
+        "pandapower.networks.case2848rte"
+      ],
+      "factory": "case2848rte",
+      "model_id": "case2848rte",
+      "source": "pandapower.networks.case2848rte",
+      "title": "This case accurately represents the size and complexity of French very high voltage and high     voltage transmission network. The data is provided by     `MATPOWER <http://www.pserc.cornell.edu/matpo"
+    },
+    {
+      "aliases": [
+        "case2869pegase",
+        "pandapower.networks.case2869pegase"
+      ],
+      "factory": "case2869pegase",
+      "model_id": "case2869pegase",
+      "source": "pandapower.networks.case2869pegase",
+      "title": "This grid represents a part of the European high voltage transmission network. The data is     provided by `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_."
+    },
+    {
+      "aliases": [
+        "case30",
+        "pandapower.networks.case30"
+      ],
+      "factory": "case30",
+      "model_id": "case30",
+      "source": "pandapower.networks.case30",
+      "title": "This function calls the json file case30.json which data origin is     `PYPOWER <https:/pypi.python.org/pypi/PYPOWER>`_. The PYPOWER data are derived from"
+    },
+    {
+      "aliases": [
+        "case300",
+        "pandapower.networks.case300"
+      ],
+      "factory": "case300",
+      "model_id": "case300",
+      "source": "pandapower.networks.case300",
+      "title": "Calls the json file case300.json which data origin is     `PYPOWER <https:/pypi.python.org/pypi/PYPOWER>`_."
+    },
+    {
+      "aliases": [
+        "case3120sp",
+        "pandapower.networks.case3120sp"
+      ],
+      "factory": "case3120sp",
+      "model_id": "case3120sp",
+      "source": "pandapower.networks.case3120sp",
+      "title": "This case represents the Polish 400, 220 and 110 kV networks during summer 2008 morning peak     conditions. The data was provided by Roman Korab <roman.korab@polsl.pl> and to pandapower     converted"
+    },
+    {
+      "aliases": [
+        "case33bw",
+        "pandapower.networks.case33bw"
+      ],
+      "factory": "case33bw",
+      "model_id": "case33bw",
+      "source": "pandapower.networks.case33bw",
+      "title": "Calls the json file case33bw.json which data is provided by     `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_."
+    },
+    {
+      "aliases": [
+        "case4gs",
+        "pandapower.networks.case4gs"
+      ],
+      "factory": "case4gs",
+      "model_id": "case4gs",
+      "source": "pandapower.networks.case4gs",
+      "title": "This is the 4 bus example from J. J. Grainger and W. D. Stevenson, Power system analysis.     McGraw-Hill, 1994.  337-338. Its data origin is     `PYPOWER <https:/pypi.python.org/pypi/PYPOWER>`_."
+    },
+    {
+      "aliases": [
+        "case5",
+        "pandapower.networks.case5"
+      ],
+      "factory": "case5",
+      "model_id": "case5",
+      "source": "pandapower.networks.case5",
+      "title": "This is the 5 bus example from F.Li and R.Bo, \"Small Test Systems for Power System Economic     Studies\" Its data origin is `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_."
+    },
+    {
+      "aliases": [
+        "case57",
+        "pandapower.networks.case57"
+      ],
+      "factory": "case57",
+      "model_id": "case57",
+      "source": "pandapower.networks.case57",
+      "title": "This function provides the ieee case57 network with the data origin `PYPOWER case 57     <https:/pypi.python.org/pypi/PYPOWER>`_."
+    },
+    {
+      "aliases": [
+        "case6470rte",
+        "pandapower.networks.case6470rte"
+      ],
+      "factory": "case6470rte",
+      "model_id": "case6470rte",
+      "source": "pandapower.networks.case6470rte",
+      "title": "This case accurately represents the size and complexity of French very high voltage and high     voltage transmission network. The data is provided by     `MATPOWER <http://www.pserc.cornell.edu/matpo"
+    },
+    {
+      "aliases": [
+        "case6495rte",
+        "pandapower.networks.case6495rte"
+      ],
+      "factory": "case6495rte",
+      "model_id": "case6495rte",
+      "source": "pandapower.networks.case6495rte",
+      "title": "This case accurately represents the size and complexity of French very high voltage and high     voltage transmission network. The data is provided by     `MATPOWER <http://www.pserc.cornell.edu/matpo"
+    },
+    {
+      "aliases": [
+        "case6515rte",
+        "pandapower.networks.case6515rte"
+      ],
+      "factory": "case6515rte",
+      "model_id": "case6515rte",
+      "source": "pandapower.networks.case6515rte",
+      "title": "This case accurately represents the size and complexity of French very high voltage and high     voltage transmission network. The data is provided by `MATPOWER     <http://www.pserc.cornell.edu/matpo"
+    },
+    {
+      "aliases": [
+        "case6ww",
+        "pandapower.networks.case6ww"
+      ],
+      "factory": "case6ww",
+      "model_id": "case6ww",
+      "source": "pandapower.networks.case6ww",
+      "title": "Calls the json file case6ww.json which data origin is     `PYPOWER <https:/pypi.python.org/pypi/PYPOWER>`_. It represents the 6 bus example from      104, 112, 119, 123-124, 549 from A. J. Wood and B."
+    },
+    {
+      "aliases": [
+        "case89pegase",
+        "pandapower.networks.case89pegase"
+      ],
+      "factory": "case89pegase",
+      "model_id": "case89pegase",
+      "source": "pandapower.networks.case89pegase",
+      "title": "Calls the json file case89pegase.json which data is provided by     `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_."
+    },
+    {
+      "aliases": [
+        "case9",
+        "pandapower.networks.case9"
+      ],
+      "factory": "case9",
+      "model_id": "case9",
+      "source": "pandapower.networks.case9",
+      "title": "Calls the json file case9.json which data origin is     `PYPOWER <https:/pypi.python.org/pypi/PYPOWER>`_."
+    },
+    {
+      "aliases": [
+        "case9241pegase",
+        "pandapower.networks.case9241pegase"
+      ],
+      "factory": "case9241pegase",
+      "model_id": "case9241pegase",
+      "source": "pandapower.networks.case9241pegase",
+      "title": "This grid represents a part of the European high voltage transmission network. The data is     provided by `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_."
+    },
+    {
+      "aliases": [
+        "case_ieee30",
+        "pandapower.networks.case_ieee30"
+      ],
+      "factory": "case_ieee30",
+      "model_id": "case_ieee30",
+      "source": "pandapower.networks.case_ieee30",
+      "title": "This function calls the json file case_ieee30.json which data origin is     `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_. The MATPOWER data are derived from"
+    },
+    {
+      "aliases": [
+        "case_illinois200",
+        "pandapower.networks.case_illinois200"
+      ],
+      "factory": "case_illinois200",
+      "model_id": "case_illinois200",
+      "source": "pandapower.networks.case_illinois200",
+      "title": "This function calls the json file case_illinois200.json which data origin is     `MATPOWER <http://www.pserc.cornell.edu/matpower/>`_. This network was published in     A.B. Birchfield, T. Xu, K.M. Ge"
+    },
+    {
+      "aliases": [
+        "create_cigre_network_hv",
+        "pandapower.networks.create_cigre_network_hv"
+      ],
+      "factory": "create_cigre_network_hv",
+      "model_id": "create_cigre_network_hv",
+      "source": "pandapower.networks.create_cigre_network_hv",
+      "title": "Create the CIGRE HV Grid from final Report of Task Force C6.04.02:"
+    },
+    {
+      "aliases": [
+        "create_cigre_network_lv",
+        "pandapower.networks.create_cigre_network_lv"
+      ],
+      "factory": "create_cigre_network_lv",
+      "model_id": "create_cigre_network_lv",
+      "source": "pandapower.networks.create_cigre_network_lv",
+      "title": "Create the CIGRE LV Grid from final Report of Task Force C6.04.02:"
+    },
+    {
+      "aliases": [
+        "create_cigre_network_mv",
+        "pandapower.networks.create_cigre_network_mv"
+      ],
+      "factory": "create_cigre_network_mv",
+      "model_id": "create_cigre_network_mv",
+      "source": "pandapower.networks.create_cigre_network_mv",
+      "title": "Create the CIGRE MV Grid from final Report of Task Force C6.04.02:"
+    },
+    {
+      "aliases": [
+        "create_dickert_lv_network",
+        "pandapower.networks.create_dickert_lv_network"
+      ],
+      "factory": "create_dickert_lv_network",
+      "model_id": "create_dickert_lv_network",
+      "source": "pandapower.networks.create_dickert_lv_network",
+      "title": "This function creates a LV network from J. Dickert, M. Domagk and P. Schegner. \"Benchmark     low voltage distribution networks based on cluster analysis of actual grid properties\".     PowerTech, 201"
+    },
+    {
+      "aliases": [
+        "create_kerber_dorfnetz",
+        "pandapower.networks.create_kerber_dorfnetz"
+      ],
+      "factory": "create_kerber_dorfnetz",
+      "model_id": "create_kerber_dorfnetz",
+      "source": "pandapower.networks.create_kerber_dorfnetz",
+      "title": ".. note:: It is assumed that every second bus in a branch is a \"KV\"."
+    },
+    {
+      "aliases": [
+        "create_kerber_landnetz_freileitung_1",
+        "pandapower.networks.create_kerber_landnetz_freileitung_1"
+      ],
+      "factory": "create_kerber_landnetz_freileitung_1",
+      "model_id": "create_kerber_landnetz_freileitung_1",
+      "source": "pandapower.networks.create_kerber_landnetz_freileitung_1",
+      "title": "create_kerber_landnetz_freileitung_1"
+    },
+    {
+      "aliases": [
+        "create_kerber_landnetz_freileitung_2",
+        "pandapower.networks.create_kerber_landnetz_freileitung_2"
+      ],
+      "factory": "create_kerber_landnetz_freileitung_2",
+      "model_id": "create_kerber_landnetz_freileitung_2",
+      "source": "pandapower.networks.create_kerber_landnetz_freileitung_2",
+      "title": "create_kerber_landnetz_freileitung_2"
+    },
+    {
+      "aliases": [
+        "create_kerber_landnetz_kabel_1",
+        "pandapower.networks.create_kerber_landnetz_kabel_1"
+      ],
+      "factory": "create_kerber_landnetz_kabel_1",
+      "model_id": "create_kerber_landnetz_kabel_1",
+      "source": "pandapower.networks.create_kerber_landnetz_kabel_1",
+      "title": ".. note:: It is assumed that every second bus in a branch is a \"KV\"."
+    },
+    {
+      "aliases": [
+        "create_kerber_landnetz_kabel_2",
+        "pandapower.networks.create_kerber_landnetz_kabel_2"
+      ],
+      "factory": "create_kerber_landnetz_kabel_2",
+      "model_id": "create_kerber_landnetz_kabel_2",
+      "source": "pandapower.networks.create_kerber_landnetz_kabel_2",
+      "title": ".. note:: It is assumed that every second bus in a branch is a \"KV\"."
+    },
+    {
+      "aliases": [
+        "create_kerber_vorstadtnetz_kabel_1",
+        "pandapower.networks.create_kerber_vorstadtnetz_kabel_1"
+      ],
+      "factory": "create_kerber_vorstadtnetz_kabel_1",
+      "model_id": "create_kerber_vorstadtnetz_kabel_1",
+      "source": "pandapower.networks.create_kerber_vorstadtnetz_kabel_1",
+      "title": ".. note:: Please pay attention, that the linetypes of the branch out house connections are     randomly distributed according to the probability 50% between \"NAYY 4x50\" and \"NYY 4x35\""
+    },
+    {
+      "aliases": [
+        "create_kerber_vorstadtnetz_kabel_2",
+        "pandapower.networks.create_kerber_vorstadtnetz_kabel_2"
+      ],
+      "factory": "create_kerber_vorstadtnetz_kabel_2",
+      "model_id": "create_kerber_vorstadtnetz_kabel_2",
+      "source": "pandapower.networks.create_kerber_vorstadtnetz_kabel_2",
+      "title": ".. note:: Please pay attention, that the linetypes of the branch out house     connections are randomlydistributed according to the probability 50% between     \"NAYY 50\" and \"NYY 35\""
+    },
+    {
+      "aliases": [
+        "create_synthetic_voltage_control_lv_network",
+        "pandapower.networks.create_synthetic_voltage_control_lv_network"
+      ],
+      "factory": "create_synthetic_voltage_control_lv_network",
+      "model_id": "create_synthetic_voltage_control_lv_network",
+      "source": "pandapower.networks.create_synthetic_voltage_control_lv_network",
+      "title": "This function creates a LV network from M. Lindner, C. Aigner, R. Witzmann, F. Wirtz,     I. Berber, M. Gödde and R. Frings. \"Aktuelle Musternetze zur Untersuchung von     Spannungsproblemen in der Ni"
+    },
+    {
+      "aliases": [
+        "example_multivoltage",
+        "pandapower.networks.example_multivoltage"
+      ],
+      "factory": "example_multivoltage",
+      "model_id": "example_multivoltage",
+      "source": "pandapower.networks.example_multivoltage",
+      "title": "Returns the multivoltage example network from the pandapower tutorials."
+    },
+    {
+      "aliases": [
+        "example_simple",
+        "pandapower.networks.example_simple"
+      ],
+      "factory": "example_simple",
+      "model_id": "example_simple",
+      "source": "pandapower.networks.example_simple",
+      "title": "Returns the simple example network from the pandapower tutorials."
+    },
+    {
+      "aliases": [
+        "four_loads_with_branches_out",
+        "pandapower.networks.four_loads_with_branches_out"
+      ],
+      "factory": "four_loads_with_branches_out",
+      "model_id": "four_loads_with_branches_out",
+      "source": "pandapower.networks.four_loads_with_branches_out",
+      "title": "This function creates a simple ten bus system with four radial low voltage nodes connected to     a medium voltage slack bus. At every of the four radial low voltage nodes another low voltage     node"
+    },
+    {
+      "aliases": [
+        "iceland",
+        "pandapower.networks.iceland"
+      ],
+      "factory": "iceland",
+      "model_id": "iceland",
+      "source": "pandapower.networks.iceland",
+      "title": "Calls the json file iceland.json which data is provided by `W. A. Bukhsh, Ken McKinnon, Network     data of real transmission networks, April 2013      <http://www.maths.ed.ac.uk/optenergy/NetworkData"
+    },
+    {
+      "aliases": [
+        "ieee_european_lv_asymmetric",
+        "pandapower.networks.ieee_european_lv_asymmetric"
+      ],
+      "factory": "ieee_european_lv_asymmetric",
+      "model_id": "ieee_european_lv_asymmetric",
+      "source": "pandapower.networks.ieee_european_lv_asymmetric",
+      "title": "Loads the IEEE European LV network, a generic 0.416 kV network serviced by one 0.8 MVA MV/LV"
+    },
+    {
+      "aliases": [
+        "kb_extrem_dorfnetz",
+        "pandapower.networks.kb_extrem_dorfnetz"
+      ],
+      "factory": "kb_extrem_dorfnetz",
+      "model_id": "kb_extrem_dorfnetz",
+      "source": "pandapower.networks.kb_extrem_dorfnetz",
+      "title": "kb_extrem_dorfnetz"
+    },
+    {
+      "aliases": [
+        "kb_extrem_dorfnetz_trafo",
+        "pandapower.networks.kb_extrem_dorfnetz_trafo"
+      ],
+      "factory": "kb_extrem_dorfnetz_trafo",
+      "model_id": "kb_extrem_dorfnetz_trafo",
+      "source": "pandapower.networks.kb_extrem_dorfnetz_trafo",
+      "title": "kb_extrem_dorfnetz_trafo"
+    },
+    {
+      "aliases": [
+        "kb_extrem_landnetz_freileitung",
+        "pandapower.networks.kb_extrem_landnetz_freileitung"
+      ],
+      "factory": "kb_extrem_landnetz_freileitung",
+      "model_id": "kb_extrem_landnetz_freileitung",
+      "source": "pandapower.networks.kb_extrem_landnetz_freileitung",
+      "title": "kb_extrem_landnetz_freileitung"
+    },
+    {
+      "aliases": [
+        "kb_extrem_landnetz_freileitung_trafo",
+        "pandapower.networks.kb_extrem_landnetz_freileitung_trafo"
+      ],
+      "factory": "kb_extrem_landnetz_freileitung_trafo",
+      "model_id": "kb_extrem_landnetz_freileitung_trafo",
+      "source": "pandapower.networks.kb_extrem_landnetz_freileitung_trafo",
+      "title": "kb_extrem_landnetz_freileitung_trafo"
+    },
+    {
+      "aliases": [
+        "kb_extrem_landnetz_kabel",
+        "pandapower.networks.kb_extrem_landnetz_kabel"
+      ],
+      "factory": "kb_extrem_landnetz_kabel",
+      "model_id": "kb_extrem_landnetz_kabel",
+      "source": "pandapower.networks.kb_extrem_landnetz_kabel",
+      "title": "kb_extrem_landnetz_kabel"
+    },
+    {
+      "aliases": [
+        "kb_extrem_landnetz_kabel_trafo",
+        "pandapower.networks.kb_extrem_landnetz_kabel_trafo"
+      ],
+      "factory": "kb_extrem_landnetz_kabel_trafo",
+      "model_id": "kb_extrem_landnetz_kabel_trafo",
+      "source": "pandapower.networks.kb_extrem_landnetz_kabel_trafo",
+      "title": "kb_extrem_landnetz_kabel_trafo"
+    },
+    {
+      "aliases": [
+        "kb_extrem_vorstadtnetz_1",
+        "pandapower.networks.kb_extrem_vorstadtnetz_1"
+      ],
+      "factory": "kb_extrem_vorstadtnetz_1",
+      "model_id": "kb_extrem_vorstadtnetz_1",
+      "source": "pandapower.networks.kb_extrem_vorstadtnetz_1",
+      "title": "kb_extrem_vorstadtnetz_1"
+    },
+    {
+      "aliases": [
+        "kb_extrem_vorstadtnetz_2",
+        "pandapower.networks.kb_extrem_vorstadtnetz_2"
+      ],
+      "factory": "kb_extrem_vorstadtnetz_2",
+      "model_id": "kb_extrem_vorstadtnetz_2",
+      "source": "pandapower.networks.kb_extrem_vorstadtnetz_2",
+      "title": "kb_extrem_vorstadtnetz_2"
+    },
+    {
+      "aliases": [
+        "kb_extrem_vorstadtnetz_trafo_1",
+        "pandapower.networks.kb_extrem_vorstadtnetz_trafo_1"
+      ],
+      "factory": "kb_extrem_vorstadtnetz_trafo_1",
+      "model_id": "kb_extrem_vorstadtnetz_trafo_1",
+      "source": "pandapower.networks.kb_extrem_vorstadtnetz_trafo_1",
+      "title": "kb_extrem_vorstadtnetz_trafo_1"
+    },
+    {
+      "aliases": [
+        "kb_extrem_vorstadtnetz_trafo_2",
+        "pandapower.networks.kb_extrem_vorstadtnetz_trafo_2"
+      ],
+      "factory": "kb_extrem_vorstadtnetz_trafo_2",
+      "model_id": "kb_extrem_vorstadtnetz_trafo_2",
+      "source": "pandapower.networks.kb_extrem_vorstadtnetz_trafo_2",
+      "title": "kb_extrem_vorstadtnetz_trafo_2"
+    },
+    {
+      "aliases": [
+        "lv_schutterwald",
+        "pandapower.networks.lv_schutterwald"
+      ],
+      "factory": "lv_schutterwald",
+      "model_id": "lv_schutterwald",
+      "source": "pandapower.networks.lv_schutterwald",
+      "title": "Loads the Schutterwald network, a generic 0.4 kV network serviced by 14 MV/LV transformer"
+    },
+    {
+      "aliases": [
+        "mv_oberrhein",
+        "pandapower.networks.mv_oberrhein"
+      ],
+      "factory": "mv_oberrhein",
+      "model_id": "mv_oberrhein",
+      "source": "pandapower.networks.mv_oberrhein",
+      "title": "Loads the Oberrhein network, a generic 20 kV network serviced by two 25 MVA HV/MV transformer stations. The network"
+    },
+    {
+      "aliases": [
+        "panda_four_load_branch",
+        "pandapower.networks.panda_four_load_branch"
+      ],
+      "factory": "panda_four_load_branch",
+      "model_id": "panda_four_load_branch",
+      "source": "pandapower.networks.panda_four_load_branch",
+      "title": "This function creates a simple six bus system with four radial low voltage nodes connected to     a medium voltage slack bus. At every low voltage node the same load is connected."
+    },
+    {
+      "aliases": [
+        "simple_four_bus_system",
+        "pandapower.networks.simple_four_bus_system"
+      ],
+      "factory": "simple_four_bus_system",
+      "model_id": "simple_four_bus_system",
+      "source": "pandapower.networks.simple_four_bus_system",
+      "title": "This function creates a simple four bus system with two radial low voltage nodes connected to     a medium voltage slack bus. At both low voltage nodes the a load and a static generator is     connect"
+    },
+    {
+      "aliases": [
+        "simple_mv_open_ring_net",
+        "pandapower.networks.simple_mv_open_ring_net"
+      ],
+      "factory": "simple_mv_open_ring_net",
+      "model_id": "simple_mv_open_ring_net",
+      "source": "pandapower.networks.simple_mv_open_ring_net",
+      "title": "This function creates a simple medium voltage open ring network with loads at every medium     voltage node."
+    }
+  ],
+  "schema_version": "1.0"
+}

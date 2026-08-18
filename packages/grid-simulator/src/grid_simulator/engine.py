@@ -4,7 +4,21 @@ import pandapower as pp
 import pandapower.networks as pn
 
 from grid_simulator.evidence import fingerprint
+from grid_simulator.model_catalog import allowed_network_factories
 from grid_simulator.models import ModelNotFoundError
+
+
+def _network_factory_bindings():
+    bindings = {}
+    for factory_id in allowed_network_factories():
+        factory = getattr(pn, factory_id, None)
+        if not callable(factory) or not getattr(factory, "__module__", "").startswith("pandapower.networks."):
+            raise RuntimeError(f"trusted network factory {factory_id!r} is unavailable in pandapower 3.4.0")
+        bindings[factory_id] = factory
+    return bindings
+
+
+_NETWORK_FACTORIES = _network_factory_bindings()
 
 
 class Pandapower340Engine:
@@ -23,13 +37,11 @@ class Pandapower340Engine:
         "check_connectivity": True,
     }
 
-    def open_ieee39(self):
-        return pn.case39()
-
-    def open_registered(self, model_id: str):
-        if model_id != "ieee39":
-            raise ModelNotFoundError(model_id)
-        return self.open_ieee39()
+    def open_registered(self, factory_id: str):
+        factory = _NETWORK_FACTORIES.get(factory_id)
+        if factory is None:
+            raise ModelNotFoundError(factory_id)
+        return factory()
 
     def serialize(self, net) -> str:
         return pp.to_json(net)

@@ -32,8 +32,8 @@
           "additionalProperties": false,
           "required": ["model", "source", "pandapower_version"],
           "properties": {
-            "model": {"type": "string", "enum": ["ieee39"]},
-            "source": {"type": "string", "enum": ["pandapower.networks.case39"]},
+            "model": {"type": "string", "minLength": 1},
+            "source": {"type": "string", "pattern": "^pandapower\\.networks\\.[A-Za-z0-9_]+$"},
             "pandapower_version": {"type": "string", "enum": ["3.4.0"]}
           }
         }

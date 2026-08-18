@@ -26,10 +26,10 @@
     "required": ["context_ref", "model", "engine", "pandapower_version", "source", "semantic_sha256", "counts"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "model": {"type": "string", "enum": ["ieee39"]},
+      "model": {"type": "string", "minLength": 1},
       "engine": {"type": "string", "enum": ["pandapower"]},
       "pandapower_version": {"type": "string", "enum": ["3.4.0"]},
-      "source": {"type": "string", "enum": ["pandapower.networks.case39"]},
+      "source": {"type": "string", "pattern": "^pandapower\\.networks\\.[A-Za-z0-9_]+$"},
       "semantic_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
       "counts": {
         "type": "object",
@@ -65,7 +65,7 @@
   "risk": "read_only_model",
   "pandapower": {
     "version": "3.4.0",
-    "operation": "pandapower.networks.case39",
-    "limitations": ["Only the packaged IEEE-39 model is currently supported"]
+    "operation": "versioned allowlist of compatible pandapower.networks factories",
+    "limitations": ["Factories requiring mandatory arguments are not registered as zero-configuration models"]
   }
 }

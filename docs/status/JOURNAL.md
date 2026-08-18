@@ -238,3 +238,4 @@
 ## 2026-08-18
 
 - 05:05 H-001 confirmed: executable matrix baseline is 2/24 published (8.33%); existing regression gate remains green.
+- 05:12 建立全域能力架构与可执行覆盖门，阻止按题目补丁式开发 [3a2d7bf]

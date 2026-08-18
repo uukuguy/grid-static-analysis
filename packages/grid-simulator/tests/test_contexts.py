@@ -140,10 +140,20 @@ def test_context_get_missing_ref_is_typed_unknown_context(tmp_path: Path) -> Non
 
 
 def test_context_open_unknown_registered_model_is_operation_error(tmp_path: Path) -> None:
-    response = dispatch(_request("context.open", {"model_id": "case118"}), tmp_path)
+    response = dispatch(_request("context.open", {"model_id": "not-a-registered-model"}), tmp_path)
 
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == "model_not_found"
     assert response.error.phase == "resolve"
     assert not (tmp_path / "evidence").exists()
+
+
+def test_context_open_reports_selected_registered_model_source(tmp_path: Path) -> None:
+    response = dispatch(_request("context.open", {"model_id": "case9"}), tmp_path)
+
+    assert response.ok is True
+    assert response.result is not None
+    assert response.result["model"] == "case9"
+    assert response.result["source"] == "pandapower.networks.case9"
+    assert response.result["counts"]["buses"] == 9

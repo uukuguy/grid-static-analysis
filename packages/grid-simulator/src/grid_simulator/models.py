@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from grid_simulator.evidence import canonical_json, fingerprint, write_json, write_network
+from grid_simulator.model_catalog import load_model_catalog
 from grid_simulator.workspace import SimulatorWorkspace
 
 
@@ -39,6 +40,7 @@ class RegisteredModel(BaseModel):
     title: str
     aliases: tuple[str, ...]
     source: str
+    factory: str
     engine: Literal["pandapower"] = "pandapower"
     engine_version: Literal["3.4.0"] = "3.4.0"
 
@@ -53,18 +55,23 @@ class OpenedContext(BaseModel):
     engine_version: Literal["3.4.0"]
 
 
-_IEEE39 = RegisteredModel(
-    model_id="ieee39",
-    title="IEEE 39-bus system",
-    aliases=("IEEE-39节点系统", "IEEE 39 bus system", "New England 39-bus system"),
-    source="pandapower.networks.case39",
-)
+def _registered_models() -> tuple[RegisteredModel, ...]:
+    return tuple(
+        RegisteredModel(
+            model_id=str(row["model_id"]),
+            title=str(row["title"]),
+            aliases=tuple(str(alias) for alias in row["aliases"]),
+            source=str(row["source"]),
+            factory=str(row["factory"]),
+        )
+        for row in load_model_catalog()
+    )
 
 
 class ModelRegistry:
     def __init__(self, engine: Any) -> None:
         self._engine = engine
-        self._models = (_IEEE39,)
+        self._models = _registered_models()
         self._by_id = {model.model_id: model for model in self._models}
         self._trusted_revisions: dict[str, str] = {}
 
@@ -72,10 +79,14 @@ class ModelRegistry:
         return self._models
 
     def open(self, model_id: str) -> tuple[RegisteredModel, Any]:
+        model = self.get(model_id)
+        return model, self._engine.open_registered(model.factory)
+
+    def get(self, model_id: str) -> RegisteredModel:
         model = self._by_id.get(model_id)
         if model is None:
             raise ModelNotFoundError(model_id)
-        return model, self._engine.open_registered(model.model_id)
+        return model
 
     def trusted_revision_ref(self, model_id: str) -> str:
         model = self._by_id.get(model_id)
@@ -83,7 +94,7 @@ class ModelRegistry:
             raise ModelNotFoundError(model_id)
         revision_ref = self._trusted_revisions.get(model.model_id)
         if revision_ref is None:
-            net = self._engine.open_registered(model.model_id)
+            net = self._engine.open_registered(model.factory)
             revision_ref = f"revision:sha256:{fingerprint(self._engine.serialize(net))}"
             self._trusted_revisions[model.model_id] = revision_ref
         return revision_ref

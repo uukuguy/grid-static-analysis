@@ -24,13 +24,13 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 ## Choose the Analysis Domain
 
 - Model and runtime catalog: [capability-map](references/capability-map.md), [model-and-context](references/model-and-context.md).
-- Network elements and datasets: [network-elements](references/network-elements.md).
+- Network elements and datasets: call `model.dataset.list`, then use [network-elements](references/network-elements.md) for describe/query and element resolution.
 - Topology endpoints and components: [topology-analysis](references/topology-analysis.md).
 - AC power flow and solver profile: [ac-powerflow](references/ac-powerflow.md).
 - N-1 static contingency: [contingency-analysis](references/contingency-analysis.md).
 - Model-owned voltage and loading limits: `model.constraints.describe` with the active `context_ref`; identify model, user, or named-standard sources explicitly.
 - Result ranking and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
-- Defined future scope that is unavailable in WP-A: [future-capabilities](references/future-capabilities.md).
+- Runtime status and intentional non-static exclusions: [future-capabilities](references/future-capabilities.md).
 
 ## Context and Evidence Discipline
 
@@ -52,7 +52,7 @@ Plan from stable references:
 
 1. Discover runtime and model support with `environment.describe` or `model.list`.
 2. Open the model once with `context.open`.
-3. Resolve requested buses, lines, transformers, or datasets with `model.element.get`, `model.dataset.describe`, or `model.dataset.query`.
+3. Discover tables with `model.dataset.list`, then resolve any described element or field with `model.element.get`, `model.dataset.describe`, or `model.dataset.query`.
 4. Run `analysis.powerflow.ac.run` for numerical AC steady-state values.
 5. Rank existing branch results with `result.branches.rank`; do not rerun power flow for ranking.
 6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context; interpret violations only against returned model constraints.
@@ -66,6 +66,6 @@ If evidence cannot be read, preserve the original reference and report the artif
 
 ## Capability Status
 
-Available WP-A executable capabilities: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `model.constraints.describe`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
+Published executable capabilities are returned by `environment.describe`. The model/data surface includes `model.dataset.list`, `model.dataset.describe`, `model.dataset.query`, universal `model.element.get`, and the versioned multi-network catalog.
 
-Defined but unavailable future capabilities include DC flow, OPF, short circuit, state estimation, time series, model import/create/modify, richer sourced risk engines, and multiple registered networks. See [future-capabilities](references/future-capabilities.md) before promising those workflows.
+The complete pandapower static-analysis surface is current implementation scope. Until a matrix row is published in `environment.describe`, report that exact runtime gap without substituting another calculation. Time-series/control, plotting, arbitrary I/O/Python and unpinned external solver backends are intentional exclusions.

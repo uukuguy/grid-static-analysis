@@ -76,6 +76,7 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
         "context.get",
         "model.constraints.describe",
         "model.element.get",
+        "model.dataset.list",
         "model.dataset.describe",
         "model.dataset.query",
         "topology.branch.endpoints.get",

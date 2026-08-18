@@ -26,7 +26,7 @@
     "required": ["context_ref", "model", "counts"],
     "properties": {
       "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "model": {"type": "string", "enum": ["ieee39"]},
+      "model": {"type": "string", "minLength": 1},
       "counts": {
         "type": "object",
         "additionalProperties": false,

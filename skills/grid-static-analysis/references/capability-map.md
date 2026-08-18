@@ -2,7 +2,7 @@
 
 ## Use This For
 
-Use this guide to choose the exact WP-A capability ID, understand the safe sequence, and separate available executable capabilities from defined future scope.
+Use this guide to choose exact published capability IDs and understand their safe composition sequence.
 
 ## Do Not Use This For
 
@@ -20,9 +20,10 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 - `model.list`: lists supported registered models.
 - `context.open`: opens a supported model and creates a context with evidence.
 - `context.get`: returns metadata for an existing context.
-- `model.dataset.describe`: describes supported network datasets and fields.
-- `model.dataset.query`: queries curated bus or branch rows.
-- `model.element.get`: resolves a bus, line, transformer, or three-winding transformer to `asset_ref`.
+- `model.dataset.list`: lists every schema-described static network table in the active revision.
+- `model.dataset.describe`: describes fields, types, units, nullability and provenance for a listed dataset.
+- `model.dataset.query`: queries described fields with bounded filters, sorting and paging.
+- `model.element.get`: resolves an element from any listed element table to `asset_ref`.
 - `model.constraints.describe`: returns voltage and loading constraints stored in the active model with their source fields.
 - `topology.branch.endpoints.get`: returns branch endpoint buses and topology evidence.
 - `topology.components.get`: returns connected component summaries.
@@ -35,7 +36,7 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 
 Catalog calls take no context. Model-specific calls require `context_ref`. Calculation calls require the same `context_ref` and contract-enumerated solver overrides only. Ranking requires an existing `result_ref`, explicit `metric`, `direction`, and `limit`.
 
-Use `model_id: "ieee39"` for the only registered WP-A model. N-1 requires the base context and stable branch refs.
+Use `model.list` to select an exact model ID; `ieee39` remains the stable ID for case39. N-1 requires the base context and stable branch refs.
 For a model voltage range or branch loading limit, call `model.constraints.describe` with the active context. User criteria and named standards must remain separately identified sources.
 
 ## Result Fields and Units
@@ -67,4 +68,4 @@ For `model_not_found`, call `model.list`. For `unknown_context`, call `context.o
 - Treating source aliases as stable references.
 - Ranking without a prior `analysis.powerflow.ac.run`.
 - Retrying non-convergence without changing a contract-supported solver setting or reporting the outcome.
-- Promising unavailable future capabilities listed in `future-capabilities.md`.
+- Guessing dataset fields instead of calling `model.dataset.list` and `model.dataset.describe`.

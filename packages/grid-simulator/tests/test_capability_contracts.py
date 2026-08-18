@@ -17,6 +17,7 @@ EXPECTED_IDS = (
     "evidence.get",
     "model.constraints.describe",
     "model.dataset.describe",
+    "model.dataset.list",
     "model.dataset.query",
     "model.element.get",
     "model.list",
@@ -88,19 +89,16 @@ def test_reference_fields_have_exact_prefix_patterns() -> None:
                 assert schema["pattern"] == expected_patterns[field], f"{contract.id}:{field}"
 
 
-def test_dataset_query_uses_dataset_specific_selectable_field_enums() -> None:
+def test_dataset_query_uses_schema_described_field_names_and_closed_predicates() -> None:
     contract = CapabilityRegistry.load_packaged().require("model.dataset.query")
-    branches = contract.input_schema["oneOf"]
+    properties = contract.input_schema["properties"]
 
-    assert len(branches) == 2
-    dataset_enums = {branch["properties"]["dataset"]["const"] for branch in branches}
-    assert dataset_enums == {"network.buses", "network.branches"}
-    assert "fields" not in contract.input_schema["properties"]
-    for branch in branches:
-        fields = branch["properties"]["select"]["items"]
-        assert "enum" in fields
-        assert fields["enum"]
-        assert fields.get("type") != "string"
+    assert properties["dataset"]["pattern"] == r"^network\.[a-z0-9_]+$"
+    assert properties["select"]["items"]["type"] == "string"
+    assert properties["filters"]["items"]["additionalProperties"] is False
+    assert properties["filters"]["items"]["properties"]["operator"]["enum"] == [
+        "eq", "ne", "gt", "gte", "lt", "lte", "in"
+    ]
 
 
 def test_dataset_query_schema_validates_bus_payload_and_rejects_unknown_properties() -> None:
@@ -133,7 +131,7 @@ def test_all_nested_object_schemas_forbid_extra_properties() -> None:
         for schema in _walk_object_schemas(contract.input_schema):
             assert schema.get("additionalProperties") is False, contract.id
         for schema in _walk_object_schemas(contract.output_schema):
-            assert schema.get("additionalProperties") is False, contract.id
+            assert schema.get("additionalProperties") is False or schema.get("x-schema-described") is True, contract.id
 
 
 def _walk_properties(schema: object) -> list[tuple[str, dict[str, object]]]:

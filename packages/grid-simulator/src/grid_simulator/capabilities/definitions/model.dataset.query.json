@@ -1,246 +1,51 @@
 {
-  "id": "model.dataset.query",
-  "version": "1.0",
-  "package": "grid_simulator",
-  "tool_name": "grid_model_dataset_query",
-  "availability": "published",
-  "title": "Query a model dataset",
-  "purpose": "Query curated bus or branch dataset rows with dataset-specific field selection.",
-  "applies_to": ["bus data lookup", "branch data lookup", "bounded table queries"],
-  "not_for": ["arbitrary pandas queries", "result table ranking", "modifying network data"],
-  "terms": {
-    "zh": ["数据查询", "母线字段", "支路字段", "筛选"],
-    "en": ["dataset query", "bus fields", "branch fields", "filter"]
-  },
-  "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["context_ref", "dataset", "select"],
-    "properties": {
-      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "dataset": {"type": "string", "enum": ["network.buses", "network.branches"]},
-      "select": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 16,
-        "uniqueItems": true,
-        "items": {
-          "enum": [
-            "asset_ref",
-            "kind",
-            "index",
-            "name",
-            "alias",
-            "vn_kv",
-            "in_service",
-            "from_bus_ref",
-            "to_bus_ref",
-            "from_bus_index",
-            "to_bus_index",
-            "from_bus_name",
-            "to_bus_name",
-            "length_km",
-            "max_i_ka"
-          ]
-        }
-      },
-      "where": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "kind": {"type": "string"},
-          "in_service": {"type": "boolean"},
-          "name": {"type": "string"},
-          "alias": {"type": "string"},
-          "asset_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"}
-        }
-      },
-      "sort": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["field", "direction"],
-        "properties": {
-          "field": {"type": "string", "minLength": 1},
-          "direction": {"type": "string", "enum": ["ascending", "descending"]}
-        }
-      },
-      "limit": {"type": "integer", "minimum": 1, "maximum": 200}
-    },
-    "oneOf": [
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["context_ref", "dataset", "select"],
-        "properties": {
-          "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-          "dataset": {"type": "string", "const": "network.buses"},
-          "select": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 16,
-            "uniqueItems": true,
-            "items": {"enum": ["asset_ref", "kind", "index", "name", "alias", "vn_kv", "in_service"]}
-          },
-          "where": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "kind": {"type": "string", "enum": ["bus"]},
-              "in_service": {"type": "boolean"},
-              "name": {"type": "string"},
-              "alias": {"type": "string"},
-              "asset_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"}
-            }
-          },
-          "sort": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["field", "direction"],
-            "properties": {
-              "field": {"enum": ["asset_ref", "kind", "index", "name", "alias", "vn_kv", "in_service"]},
-              "direction": {"type": "string", "enum": ["ascending", "descending"]}
-            }
-          },
-          "limit": {"type": "integer", "minimum": 1, "maximum": 200}
-        }
-      },
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["context_ref", "dataset", "select"],
-        "properties": {
-          "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-          "dataset": {"type": "string", "const": "network.branches"},
-          "select": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 16,
-            "uniqueItems": true,
-            "items": {
-              "enum": [
-                "asset_ref",
-                "kind",
-                "index",
-                "name",
-                "alias",
-                "from_bus_ref",
-                "to_bus_ref",
-                "from_bus_index",
-                "to_bus_index",
-                "from_bus_name",
-                "to_bus_name",
-                "in_service",
-                "length_km",
-                "max_i_ka"
-              ]
-            }
-          },
-          "where": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "kind": {"type": "string", "enum": ["line", "trafo", "trafo3w"]},
-              "in_service": {"type": "boolean"},
-              "name": {"type": "string"},
-              "alias": {"type": "string"},
-              "asset_ref": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"}
-            }
-          },
-          "sort": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["field", "direction"],
-            "properties": {
-              "field": {
-                "enum": [
-                  "asset_ref",
-                  "kind",
-                  "index",
-                  "name",
-                  "alias",
-                  "from_bus_ref",
-                  "to_bus_ref",
-                  "from_bus_index",
-                  "to_bus_index",
-                  "from_bus_name",
-                  "to_bus_name",
-                  "in_service",
-                  "length_km",
-                  "max_i_ka"
-                ]
-              },
-              "direction": {"type": "string", "enum": ["ascending", "descending"]}
-            }
-          },
-          "limit": {"type": "integer", "minimum": 1, "maximum": 200}
-        }
-      }
-    ]
-  },
-  "output_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["dataset_ref", "context_ref", "revision_ref", "dataset", "row_count", "returned_row_count", "rows"],
-    "properties": {
-      "dataset_ref": {"type": "string", "pattern": "^dataset:network\\.(buses|branches):sha256:[0-9a-f]{64}$"},
-      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
-      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
-      "dataset": {"type": "string", "enum": ["network.buses", "network.branches"]},
-      "row_count": {"type": "integer", "minimum": 0},
-      "returned_row_count": {"type": "integer", "minimum": 0},
-      "artifact_ref": {"type": "string", "pattern": "^artifact:sha256:[0-9a-f]{64}$"},
-      "rows": {
-        "type": "array",
-        "maxItems": 50,
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "asset_ref": {"type": "string", "pattern": "^asset:[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
-            "kind": {"type": "string", "enum": ["bus", "line", "trafo", "trafo3w"]},
-            "index": {"type": "integer", "minimum": 0},
-            "name": {"type": "string"},
-            "alias": {"type": "string"},
-            "vn_kv": {"type": "number"},
-            "in_service": {"type": "boolean"},
-            "from_bus_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"},
-            "to_bus_ref": {"type": "string", "pattern": "^asset:bus:sha256:[0-9a-f]{64}$"},
-            "from_bus_index": {"type": "integer", "minimum": 0},
-            "to_bus_index": {"type": "integer", "minimum": 0},
-            "from_bus_name": {"type": "string"},
-            "to_bus_name": {"type": "string"},
-            "length_km": {"type": ["number", "null"]},
-            "max_i_ka": {"type": ["number", "null"]}
-          }
-        }
-      }
+  "id":"model.dataset.query",
+  "version":"1.0",
+  "package":"grid_simulator",
+  "tool_name":"grid_model_dataset_query",
+  "availability":"published",
+  "title":"Query a network dataset",
+  "purpose":"Select, filter, sort and page only fields declared by model.dataset.describe.",
+  "applies_to":["bounded element lookup","model input inspection","network-wide tabular analysis"],
+  "not_for":["arbitrary pandas expressions","result tables","network mutation"],
+  "terms":{"zh":["数据查询","筛选","排序","分页"],"en":["dataset query","filter","sort","page"]},
+  "input_schema":{
+    "type":"object","additionalProperties":false,"required":["context_ref","dataset","select"],
+    "properties":{
+      "context_ref":{"type":"string","pattern":"^context:sha256:[0-9a-f]{64}$"},
+      "dataset":{"type":"string","pattern":"^network\\.[a-z0-9_]+$"},
+      "select":{"type":"array","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"string","minLength":1}},
+      "where":{"type":"object","additionalProperties":false,"properties":{"asset_ref":{"type":"string"},"kind":{"type":"string"},"index":{},"name":{"type":"string"},"alias":{"type":"string"},"in_service":{"type":"boolean"}}},
+      "filters":{"type":"array","maxItems":20,"items":{"type":"object","additionalProperties":false,"required":["field","operator","value"],"properties":{"field":{"type":"string","minLength":1},"operator":{"type":"string","enum":["eq","ne","gt","gte","lt","lte","in"]},"value":{}}}},
+      "sort":{"type":"object","additionalProperties":false,"required":["field","direction"],"properties":{"field":{"type":"string","minLength":1},"direction":{"type":"string","enum":["ascending","descending"]}}},
+      "offset":{"type":"integer","minimum":0},
+      "limit":{"type":"integer","minimum":1,"maximum":200}
     }
   },
-  "requires": ["context.open", "model.dataset.describe"],
-  "consumes": ["network.context", "dataset.schema"],
-  "produces": ["dataset.rows"],
-  "common_next": ["model.element.get", "topology.branch.endpoints.get"],
-  "errors": ["unknown_context", "unsupported_dataset", "field_unavailable", "where_field_unavailable", "sort_field_unselected"],
-  "recovery": {
-    "unknown_context": ["call context.open for a supported model"],
-    "field_unavailable": ["call model.dataset.describe and select only supported fields"],
-    "where_field_unavailable": ["use supported equality predicate keys from model.dataset.describe"],
-    "sort_field_unselected": ["include the sort field in select"]
+  "output_schema":{
+    "type":"object","additionalProperties":false,"required":["dataset_ref","context_ref","revision_ref","dataset","row_count","returned_row_count","offset","next_offset","rows"],
+    "properties":{
+      "dataset_ref":{"type":"string","pattern":"^dataset:network\\.[a-z0-9_]+:sha256:[0-9a-f]{64}$"},
+      "context_ref":{"type":"string","pattern":"^context:sha256:[0-9a-f]{64}$"},
+      "revision_ref":{"type":"string","pattern":"^revision:sha256:[0-9a-f]{64}$"},
+      "dataset":{"type":"string","pattern":"^network\\.[a-z0-9_]+$"},
+      "row_count":{"type":"integer","minimum":0},
+      "returned_row_count":{"type":"integer","minimum":0,"maximum":50},
+      "offset":{"type":"integer","minimum":0},
+      "next_offset":{"type":["integer","null"],"minimum":0},
+      "artifact_ref":{"type":"string","pattern":"^artifact:sha256:[0-9a-f]{64}$"},
+      "rows":{"type":"array","maxItems":50,"items":{"type":"object","x-schema-described":true,"additionalProperties":{}}}
+    }
   },
-  "context_effect": {
-    "requires_state": ["model.active"],
-    "consumes_state": ["model.active"],
-    "produces_state": ["model.observation"],
-    "invalidates_state": [],
-    "result_kind": null,
-    "projector": "model-observation-v1"
-  },
-  "state_effect": "none",
-  "evidence_required": false,
-  "risk": "read_only_model",
-  "pandapower": {
-    "version": "3.4.0",
-    "operation": "read curated pandapowerNet table columns after validating selected fields",
-    "limitations": ["No arbitrary Python, pandas expressions, or uncurated columns"]
-  }
+  "requires":["context.open","model.dataset.describe"],
+  "consumes":["network.context","dataset.schema"],
+  "produces":["dataset.rows","dataset.page"],
+  "common_next":["model.element.get","analysis.powerflow.ac.run"],
+  "errors":["unknown_context","unsupported_dataset","field_unavailable","where_field_unavailable","sort_field_unselected","dataset_value_unavailable"],
+  "recovery":{"unknown_context":["call context.open"],"unsupported_dataset":["call model.dataset.list"],"field_unavailable":["call model.dataset.describe"],"where_field_unavailable":["filter only described fields"],"sort_field_unselected":["include the sort field in select"],"dataset_value_unavailable":["choose another schema-described dataset"]},
+  "context_effect":{"requires_state":["model.active"],"consumes_state":["model.active"],"produces_state":["model.observation"],"invalidates_state":[],"result_kind":null,"projector":"model-observation-v1"},
+  "state_effect":"none",
+  "evidence_required":false,
+  "risk":"read_only_model",
+  "pandapower":{"version":"3.4.0","operation":"read only fields declared by the selected network dataset schema","limitations":["No Python or pandas expressions; predicates use a fixed operator enum"]}
 }

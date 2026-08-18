@@ -41,16 +41,16 @@ from grid_simulator.models import (
 )
 from grid_simulator.protocol import CapabilityError, GridCapabilityRequest, GridCapabilityResponse
 from grid_simulator.queries import (
-    DATASET_FIELDS,
-    WHERE_FIELDS,
     BranchRecord,
     BusRecord,
     allowed_field_names,
     asset_ref,
+    dataset_names,
     dataset_ref,
     field_metadata,
     find_branch,
     find_bus,
+    find_element,
     records_for_dataset,
 )
 from grid_simulator.workspace import SimulatorWorkspace
@@ -64,6 +64,7 @@ EXECUTABLE_CAPABILITIES = frozenset(
         "context.get",
         "model.constraints.describe",
         "model.element.get",
+        "model.dataset.list",
         "model.dataset.describe",
         "model.dataset.query",
         "topology.branch.endpoints.get",
@@ -115,6 +116,8 @@ def _dispatch(
         return _model_constraints_describe(workspace, services.engine, request.arguments)
     if request.capability == "model.element.get":
         return _model_element_get(workspace, services.engine, request.arguments)
+    if request.capability == "model.dataset.list":
+        return _model_dataset_list(workspace, services.engine, request.arguments)
     if request.capability == "model.dataset.describe":
         return _model_dataset_describe(workspace, services.engine, request.arguments)
     if request.capability == "model.dataset.query":
@@ -180,7 +183,7 @@ def _context_open(workspace: SimulatorWorkspace, engine: Pandapower340Engine, ar
         ) from exc
     except OSError as exc:
         raise _failure("persist_failed", "Context evidence could not be persisted", phase="persist") from exc
-    model = registry.list()[0]
+    model = registry.get(context.model_id)
     net = store.load_network(context.context_ref)
     return {
         "context_ref": context.context_ref,
@@ -223,10 +226,16 @@ def _model_element_get(
     kind = str(arguments["kind"])
     namespace = str(arguments["namespace"])
     identifier = str(arguments["identifier"])
-    if kind == "bus":
-        record = find_bus(net, context.revision_ref, namespace, identifier)
-    else:
-        record = find_branch(net, context.revision_ref, kind, namespace, identifier)
+    available_kinds = {name.removeprefix("network.") for name in dataset_names(net) if name not in {"network.buses", "network.branches"}}
+    if kind not in available_kinds:
+        raise _failure(
+            "unknown_element_kind",
+            f"Element kind {kind!r} is not available in this network revision",
+            phase="resolve",
+            allowed_recovery_actions=("list_datasets",),
+            details={"allowed_kinds": sorted(available_kinds)},
+        )
+    record = find_element(net, context.revision_ref, kind, namespace, identifier)
     if record is None:
         raise _failure(
             "unknown_element",
@@ -247,13 +256,32 @@ def _model_dataset_describe(
 ) -> dict[str, Any]:
     dataset = str(arguments["dataset"])
     context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    _require_dataset(net, dataset)
     return {
         "dataset_ref": dataset_ref(context.revision_ref, dataset),
         "context_ref": context.context_ref,
         "revision_ref": context.revision_ref,
         "dataset": dataset,
         "row_count": len(records_for_dataset(net, context.revision_ref, dataset)),
-        "fields": field_metadata(dataset),
+        "fields": field_metadata(dataset, net),
+    }
+
+
+def _model_dataset_list(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    return {
+        "context_ref": context.context_ref,
+        "revision_ref": context.revision_ref,
+        "datasets": [
+            {
+                "dataset": name,
+                "dataset_ref": dataset_ref(context.revision_ref, name),
+                "row_count": len(records_for_dataset(net, context.revision_ref, name)),
+            }
+            for name in dataset_names(net)
+        ],
     }
 
 
@@ -263,15 +291,28 @@ def _model_dataset_query(
     dataset = str(arguments["dataset"])
     select = [str(field) for field in arguments["select"]]
     where = dict(arguments.get("where", {}))
+    filters = list(arguments.get("filters", []))
     sort = arguments.get("sort")
     limit = int(arguments.get("limit", 100))
-    _validate_dataset_query(dataset, select, where, sort)
+    offset = int(arguments.get("offset", 0))
     context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
-    rows = [record.as_dict() for record in records_for_dataset(net, context.revision_ref, dataset)]
-    filtered_rows = _filter_rows(rows, where)
+    _require_dataset(net, dataset)
+    _validate_dataset_query(net, dataset, select, where, filters, sort)
+    try:
+        rows = [record.as_dict() for record in records_for_dataset(net, context.revision_ref, dataset)]
+    except ValueError as exc:
+        raise _failure(
+            "dataset_value_unavailable",
+            "Dataset contains a value that cannot cross the typed boundary",
+            phase="execute",
+            allowed_recovery_actions=("choose_another_dataset",),
+        ) from exc
+    filtered_rows = _filter_rows(rows, where, filters)
     sorted_rows = _sort_rows(filtered_rows, sort)
     selected_rows = [{field: row[field] for field in select} for row in sorted_rows]
-    returned_rows = selected_rows[: min(limit, MODEL_VIEW_LIMIT)]
+    page_limit = min(limit, MODEL_VIEW_LIMIT)
+    returned_rows = selected_rows[offset : offset + page_limit]
+    next_offset = offset + len(returned_rows) if offset + len(returned_rows) < len(selected_rows) else None
     result: dict[str, Any] = {
         "dataset_ref": dataset_ref(context.revision_ref, dataset),
         "context_ref": context.context_ref,
@@ -279,6 +320,8 @@ def _model_dataset_query(
         "dataset": dataset,
         "row_count": len(selected_rows),
         "returned_row_count": len(returned_rows),
+        "offset": offset,
+        "next_offset": next_offset,
         "rows": returned_rows,
     }
     if len(selected_rows) > MODEL_VIEW_LIMIT:
@@ -288,7 +331,7 @@ def _model_dataset_query(
             "context_ref": context.context_ref,
             "revision_ref": context.revision_ref,
             "row_count": len(selected_rows),
-            "rows": selected_rows[:limit],
+            "rows": selected_rows,
         }
         digest = fingerprint(canonical_json(artifact))
         path = workspace.root / "evidence" / "artifacts" / f"dataset-query-{digest}.json"
@@ -473,8 +516,26 @@ def _load_context_and_network(workspace: SimulatorWorkspace, engine: Pandapower3
     return context, net
 
 
-def _validate_dataset_query(dataset: str, select: list[str], where: dict[str, Any], sort: object) -> None:
-    allowed_fields = allowed_field_names(dataset)
+def _require_dataset(net: Any, dataset: str) -> None:
+    if dataset not in dataset_names(net):
+        raise _failure(
+            "unsupported_dataset",
+            "Dataset is not available in this network revision",
+            phase="resolve",
+            allowed_recovery_actions=("list_datasets",),
+            details={"dataset": dataset, "available_datasets": list(dataset_names(net))},
+        )
+
+
+def _validate_dataset_query(
+    net: Any,
+    dataset: str,
+    select: list[str],
+    where: dict[str, Any],
+    filters: list[object],
+    sort: object,
+) -> None:
+    allowed_fields = allowed_field_names(dataset, net)
     unavailable = [field for field in select if field not in allowed_fields]
     if unavailable:
         raise _failure(
@@ -484,14 +545,27 @@ def _validate_dataset_query(dataset: str, select: list[str], where: dict[str, An
             allowed_recovery_actions=("describe_dataset",),
             details={"fields": unavailable, "allowed_fields": list(allowed_fields)},
         )
-    invalid_where = [field for field in where if field not in WHERE_FIELDS or field not in allowed_fields]
+    invalid_where = [field for field in where if field not in allowed_fields]
     if invalid_where:
         raise _failure(
             "where_field_unavailable",
             "Where contains fields unavailable for equality filtering",
             phase="validate",
             allowed_recovery_actions=("describe_dataset",),
-            details={"fields": invalid_where, "allowed_where_fields": sorted(WHERE_FIELDS & set(allowed_fields))},
+            details={"fields": invalid_where, "allowed_where_fields": list(allowed_fields)},
+        )
+    invalid_filters = [
+        str(dict(item).get("field", ""))
+        for item in filters
+        if str(dict(item).get("field", "")) not in allowed_fields
+    ]
+    if invalid_filters:
+        raise _failure(
+            "where_field_unavailable",
+            "Filters contain fields unavailable for this dataset",
+            phase="validate",
+            allowed_recovery_actions=("describe_dataset",),
+            details={"fields": invalid_filters, "allowed_where_fields": list(allowed_fields)},
         )
     if sort is None:
         return
@@ -513,8 +587,38 @@ def _validate_dataset_query(dataset: str, select: list[str], where: dict[str, An
         )
 
 
-def _filter_rows(rows: list[dict[str, Any]], where: dict[str, Any]) -> list[dict[str, Any]]:
-    return [row for row in rows if all(row[field] == value for field, value in where.items())]
+def _filter_rows(
+    rows: list[dict[str, Any]], where: dict[str, Any], filters: list[object]
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if all(row[field] == value for field, value in where.items())
+        and all(_predicate_matches(row, dict(predicate)) for predicate in filters)
+    ]
+
+
+def _predicate_matches(row: dict[str, Any], predicate: dict[str, Any]) -> bool:
+    actual = row[str(predicate["field"])]
+    expected = predicate.get("value")
+    operator = str(predicate["operator"])
+    if operator == "eq":
+        return actual == expected
+    if operator == "ne":
+        return actual != expected
+    if operator == "in":
+        return actual in expected
+    if actual is None or expected is None:
+        return False
+    if operator == "gt":
+        return actual > expected
+    if operator == "gte":
+        return actual >= expected
+    if operator == "lt":
+        return actual < expected
+    if operator == "lte":
+        return actual <= expected
+    return False
 
 
 def _sort_rows(rows: list[dict[str, Any]], sort: object) -> list[dict[str, Any]]:
@@ -639,39 +743,12 @@ def _validate_arguments(contract: CapabilityContract, arguments: dict[str, Any])
             phase="resolve",
         ) from exc
     except JsonSchemaValidationError as exc:
-        if contract.id == "model.dataset.query" and _dataset_query_has_unavailable_field(arguments):
-            dataset = str(arguments.get("dataset", ""))
-            allowed = list(allowed_field_names(dataset)) if dataset in DATASET_FIELDS else []
-            selected = arguments.get("select", [])
-            unavailable = [
-                str(field)
-                for field in selected
-                if isinstance(selected, list) and str(field) not in allowed
-            ]
-            raise _failure(
-                "field_unavailable",
-                "Select contains fields unavailable for this dataset",
-                phase="validate",
-                allowed_recovery_actions=("describe_dataset",),
-                details={"fields": unavailable, "allowed_fields": allowed},
-            ) from exc
         raise _failure(
             "invalid_arguments",
             "Capability arguments do not match the input contract",
             phase="validate",
             allowed_recovery_actions=("correct_arguments",),
         ) from exc
-
-
-def _dataset_query_has_unavailable_field(arguments: dict[str, Any]) -> bool:
-    dataset = arguments.get("dataset")
-    selected = arguments.get("select")
-    if dataset not in DATASET_FIELDS or not isinstance(selected, list):
-        return False
-    allowed = set(allowed_field_names(str(dataset)))
-    return any(str(field) not in allowed for field in selected)
-
-
 def _validate_result(contract: CapabilityContract, result: dict[str, Any]) -> None:
     try:
         Draft202012Validator.check_schema(contract.output_schema)

@@ -1,8 +1,8 @@
-# Future Capabilities
+# Capability Status And Intentional Exclusions
 
 ## Use This For
 
-Use this guide to answer scope questions and avoid promising capabilities that are defined as future work but unavailable in WP-A.
+Use `environment.describe` as the runtime authority for what is executable now. The full static-analysis matrix is current product scope; missing rows are implementation defects, not a permanent product boundary.
 
 ## Do Not Use This For
 
@@ -14,7 +14,7 @@ Unavailable means there is no advertised executable WP-A capability ID for the w
 
 ## Available Capabilities
 
-There are no executable future capabilities in WP-A. Available alternatives are limited to the current capability map: `environment.describe`, `model.list`, `context.open`, `context.get`, `model.dataset.describe`, `model.dataset.query`, `model.element.get`, `model.constraints.describe`, `topology.branch.endpoints.get`, `topology.components.get`, `analysis.powerflow.ac.run`, `result.branches.rank`, `analysis.contingency.n_minus_one.run`, and `evidence.get`.
+Published model/data discovery includes `model.dataset.list`, schema-described access to all public static element tables, and multiple registered pandapower networks. Other rows are published only when they appear in `environment.describe`; never invent an unpublished capability ID.
 
 Unavailable in WP-A:
 
@@ -26,7 +26,6 @@ Unavailable in WP-A:
 - Model import, create, edit, or delete.
 - Topology switching or branch status modification outside isolated N-1 scenarios.
 - Richer risk evaluation against user criteria or named external standards.
-- Multiple registered networks beyond `ieee39`.
 - Dynamic stability, protection relay simulation, and remedial action optimization.
 
 ## Parameters and Defaults
@@ -40,7 +39,7 @@ No result fields or units exist for unavailable capabilities. Any value would be
 ## Single-step Examples
 
 - "Run DC power flow" -> explain that DC flow is unavailable in WP-A; offer AC power flow with `analysis.powerflow.ac.run` only if acceptable.
-- "Import my model" -> explain that only registered `ieee39` is supported.
+- "Which registered models exist?" -> call `model.list`; do not assume only IEEE-39.
 
 ## Multi-step Examples
 
@@ -58,4 +57,4 @@ Unavailable workflows produce no evidence. Do not claim evidence for future capa
 
 - Presenting AC power flow as DC flow.
 - Treating N-1 as OPF or dynamic stability.
-- Claiming support for multiple networks because pandapower has many examples; WP-A registers only `ieee39`.
+- Confusing current implementation gaps with intentional exclusions from static analysis.

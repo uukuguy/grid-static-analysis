@@ -10,12 +10,12 @@ Do not use these capabilities for power-flow values, endpoint claims, branch ran
 
 ## Concepts and Terminology
 
-WP-A supports one registered model: `ieee39`, sourced from `pandapower.networks.case39` under pandapower `3.4.0`. The model context is immutable and identified by `context_ref`. `context.open` also returns a semantic network hash and element counts.
+The runtime exposes a versioned allowlist of compatible zero-required-argument factories from `pandapower.networks` under pandapower `3.4.0`. `ieee39` is the stable product ID for `case39`; use `model.list` rather than assuming a model is present. A context is immutable and identified by `context_ref`.
 
 ## Available Capabilities
 
 - `environment.describe`: inspect protocol `grid-capability`, protocol version `1.0`, simulator `grid-simulator`, pandapower version `3.4.0`, and executable capability catalog.
-- `model.list`: list supported models, currently `ieee39`.
+- `model.list`: list all supported registered models and their exact source factories.
 - `context.open`: input `model_id`; output `context_ref`, `model`, `engine`, `pandapower_version`, `source`, `semantic_sha256`, and counts.
 - `context.get`: input `context_ref`; output `model` and counts for buses, lines, and transformers.
 
@@ -32,6 +32,7 @@ Counts are integers: `buses`, `lines`, and `transformers`. `semantic_sha256` ide
 - "What simulator is available?" -> call `environment.describe`.
 - "Which models can I use?" -> call `model.list`.
 - "Open IEEE-39" -> call `context.open` with `model_id: "ieee39"`.
+- "Open case9" -> first confirm `case9` in `model.list`, then call `context.open` with `model_id: "case9"`.
 
 ## Multi-step Examples
 

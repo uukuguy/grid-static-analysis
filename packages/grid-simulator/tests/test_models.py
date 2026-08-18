@@ -19,6 +19,36 @@ def test_registry_lists_ieee39_with_domain_aliases() -> None:
     assert model.engine_version == "3.4.0"
 
 
+def test_registry_lists_the_versioned_pandapower_network_catalog() -> None:
+    models = ModelRegistry(Pandapower340Engine()).list()
+    by_id = {model.model_id: model for model in models}
+
+    assert len(models) >= 50
+    assert {"ieee39", "case9", "case14", "create_cigre_network_mv"} <= set(by_id)
+    assert by_id["case9"].source == "pandapower.networks.case9"
+    assert by_id["create_cigre_network_mv"].source == "pandapower.networks.create_cigre_network_mv"
+    assert len({model.source for model in models}) == len(models)
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected_buses"),
+    [("case9", 9), ("case14", 14), ("ieee39", 39)],
+)
+def test_registry_opens_multiple_allowlisted_networks(model_id: str, expected_buses: int) -> None:
+    model, net = ModelRegistry(Pandapower340Engine()).open(model_id)
+
+    assert model.model_id == model_id
+    assert len(net.bus) == expected_buses
+
+
+def test_registry_opens_specialized_packaged_network() -> None:
+    model, net = ModelRegistry(Pandapower340Engine()).open("create_cigre_network_mv")
+
+    assert model.source == "pandapower.networks.create_cigre_network_mv"
+    assert len(net.bus) > 0
+    assert len(net.line) > 0
+
+
 def test_open_context_persists_immutable_revision(tmp_path: Path) -> None:
     workspace = SimulatorWorkspace(tmp_path)
     context = ContextStore(workspace, ModelRegistry(Pandapower340Engine())).create("ieee39")
@@ -51,3 +81,6 @@ def test_registry_rejects_arbitrary_model_ids_without_callable_resolution() -> N
 
     with pytest.raises(ModelNotFoundError):
         registry.open("pandapower.networks.case118")
+
+    with pytest.raises(ModelNotFoundError):
+        registry.open("pp_elements")

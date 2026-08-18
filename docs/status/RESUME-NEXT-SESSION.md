@@ -1,40 +1,47 @@
 # Live Session Checkpoint
 
-> Updated: 2026-08-14 19:43. **Session remains active — not a final handoff.**
+> Updated: 2026-08-18 12:44 CST. **Session remains active — not a final handoff.**
 
 ## TL;DR
 
-- `v0.2` remains the verified baseline; `runs/analysis-20260814T081822Z` is the immutable golden replay fixture.
-- The unified agent/business trajectory and full-lifecycle context workbench design is approved and written as a versioned specification.
-- Implementation has not started; a dependency-ordered roadmap and five executable TDD plans are ready, and the immediate gate is choosing the execution mode.
+- Product scope is now the complete pandapower 3.4.0 static-analysis surface, not the prior WP-A slice.
+- H-001 is confirmed and committed as `3a2d7bf`: the executable matrix reports 2/24 published capabilities (8.33%).
+- H-002 is in flight: complete registered model catalog, universal network datasets, declarative model creation and immutable revisions.
 
-## Where things stand
+## Durable baseline
 
-- Project route: direct.
-- Design baseline commit: `95ae9dd` (`docs: design unified trajectory workbench`).
-- Design authority: `docs/superpowers/specs/2026-08-14-unified-trajectory-workbench-design.md`.
-- Delivery authority: `docs/superpowers/plans/2026-08-14-unified-trajectory-implementation-roadmap.md` plus its five linked subsystem plans.
-- Visual authority: `docs/superpowers/mockups/2026-08-14-trajectory-workbench.html`.
-- Chosen architecture: one native typed/hash-chained event spine, independent Agent/Business/Context/Artifact projections, deterministic `v0.2` importer, loopback read-only API, and business-first polished Web workbench.
-- First-release boundary: historical replay before live streaming; exact model-input reconstruction and event-level context time travel are required.
-- DeepSeek Harness is an architecture and UI-quality reference, not a runtime dependency.
+- Branch: `main`
+- Latest climb commit: `3a2d7bf docs: establish full static analysis capability gate`
+- Existing regression baseline: agent 564 passed, simulator 87 passed before the new matrix tests, Pi tools 33 passed.
+- Focused matrix gate: 6 passed.
+- Capability source of truth: `configs/capabilities/pandapower-3.4.0-static-analysis.json`
+- Architecture: `docs/superpowers/specs/2026-08-18-pandapower-static-analysis-full-capability-design.md`
+- Plan: `docs/superpowers/plans/2026-08-18-pandapower-static-analysis-full-capability.md`
+- Climb state: `docs/status/climb/research-tree.md`
 
-## Next steps
+## In-flight work
 
-1. Choose Subagent-Driven execution (recommended) or Inline Execution.
-2. Execute `docs/superpowers/plans/2026-08-14-trajectory-event-spine.md` and pass its focused gate before starting native capture.
-3. Continue through native capture → projections/import → read-only API → Workbench UI, preserving every `v0.2` contract.
+- H-002 will replace the one-model registry with a versioned allowlist of compatible `pandapower.networks` factories.
+- Network datasets will become schema-described across all relevant element tables.
+- Controlled declarative creation and immutable typed patches will support arbitrary static-analysis scenarios without fixture-specific models.
 
-## Don't go down these paths again
+## Immediate next action
 
-- Do not build the workbench directly on the fragmented legacy files; native runs require the unified event spine.
-- Do not infer business intent or claims from answer prose, and do not expose hidden chain-of-thought.
-- Do not rewrite the golden historical run; importer caches belong under `.grid-agent/trajectory-cache/`.
-- Do not broaden Pi beyond project-defined grid tools, guides, bounded decision declaration, and answer submission.
+Write and run failing model-catalog tests for case9, case14, case39, a specialized packaged network, unknown IDs and factories with required arguments; then implement the versioned catalog.
+
+## Ruled-out paths
+
+- Do not add one tool per validation question.
+- Do not register only case9 or a one-bus fixture.
+- Do not count `completed N/N` as semantic correctness.
+- Do not leave complete solver results trapped in artifacts without typed result-dataset access.
+- Do not expose arbitrary Python, callable names, filesystem paths, DataFrames or pandapowerNet objects.
 
 ## Ready-to-paste commands
 
 ```sh
-git status --short
-sed -n '1,220p' docs/superpowers/plans/2026-08-14-unified-trajectory-implementation-roadmap.md
+python3 tools/capability_matrix.py --json
+tools/climb/eval-local.sh
+uv run --project packages/grid-simulator pytest packages/grid-simulator/tests/test_capability_matrix.py -q
+git status --short --branch
 ```
