@@ -1,0 +1,22 @@
+{
+  "id": "corpus-t-a1",
+  "question": "加载 case39，输出投运母线数量。",
+  "suites": ["static-analysis-full"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["context.open", "model.dataset.query"],
+    "forbidden_capabilities": ["analysis.run", "analysis.powerflow.ac.run"],
+    "max_tool_calls": 3,
+    "requires_evidence": false
+  },
+  "oracle": {
+    "kind": "semantic",
+    "evaluator": "corpus_trace_matches",
+    "arguments": {
+      "corpus_id": "T-A1",
+      "checks": [
+        {"capability": "model.dataset.query", "actual_path": "returned_row_count", "expected": {"metric": "投运母线数量"}, "comparator": "integer"}
+      ]
+    }
+  }
+}

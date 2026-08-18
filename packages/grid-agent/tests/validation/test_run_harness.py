@@ -382,3 +382,53 @@ def test_validation_runner_supports_scripted_pi_mode_with_wrapped_trace(tmp_path
     ]
     assert case["trace"]["tool_calls"] == 4
     assert case["evidence_refs"]
+
+
+def test_semantic_validation_fails_when_answer_corpus_disagrees_with_successful_tools(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "semantic.json"
+    corpus_path = tmp_path / "answers.jsonl"
+    corpus_path.write_text(
+        json.dumps(
+            {
+                "record_type": "answer",
+                "id": "T-A1",
+                "section_id": "A",
+                "section_name": "static",
+                "content_markdown": "| 指标 | 结果 |\n| --- | ---: |\n| 投运母线数量 | 40 |",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(RUNNER),
+            "--mode",
+            "scripted-pi",
+            "--suite",
+            "static-analysis-full",
+            "--case-id",
+            "corpus-t-a1",
+            "--answer-corpus",
+            str(corpus_path),
+            "--report",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=90,
+    )
+
+    assert completed.returncode == 1
+    case = json.loads(report_path.read_text(encoding="utf-8"))["cases"][0]
+    assert case["checks"]["envelope"] is True
+    assert case["checks"]["oracle"] is False
+    assert case["scores"]["orchestration_completion"] == 1.0
+    assert case["scores"]["semantic_correctness"] == 0.0
+    assert "semantic mismatch" in case["errors"]["oracle"][0]

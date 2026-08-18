@@ -53,6 +53,26 @@ def error_matches(event: ToolResultEvent, arguments: Mapping[str, JsonValue]) ->
     return declared_fields_match(event.error, dict(arguments))
 
 
+def result_satisfies(event: ToolResultEvent, arguments: Mapping[str, JsonValue]) -> bool:
+    if event.ok is not True:
+        return False
+    matches = arguments.get("matches", {})
+    nonempty_paths = arguments.get("nonempty_paths", [])
+    minimums = arguments.get("minimums", {})
+    if not isinstance(matches, Mapping) or not declared_fields_match(event.result, dict(matches)):
+        return False
+    if not isinstance(nonempty_paths, Sequence) or isinstance(nonempty_paths, (str, bytes, bytearray)):
+        return False
+    if not isinstance(minimums, Mapping):
+        return False
+    try:
+        if any(not _path_value(event.result, str(path)) for path in nonempty_paths):
+            return False
+        return all(float(_path_value(event.result, str(path))) >= float(value) for path, value in minimums.items())
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
+
+
 def topology_branch_endpoints(event: ToolResultEvent, arguments: Mapping[str, JsonValue]) -> bool:
     result = dict(event.result)
     branch = result.get("branch")
@@ -69,6 +89,19 @@ ORACLES = {
     "contains_all": contains_all,
     "error_matches": error_matches,
     "result_matches": result_matches,
+    "result_satisfies": result_satisfies,
     "truthful_limitation": truthful_limitation,
     "topology_branch_endpoints": topology_branch_endpoints,
 }
+
+
+def _path_value(value: object, path: str) -> object:
+    current = value
+    for component in path.split("."):
+        if isinstance(current, Mapping):
+            current = current[component]
+        elif isinstance(current, Sequence) and not isinstance(current, (str, bytes, bytearray)):
+            current = current[int(component)]
+        else:
+            raise TypeError(component)
+    return current

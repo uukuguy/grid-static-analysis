@@ -19,7 +19,7 @@ class CaseRequirements(StrictModel):
 
 
 class OracleSpec(StrictModel):
-    kind: Literal["structured", "knowledge", "limitation"]
+    kind: Literal["structured", "semantic", "knowledge", "limitation"]
     evaluator: str
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
@@ -36,6 +36,8 @@ class ValidationCase(StrictModel):
     def require_one_capability_for_structured_oracle(self) -> "ValidationCase":
         if self.oracle.kind == "structured" and len(self.requirements.required_capabilities) != 1:
             raise ValueError("structured validation cases require exactly one capability")
+        if self.oracle.kind == "semantic" and not self.requirements.required_capabilities:
+            raise ValueError("semantic validation cases require at least one capability")
         return self
 
 

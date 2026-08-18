@@ -1,0 +1,23 @@
+{
+  "id": "corpus-t-e1",
+  "question": "执行 case9 直流最优潮流并输出收敛状态和最优总成本。",
+  "suites": ["static-analysis-full"],
+  "model": "case9",
+  "requirements": {
+    "required_capabilities": ["context.open", "analysis.run"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 3,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "semantic",
+    "evaluator": "corpus_trace_matches",
+    "arguments": {
+      "corpus_id": "T-E1",
+      "checks": [
+        {"capability": "analysis.run", "actual_path": "summary.converged", "expected": {"metric": "直流最优潮流是否收敛"}, "comparator": "boolean"},
+        {"capability": "analysis.run", "actual_path": "summary.objective", "expected": {"metric": "最优总成本"}, "comparator": "number", "tolerance": 0.000001}
+      ]
+    }
+  }
+}

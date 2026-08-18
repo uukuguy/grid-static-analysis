@@ -1,0 +1,23 @@
+{
+  "id": "corpus-t-b1",
+  "question": "判断 case39 当前拓扑是否覆盖全部投运母线并输出失供母线。",
+  "suites": ["static-analysis-full"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["context.open", "analysis.run", "result.dataset.query"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "semantic",
+    "evaluator": "corpus_trace_matches",
+    "arguments": {
+      "corpus_id": "T-B1",
+      "checks": [
+        {"capability": "result.dataset.query", "actual_path": "returned_row_count", "expected": {"metric": "是否覆盖全部投运母线"}, "comparator": "empty_means_true"},
+        {"capability": "result.dataset.query", "actual_path": "rows", "expected": {"metric": "失供母线索引"}, "comparator": "empty"}
+      ]
+    }
+  }
+}

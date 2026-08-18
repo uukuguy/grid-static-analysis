@@ -3,6 +3,7 @@ from grid_agent.validation.oracles import (
     contains_all,
     error_matches,
     result_matches,
+    result_satisfies,
     topology_branch_endpoints,
     truthful_limitation,
 )
@@ -65,3 +66,21 @@ def test_generic_error_oracle_matches_typed_error_subset() -> None:
     )
 
     assert error_matches(event, {"code": "unknown_result"}) is True
+
+
+def test_result_satisfies_checks_subsets_nonempty_paths_and_minimums() -> None:
+    event = ToolResultEvent(
+        capability="analysis.result.risk.rank",
+        result={"status": "succeeded", "summary": {"ranked_count": 3}, "rankings": [{"rank": 1}]},
+        evidence_refs=("evidence:sha256:" + "f" * 64,),
+    )
+
+    assert result_satisfies(
+        event,
+        {
+            "matches": {"status": "succeeded"},
+            "nonempty_paths": ["rankings"],
+            "minimums": {"summary.ranked_count": 1},
+        },
+    )
+    assert not result_satisfies(event, {"minimums": {"summary.ranked_count": 4}})

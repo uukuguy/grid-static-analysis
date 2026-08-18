@@ -1,0 +1,24 @@
+{
+  "id": "corpus-t-c1",
+  "question": "使用牛顿-拉夫逊法执行 case39 交流潮流并输出外部电网有功。",
+  "suites": ["static-analysis-full"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["context.open", "analysis.run", "result.dataset.query"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "semantic",
+    "evaluator": "corpus_trace_matches",
+    "arguments": {
+      "corpus_id": "T-C1",
+      "checks": [
+        {"capability": "analysis.run", "actual_path": "summary.converged", "expected": {"metric": "潮流是否收敛"}, "comparator": "boolean"},
+        {"capability": "result.dataset.query", "actual_path": "rows.0.index", "expected": {"metric": "外部电网索引"}, "comparator": "integer"},
+        {"capability": "result.dataset.query", "actual_path": "rows.0.p_mw", "expected": {"metric": "外部电网有功出力（MW）"}, "comparator": "number", "tolerance": 0.000001}
+      ]
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "corpus-t-d1",
+  "question": "退出 case39 线路0，检查失供母线并执行直流潮流。",
+  "suites": ["static-analysis-full"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["context.open", "model.element.get", "model.revision.derive", "analysis.run", "result.dataset.query"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 7,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "semantic",
+    "evaluator": "corpus_trace_matches",
+    "arguments": {
+      "corpus_id": "T-D1",
+      "checks": [
+        {"capability": "model.element.get", "actual_path": "element.index", "expected": {"metric": "退出线路索引"}, "comparator": "integer"},
+        {"capability": "result.dataset.query", "actual_path": "rows", "expected": {"metric": "失供母线索引"}, "comparator": "empty"},
+        {"capability": "analysis.run", "actual_path": "summary.converged", "expected": {"metric": "直流潮流是否收敛"}, "comparator": "boolean"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "static-sourced-risk-001",
+  "question": "根据模型约束评估母线电压和线路负载越限并排序风险。",
+  "suites": ["static-analysis-full"],
+  "model": "case9",
+  "requirements": {
+    "required_capabilities": ["analysis.result.risk.rank"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 6,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "structured",
+    "evaluator": "result_satisfies",
+    "arguments": {
+      "matches": {"status": "succeeded"},
+      "nonempty_paths": ["rankings"],
+      "minimums": {"summary.ranked_count": 1}
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "corpus-t-f1",
+  "question": "构造110kV单母线网络并执行最大方式三相短路计算。",
+  "suites": ["static-analysis-full"],
+  "requirements": {
+    "required_capabilities": ["model.create", "analysis.run", "result.dataset.query"],
+    "forbidden_capabilities": ["analysis.powerflow.ac.run"],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "semantic",
+    "evaluator": "corpus_trace_matches",
+    "arguments": {
+      "corpus_id": "T-F1",
+      "checks": [
+        {"capability": "result.dataset.query", "actual_path": "rows.0.index", "expected": {"row": 0, "column": "故障母线索引"}, "comparator": "integer"},
+        {"capability": "result.dataset.query", "actual_path": "rows.0.ikss_ka", "expected": {"row": 0, "column": "ikss_ka"}, "comparator": "number", "tolerance": 0.000001},
+        {"capability": "result.dataset.query", "actual_path": "rows.0.skss_mw", "expected": {"row": 0, "column": "skss_mw"}, "comparator": "number", "tolerance": 0.000001}
+      ]
+    }
+  }
+}

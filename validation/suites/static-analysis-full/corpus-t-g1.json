@@ -1,0 +1,23 @@
+{
+  "id": "corpus-t-g1",
+  "question": "将 case39 全部投运负荷提高5%后执行交流潮流并输出总有功损耗。",
+  "suites": ["static-analysis-full"],
+  "model": "ieee39",
+  "requirements": {
+    "required_capabilities": ["context.open", "model.revision.derive", "analysis.powerflow.ac.run"],
+    "forbidden_capabilities": [],
+    "max_tool_calls": 4,
+    "requires_evidence": true
+  },
+  "oracle": {
+    "kind": "semantic",
+    "evaluator": "corpus_trace_matches",
+    "arguments": {
+      "corpus_id": "T-G1",
+      "checks": [
+        {"capability": "analysis.powerflow.ac.run", "actual_path": "converged", "expected": {"metric": "交流潮流是否收敛"}, "comparator": "boolean"},
+        {"capability": "analysis.powerflow.ac.run", "actual_path": "total_active_loss.value", "expected": {"metric": "系统总有功损耗（MW）"}, "comparator": "number", "tolerance": 0.000001}
+      ]
+    }
+  }
+}

@@ -12,7 +12,7 @@ def test_validation_cases_have_unique_ids_and_deterministic_oracles() -> None:
     cases = load_cases(ROOT / "validation")
 
     assert len({case.id for case in cases}) == len(cases)
-    assert all(case.oracle.kind in {"structured", "knowledge", "limitation"} for case in cases)
+    assert all(case.oracle.kind in {"structured", "semantic", "knowledge", "limitation"} for case in cases)
 
 
 def test_task11_validation_inventory_covers_wp_a_required_cases() -> None:
@@ -27,7 +27,6 @@ def test_task11_validation_inventory_covers_wp_a_required_cases() -> None:
         "analysis-top-five-line-loading-001",
         "limitation-line-171-n1-001",
         "analysis-critical-line-outage-ordering-001",
-        "limitation-voltage-overload-risk-001",
     }
     static_core = {
         "static-line-lookup-by-alias-001",
@@ -40,16 +39,31 @@ def test_task11_validation_inventory_covers_wp_a_required_cases() -> None:
         "static-stale-result-ref-001",
         "static-evidence-mismatch-001",
     }
+    static_full = {
+        "corpus-t-a1",
+        "corpus-t-b1",
+        "corpus-t-c1",
+        "corpus-t-d1",
+        "corpus-t-e1",
+        "corpus-t-f1",
+        "corpus-t-g1",
+        "static-sourced-risk-001",
+    }
 
     assert task_required <= set(by_id)
     assert static_core <= set(by_id)
+    assert static_full <= set(by_id)
     assert all("task-required" in by_id[case_id].suites for case_id in task_required)
     assert all("static-analysis-core" in by_id[case_id].suites for case_id in static_core)
+    assert all("static-analysis-full" in by_id[case_id].suites for case_id in static_full)
+    assert {
+        str(by_id[case_id].oracle.arguments["corpus_id"])
+        for case_id in static_full
+        if by_id[case_id].oracle.kind == "semantic"
+    } == {"T-A1", "T-B1", "T-C1", "T-D1", "T-E1", "T-F1", "T-G1"}
     assert all(by_id[case_id].oracle.evaluator != "contains_all" for case_id in task_required if "analysis-" in case_id)
-    assert all(by_id[case_id].oracle.kind == "limitation" for case_id in {
-        "limitation-line-171-n1-001",
-        "limitation-voltage-overload-risk-001",
-    })
+    assert by_id["limitation-line-171-n1-001"].oracle.kind == "limitation"
+    assert "limitation-voltage-overload-risk-001" not in by_id
     assert all(
         "policy" not in case.oracle.arguments
         for case in cases

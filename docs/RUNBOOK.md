@@ -113,9 +113,9 @@ make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪
 
 ## Skill 与工具边界
 
-Pi 只能访问项目发布的 grid domain tools、`grid_guide_open` 和 `grid_submit_answer`。工具描述说明某个 capability 如何调用；`skills/grid-static-analysis/` 是操作手册，说明何时使用 capability、如何组合上下文、结果和证据，以及哪些请求属于 WP-B 或后续范围。
+Pi 只能访问项目发布的 grid domain tools、`grid_guide_open` 和 `grid_submit_answer`。工具描述由发布的 capability 契约生成；`skills/grid-static-analysis/` 说明如何组合不可变模型、完整网络/结果数据集、分析和证据。
 
-WP-A 可执行能力包括：运行时/模型发现、打开 IEEE-39 上下文、数据集描述与查询、元素解析、线路端点、拓扑连通分量、交流潮流、有功网损、支路负载率排序、`static-analysis-v1` 单支路 N-1 校核，以及拓扑证据读取。WP-B 范围包括多注册网络、DC 潮流、更丰富的策略/风险引擎和更广泛结果查询；当前请求触及这些范围时必须返回明确限制，不能编造输出。
+当前发布面覆盖 60 个注册网络、声明式创建与不可变修订、全静态表访问、拓扑、AC/DC/三相潮流、AC/DC OPF、IEC 60909、状态估计、诊断、AC/DC N-1、模型约束越限、风险排序、电网等值和静态保护。`configs/capabilities/pandapower-3.4.0-static-analysis.json` 是范围矩阵，`environment.describe` 是运行时权威；动态仿真、时序控制、任意文件导入、任意 Python/I/O 和未固定的外部求解器仍是明确排除项。
 
 ## 证据检查
 
@@ -141,12 +141,14 @@ make validate
 ```
 
 `make test` 运行 agent、pandapower simulator 和 Node 扩展测试；`make test-e2e` 运行离线命令行样例及脚本化 Pi → gridctl 路径。
-`make validate` 运行 WP-A 必需的 deterministic validation：offline `task-required` 和 scripted-Pi `static-analysis-core`，报告写入 ignored `runs/validation-offline.json` 与 `runs/validation-scripted.json`。
+`make validate` 运行三层 deterministic validation：offline `task-required`、scripted-Pi `static-analysis-core`，以及绑定 `docs/test_script/测试题目答案.jsonl` 的 `static-analysis-full` 语义验收。报告分别写入 ignored `runs/validation-offline.json`、`runs/validation-scripted.json` 与 `runs/validation-static-analysis-full.json`；能力矩阵不足 100% 也会失败。语义验收比较真实工具结果事件和标准答案，不比较润色后的答案文字。
 
 可选 provider validation 会产生真实模型调用，必须显式给出 provider 且环境中已有对应凭证：
 
 ```sh
 make validate-provider PROVIDER=openai MODEL=gpt-5.5
+# 可覆盖验证集；默认 static-analysis-full
+make validate-provider PROVIDER=openai MODEL=gpt-5.5 VALIDATION_SUITE=task-required
 ```
 
-报告写入 `runs/validation-provider.json`，记录 provider/model、trace、延迟以及可用的 token/cost 元数据，不写入密钥。
+报告写入 `runs/validation-provider.json`，分别记录编排完成度、语义正确性、证据和工具调用效率；效率预算是诊断分，不会覆盖正确的主结果或阻断分析入口。报告记录 provider/model、trace、延迟以及可用的 token/cost 元数据，不写入密钥。

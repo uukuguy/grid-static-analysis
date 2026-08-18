@@ -1,6 +1,6 @@
 # 人工验证手册
 
-本手册用于在 WP-A 分支或已合并的 `main` 上人工复核 Grid Static Analysis 的可运行边界。所有命令均从仓库根目录执行，且只使用 [Makefile](../Makefile) 已发布的入口。
+本手册用于在 `main` 上人工复核 Grid Static Analysis 的完整 pandapower 3.4.0 静态分析边界。所有命令均从仓库根目录执行，且只使用 [Makefile](../Makefile) 已发布的入口。
 
 ## 验证范围与原则
 
@@ -24,8 +24,8 @@
 | Pi 安装/认证 | `make install-pi`、`make auth-import-pi`、`make auth-login` | 仅在使用托管 Pi 或 `openai-codex` OAuth 时需要。 |
 | 单元与契约测试 | `make test` | Python agent、pandapower simulator 和 Node tools 全部通过。 |
 | 端到端测试 | `make test-e2e` | 离线 CLI 与 scripted Pi → gridctl 路径全部通过。 |
-| 必需验证集 | `make validate` | `runs/validation-offline.json` 和 `runs/validation-scripted.json` 均显示 `failed: 0`。 |
-| 付费 provider 抽检 | `make validate-provider PROVIDER=<id> [MODEL=<id>]` | 仅在凭证已配置时运行；报告写入 `runs/validation-provider.json`。 |
+| 必需验证集 | `make validate` | 三份报告均 `failed: 0`，且 24/24 能力矩阵为 100%。 |
+| 付费 provider 抽检 | `make validate-provider PROVIDER=<id> [MODEL=<id>]` | 默认执行标准答案语义集；仅在凭证已配置时运行。 |
 
 `make validate-provider` 可能实际调用计费模型，不能把它当作本地常规检查；缺少对应 provider 凭证时应失败且不得输出密钥。
 
@@ -155,14 +155,15 @@ make test-e2e
 make validate
 ```
 
-`make validate` 的两个报告是人工验收的最小证据：
+`make validate` 的三份报告是人工验收的最小证据：
 
 ```sh
 sed -n '1,160p' runs/validation-offline.json
 sed -n '1,160p' runs/validation-scripted.json
+sed -n '1,220p' runs/validation-static-analysis-full.json
 ```
 
-每个报告的 `summary.failed` 必须为 `0`。同时检查各 case 的 `checks`：`envelope` 验证 stdout 外壳；`capability_constraints` 验证工具边界；`oracle` 对拓扑、潮流、排序和 N-1 读取结构化工具结果；`evidence` 验证引用确实位于当前 run。知识说明和限制说明的文字检查只适用于这两类非电气事实用例。
+每个报告的 `summary.failed` 必须为 `0`。`static-analysis-full` 的七个 `corpus-t-*` case 读取 `docs/test_script/测试题目答案.jsonl`，对真实工具结果中的整数、布尔、空集合和容差数值作类型化比较；即使所有 turn 都成功提交，任一语义值不符也必须失败。另检查各 case 的 `scores`：`orchestration_completion`、`semantic_correctness`、`evidence` 与 `efficiency` 分开报告；效率超预算只产生诊断分，不篡改或否定已接受的正确答案。
 
 ## 常见失败判读
 
