@@ -8,7 +8,7 @@
 - `stdout` 只能有一个 JSON 答案对象：`question_id` 与 `answer_output`；进度和诊断在 `stderr`。
 - 离线知识问答不应创建运行目录。拓扑、潮流、排序和 N-1 等 simulator-backed 问题应在 `runs/<question_id>/` 留下当前运行的证据。
 - 在线 Pi/LLM 只能使用 `grid_*` domain tools 与 `grid_guide_open`，不能使用 shell、read、write、通用查询工具或模型可见的答案提交工具。
-- 模型返回面向读者的普通最终文本；`grid-agent` 控制器绑定当前回合结果/证据 lineage 并提交答案。验证器只核对工具结果、`result_refs` 和 `claim_evidence_refs`，绝不从 `answer_output` 文本反推电网事实。
+- 模型返回面向读者的普通最终文本；单题在线 `run` 直接发布 stdout envelope，连续 `analysis` 由 `grid-agent` 控制器绑定当前回合结果/证据 lineage 并提交答案。验证器只核对工具结果、`result_refs` 和 `claim_evidence_refs`，绝不从 `answer_output` 文本反推电网事实。
 
 ## Makefile 入口对照
 
@@ -96,7 +96,7 @@ stdout 必须只有一个最终 `AnswerEnvelope`，`question_id` 形如 `analysi
 
 `make report` 和 `grid-agent report --questions PATH` 仅为迁移期兼容别名，委托同一条连续分析路径。它们不再接受独立 `OUTPUT`、`--output` 或 `--report-path`，也不再为每个问题启动一个 `grid-agent run` 子进程。当前版本没有 resume、命名 session 或 session 切换；中断后应检查已写入的同一分析目录并重新运行指令集。
 
-答案草稿通过受控提交后即为已接受答案；审计会作为单独的诊断写入报告，明确列出发现、影响和复核建议，但不会把已接受答案改写为“未采纳”。同一分析目录中的 `output/answers.jsonl` 仍只记录受控的逐回合答案 envelope。
+答案草稿通过受控提交后即为已接受答案；完整性诊断会作为单独的诊断写入报告，明确列出发现、影响和复核建议，但不会把已接受答案改写为“未采纳”。同一分析目录中的 `output/answers.jsonl` 仍只记录受控的逐回合答案 envelope。
 
 ## 3. 离线知识与确定性诊断
 
@@ -145,7 +145,9 @@ make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 
 检查 stderr 中有 `grid_guide_open`、`context.open`、`topology.branch.endpoints.get` 等分析工具事件，以及一次正常模型完成；不得出现模型调用 `grid_submit_answer` 的 trace。然后检查 `runs/<question_id>/events.jsonl`：领域工具完成事件必须以规范化的 `tool_result` 保存，包含 capability、`ok`、typed `result` 和 `evidence_refs`。不得出现 `read`、`shell`、`bash`、`grid_query` 或模型直接调用 pandapower 的轨迹。
 
-最后打开控制器生成的 `answer-draft.json`，连续分析则检查 `turns/NNN/answer-draft.json`：它应有 `answer_output`、`result_refs`、`claim_evidence_refs`，且不要求模型在正文中列出内部引用。`result_refs` 是支撑最终结论的主结果；分析证据中已关联的场景结果由运行时自动校验，不要求模型机械重复每一个场景引用。拓扑事实允许空 `result_refs`；AC/排序/N-1 结论必须有当前运行的主结果或与其相连的分析证据。引用缺失、过期、跨上下文或摘要不匹配时 CLI 必须拒绝控制器草稿，而不是照样输出答案。
+单题在线 `run` 的最终回答只在 stdout envelope 的 `answer_output` 中发布；运行目录保留 `events.jsonl`、工具结果和 evidence，但不写入 `answer-draft.json`，也不写入带 controller-bound lineage 的 `answer.json`。
+
+连续 `analysis` 才检查控制器生成的 `turns/NNN/answer-draft.json` 与已接受的 `turns/NNN/answer.json`：草稿应有 `answer_output`、`result_refs`、`claim_evidence_refs`，且不要求模型在正文中列出内部引用。`result_refs` 是支撑最终结论的主结果；分析证据中已关联的场景结果由运行时自动校验，不要求模型机械重复每一个场景引用。拓扑事实允许空 `result_refs`；AC/排序/N-1 结论必须有当前运行的主结果或与其相连的分析证据。引用缺失、过期、跨上下文或摘要不匹配时连续分析 CLI 必须拒绝控制器草稿，而不是照样输出答案。
 
 连续分析中，任一必需回合缺少可接受最终文本或控制器提交失败时，整体状态必须为 `failed`，CLI 退出码必须为 `1`，并且 `report.md` 仍要呈现失败前已经成功返回的工具结果。
 
@@ -174,6 +176,6 @@ sed -n '1,220p' runs/validation-static-analysis-full.json
 | `make doctor` 找不到 `gridctl` | 运行 `make setup`，确认 simulator 环境可创建。 |
 | `401 authentication_error` | 更新 `.env` 中与 provider 匹配的密钥；密钥不要写入命令行。 |
 | `Request timed out` | 检查 stderr 首行的超时/重试配置，再检查 `runs/<question_id>/events.jsonl`。 |
-| 草稿被拒绝 | 核对控制器生成的 `answer-draft.json` refs 是否属于当前 run、SHA 是否匹配、分析证据是否链接结果。 |
+| 草稿被拒绝 | 在连续分析目录中核对控制器生成的 `turns/NNN/answer-draft.json` refs 是否属于当前 run、SHA 是否匹配、分析证据是否链接结果。 |
 | `verification_*` 或 `structured_oracle_mismatch` | 检查 events 中是否有规范化 `tool_result` 以及真实 evidence 文档；不要通过修改答案文字来规避。 |
 | `powerflow_non_converged` 或 N-1 partial | 这是可报告的受控限制，前提是 typed error/证据完整且答案不编造数值。 |

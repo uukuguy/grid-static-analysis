@@ -105,9 +105,9 @@ make run-llm QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 make run-llm PROVIDER=deepseek QUESTION="IEEE-39节点系统中线路11连接哪两个母线?"
 ```
 
-`make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。Pi 只暴露项目生成的 `grid_*` domain tools 和 `grid_guide_open`；不会启用通用 shell/read/write/edit 内置工具。模型完成必要工具使用后返回普通面向读者的最终文本，`grid-agent` 控制器再确定性绑定当前回合的结果/证据引用并完成答案持久化。
+`make run` 始终是本地、非计费的离线 gridctl 路径；`make run-llm` 才会调用配置的 LLM，并把受控的 `gridctl` 放入 Pi 的受限 PATH。Pi 只暴露项目生成的 `grid_*` domain tools 和 `grid_guide_open`；不会启用通用 shell/read/write/edit 内置工具。模型完成必要工具使用后返回普通面向读者的最终文本；单题在线 `run` 直接发布 stdout envelope，连续 `analysis` 再由 `grid-agent` 控制器确定性绑定当前回合的结果/证据引用并完成答案持久化。
 
-`make run-llm` 的 stdout 仍只输出最终 JSON；实时进度写到 stderr，包括运行耗时、provider/model、生效的超时与重试参数、输入与输出前 200 字摘要、Pi 工具事件、重试事件，以及超过 10 秒无事件时的等待提示。密钥字段会被隐藏。
+`make run-llm` 的 stdout 仍只输出最终 JSON；实时进度写到 stderr，包括运行耗时、provider/model、生效的超时与重试参数、输入与输出前 200 字摘要、Pi 工具事件、重试事件，以及超过 10 秒无事件时的等待提示。密钥字段会被隐藏。单题在线 `run` 只把模型返回的普通最终文本放入 stdout envelope，并保留 `events.jsonl`、工具结果和 evidence；它不会写入 `answer-draft.json`，也不会写入带 controller-bound lineage 的 `answer.json`。
 
 若日志出现 `401 ... authentication_error`，表示当前 provider 的 API key 无效、过期或与所选 provider 不匹配；更新 `.env` 中对应的密钥后重新运行。该错误不会重试。若出现 `Request timed out`，先确认日志首行的超时和重试参数，再检查 provider 服务状态或提高 `GRID_AGENT_LLM_TIMEOUT_SECONDS`；运行原始事件保存在 `runs/<question_id>/events.jsonl`，可用于进一步诊断。
 
@@ -119,14 +119,15 @@ Pi 只能访问项目发布的 grid domain tools 和 `grid_guide_open`。工具�
 
 ## 证据检查
 
-每个 simulator-backed run 可检查：
+每个 simulator-backed 单题 `run` 可检查：
 
 - `runs/<question_id>/events.jsonl`：Pi 事件、工具调用和结果 trace。
 - `runs/<question_id>/tool-results/`：工具侧结果暂存目录。
 - `runs/<question_id>/evidence/`：当前运行的 context、model、network-fact、analysis 和 result 证据。
-- `runs/<question_id>/answer.json` 或 `answer-draft.json`：最终答案或控制器生成的提交草稿；连续分析中逐回合草稿位于 `turns/NNN/answer-draft.json`。
 
-在线运行不要求模型使用答案持久化工具。模型返回普通最终文本后，控制器写入 `answer_output`、`result_refs` 和 `claim_evidence_refs`，并验证这些引用确实来自当前运行；验证器不从 `answer_output` 文本中解析引用。`result_refs` 用来声明直接支撑最终结论的主结果，分析证据中已经关联的结果也会被自动定位、校验其当前运行归属和上下文一致性。拓扑事实可使用空 `result_refs`；AC、排序和 N-1 等结果型结论必须有当前运行的主结果或与其相连的分析证据。
+连续 `analysis` 额外写入 controller-owned 答案工件：`runs/<analysis_id>/turns/NNN/answer-draft.json` 是控制器根据当前回合最终文本和已消费/已产生 lineage 生成的提交草稿，`turns/NNN/answer.json` 是已接受的答案 envelope，`output/answers.jsonl` 汇总逐回合已接受答案。
+
+在线运行不要求模型使用答案持久化工具。单题 `run` 中，模型返回普通最终文本后直接形成 stdout envelope；连续 `analysis` 中，控制器再写入 `answer_output`、`result_refs` 和 `claim_evidence_refs`，并验证这些引用确实来自当前分析目录和当前回合 lineage。验证器不从 `answer_output` 文本中解析引用。`result_refs` 用来声明直接支撑最终结论的主结果，分析证据中已经关联的结果也会被自动定位、校验其当前运行归属和上下文一致性。拓扑事实可使用空 `result_refs`；AC、排序和 N-1 等结果型结论必须有当前运行的主结果或与其相连的分析证据。
 
 连续分析的 stderr 应显示分析工具调用和一次正常模型完成；trace 不应包含模型发起的 `grid_submit_answer` 调用。若任一必需回合失败，运行状态为 `failed`、CLI 退出码为 `1`，且 `report.md` 必须保留该回合已经成功返回的工具结果。
 

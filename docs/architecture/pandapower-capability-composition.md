@@ -67,6 +67,8 @@
 ## 3. 分层职责
 
 ```text
+路径 A：推理期间的注册工具调用
+
 自然语言问题
       |
       v
@@ -74,12 +76,6 @@ grid-agent / Pi / LLM
   - 理解问题与分析意图
   - 读取工具 Schema 和语义说明
   - 规划并调用注册工具
-  - 返回面向读者的最终文本
-      |
-      v
-grid-agent controller
-  - 绑定当前回合结果/证据引用
-  - 确定性提交答案
       |
       v  grid-capability/1.0
 gridctl / grid-simulator
@@ -91,6 +87,21 @@ gridctl / grid-simulator
 pandapower 3.4.0
   - 电网模型和算法实现
   - 潮流、OPF、短路、估计、拓扑等计算
+      |
+      v
+result/evidence 返回给 LLM 继续推理
+
+
+路径 B：终端最终文本与答案工件
+
+grid-agent / Pi / LLM
+  - 返回面向读者的普通最终文本
+      |
+      v
+grid-agent controller
+  - 单题 run：发布 stdout AnswerEnvelope，保留事件和工具证据
+  - 连续 analysis：绑定当前回合结果/证据 lineage
+  - 连续 analysis：写入 turns/NNN/answer-draft.json 与 answer.json
 ```
 
 职责边界如下：
@@ -99,7 +110,7 @@ pandapower 3.4.0
 - **`grid-agent`** 负责问题编排、统一工具目录、Pi 运行、连续上下文、轨迹、当前回合结果/证据绑定和最终答案封装。
 - **`gridctl` / `grid-simulator`** 负责所有网络事实和确定性计算，以及模型、结果和证据的内容寻址。
 - **pandapower 3.4.0** 负责具体电力系统算法；其对象始终留在模拟器边界内。
-- **观察、投影和审计层** 负责记录和解释执行过程，不应替代或改写成功的主计算结果。
+- **观察、投影和完整性诊断层** 负责记录和解释执行过程，不应替代或改写成功的主计算结果。
 
 ## 4. 统一能力目录如何动态注册工具
 
