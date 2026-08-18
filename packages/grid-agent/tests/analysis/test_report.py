@@ -51,16 +51,74 @@ def test_report_uses_per_question_narrative_and_real_trace_steps(report_fixture:
     assert report.startswith("# 系统仿真分析报告")
     assert "## 本批次运行环境" in report
     assert "## 1. 运行潮流并复用前序结果" in report
-    assert report.index("### 回答") < report.index("### 执行信息") < report.index("### 仿真环境上下文")
-    assert "### 实际分析过程" in report
+    assert report.index("### 仿真与工具结果") < report.index("### 模型结论") < report.index("### 执行状态与证据")
     assert "按支路运行指标筛选和排序（`result.branches.rank`，完成，1.50 秒）" in report
-    assert "### 证据来源" in report
-    assert "IEEE-39（pandapower.networks.case39）" in report
-    assert "母线电压约束：0.94–1.06 p.u.（模型数据）" in report
-    assert "交流潮流：已收敛" in report
+    assert "### 执行状态与证据" in report
+    assert '"from_bus": 6' in report
+    assert '"value": 43.6275' in report
     assert "result:sha256:" not in report
     assert "evidence:sha256:" not in report
     assert "结果依赖关系" not in report
+
+
+def test_report_renders_recorded_tool_results_before_model_conclusion(
+    report_fixture: ReportFixture,
+) -> None:
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+    first_turn = report.split("## 2.", maxsplit=1)[0]
+    assert first_turn.index("### 仿真与工具结果") < first_turn.index("### 模型结论")
+    assert '"from_bus": 6' in first_turn
+    assert '"to_bus": 11' in first_turn
+    assert '"value": 43.6275' in first_turn
+    assert '"loading_percent": 132.51' in first_turn
+    assert '"scenario_count": 35' in first_turn
+    assert "result:sha256:" not in first_turn
+    assert "api_key" not in first_turn
+    assert "authorization" not in first_turn
+    assert "turns/001/trace.md" in first_turn
+
+
+def test_failed_turn_keeps_successful_tool_result_in_main_report(
+    failed_report_fixture: ReportFixture,
+) -> None:
+    report = render_analysis_report(
+        context=failed_report_fixture.context,
+        workspace=failed_report_fixture.workspace,
+        environment={},
+    )
+    failed_turn = report.split("## 2. 失败回合", maxsplit=1)[1]
+    assert "状态：未完成" in failed_turn
+    assert '"from_bus": 6' in failed_turn
+    assert "模型未返回可接受的最终回答" in failed_turn
+
+
+def test_unknown_capability_uses_structured_result_fallback(
+    report_fixture: ReportFixture,
+) -> None:
+    report = render_report_with_tool_result(
+        report_fixture,
+        capability="analysis.future.operation",
+        result={"novel_metric": 12.75, "unit": "kV"},
+    )
+    assert "analysis.future.operation" in report
+    assert '"novel_metric": 12.75' in report
+    assert '"unit": "kV"' in report
+
+
+def test_report_keeps_historical_submit_events_readable(
+    report_fixture: ReportFixture,
+) -> None:
+    report = render_report_with_tool_result(
+        report_fixture,
+        capability="grid_submit_answer",
+        result={"ok": True},
+    )
+    assert "grid_submit_answer" in report
+    assert '"ok": true' in report
 
 
 def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: ReportFixture) -> None:
@@ -78,7 +136,7 @@ def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: Rep
         workspace=report_fixture.workspace,
         environment=report_fixture.environment,
     )
-    evidence_section = report.split("## 1. 运行潮流并复用前序结果", maxsplit=1)[1].split("### 证据来源", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+    evidence_section = report.split("## 1. 运行潮流并复用前序结果", maxsplit=1)[1].split("### 执行状态与证据", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
 
     assert "本题生成" in evidence_section
     assert "潮流证据" in evidence_section
@@ -87,7 +145,7 @@ def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: Rep
 
 
 def test_report_writes_detailed_trace_page_with_safe_input_output_and_raw_link(report_fixture: ReportFixture) -> None:
-    tool_result = report_fixture.workspace.tool_results_path / f"{report_fixture.workspace.analysis_id}-t001" / "rank-call.json"
+    tool_result = report_fixture.workspace.tool_results_path / f"{report_fixture.workspace.analysis_id}-t001" / "compatibility" / "rank-call.json"
     tool_result.parent.mkdir(parents=True, exist_ok=True)
     tool_result.write_text(json.dumps({"result_ref": RESULT_REF, "branches": []}), encoding="utf-8")
 
@@ -105,7 +163,7 @@ def test_report_writes_detailed_trace_page_with_safe_input_output_and_raw_link(r
     assert "### 输入" in detail
     assert "loading_percent" in detail
     assert "### 输出摘要" in detail
-    assert "tool-results/analysis-report-t001/rank-call.json" in detail
+    assert "tool-results/analysis-report-t001/compatibility/rank-call.json" in detail
     assert RESULT_REF not in detail
 
 
@@ -181,7 +239,7 @@ def test_report_keeps_submitted_answer_when_audit_has_errors(report_fixture: Rep
     assert "接受答案保持原文" in report
     assert "〔可追溯引用〕" not in report
     assert "result:sha256:" not in report
-    assert "## 审计复核" in report
+    assert "## 完整性诊断" in report
     assert "模型草稿（未采纳）" not in report
 
 
@@ -224,9 +282,9 @@ def test_report_renders_failed_turns_and_unresolved_limitations(report_fixture: 
     )
 
     assert "状态：未完成" in report
-    assert "本题未生成回答：solver unavailable" in report
+    assert "模型未返回可接受的最终回答。" in report
     assert "执行限制 / execution limitation" not in report
-    assert "## 审计复核" in report
+    assert "## 完整性诊断" in report
     assert "solver unavailable" in report
 
     failed_trace = (report_fixture.workspace.turn_path(2) / "trace.md").read_text(
@@ -270,7 +328,7 @@ def test_report_deduplicates_multiple_baselines_by_source(tmp_path: Path) -> Non
     report = render_analysis_report(context=fixture.context, workspace=fixture.workspace, environment={})
 
     assert report.count("## 本批次运行环境") == 1
-    assert "pandapower.networks.case39" in report
+    assert "## 完整性诊断" in report
 
 
 def test_report_uses_relative_forensic_links_without_absolute_path_leakage(report_fixture: ReportFixture) -> None:
@@ -318,7 +376,7 @@ def test_report_rejects_absolute_and_traversal_artifact_paths(report_fixture: Re
     assert "../outside-result.json" not in report
     assert "evidence/../secret.json" not in report
     assert report.count("路径不可用") >= 2
-    assert "## 审计复核" in report
+    assert "## 完整性诊断" in report
 
 
 def test_report_marks_turn_revision_unavailable_when_ledger_is_missing(report_fixture: ReportFixture) -> None:
@@ -428,7 +486,157 @@ def _build_report_fixture(tmp_path: Path, *, include_second_baseline: bool = Fal
         + "\n",
         encoding="utf-8",
     )
+    _append_trace_call(
+        workspace,
+        sequence=10,
+        call_id="endpoint-call",
+        capability="topology.branch.endpoints.get",
+        args={"branch_kind": "line", "branch_id": 11},
+        result={
+            "from_bus": 6,
+            "to_bus": 11,
+            "context_ref": BASELINE_REF,
+            "api_key": "must-not-leak",
+        },
+        turn_id=f"{workspace.analysis_id}-t001",
+    )
+    _append_trace_call(
+        workspace,
+        sequence=12,
+        call_id="powerflow-call",
+        capability="analysis.powerflow.ac.run",
+        args={"context_ref": BASELINE_REF},
+        result={
+            "converged": True,
+            "total_active_loss": {"value": 43.6275, "unit": "MW"},
+            "result_ref": RESULT_REF,
+        },
+        turn_id=f"{workspace.analysis_id}-t001",
+    )
+    _append_trace_call(
+        workspace,
+        sequence=14,
+        call_id="dataset-call",
+        capability="model.dataset.query",
+        args={"dataset": "network.branches", "filters": {"line": 11}},
+        result={
+            "rows": [
+                {
+                    "line": 11,
+                    "from_bus": 6,
+                    "to_bus": 11,
+                    "loading_percent": 132.51,
+                    "authorization": "Bearer must-not-leak",
+                }
+            ]
+        },
+        turn_id=f"{workspace.analysis_id}-t001",
+    )
+    _append_trace_call(
+        workspace,
+        sequence=16,
+        call_id="contingency-call",
+        capability="analysis.contingency.n_minus_one.run",
+        args={"context_ref": BASELINE_REF, "outage_kind": "single_branch"},
+        result={"scenario_count": 35, "worst_loading_percent": 132.51},
+        turn_id=f"{workspace.analysis_id}-t001",
+    )
+    _append_trace_call(
+        workspace,
+        sequence=18,
+        call_id="failed-endpoint-call",
+        capability="topology.branch.endpoints.get",
+        args={"branch_kind": "line", "branch_id": 11},
+        result={"from_bus": 6, "to_bus": 11},
+        turn_id=f"{workspace.analysis_id}-t002",
+    )
     return ReportFixture(context=eventful.context, workspace=workspace, environment=environment, answer_text=answer_text)
+
+
+def render_report_with_tool_result(
+    fixture: ReportFixture,
+    *,
+    capability: str,
+    result: dict[str, object],
+) -> str:
+    call_id = f"{capability.replace('.', '-')}-call"
+    _append_trace_call(
+        fixture.workspace,
+        sequence=40,
+        call_id=call_id,
+        capability=capability,
+        args={"probe": capability},
+        result=result,
+        turn_id=f"{fixture.workspace.analysis_id}-t001",
+    )
+    return render_analysis_report(
+        context=fixture.context,
+        workspace=fixture.workspace,
+        environment=fixture.environment,
+    )
+
+
+def _append_trace_call(
+    workspace: AnalysisWorkspace,
+    *,
+    sequence: int,
+    call_id: str,
+    capability: str,
+    args: dict[str, object],
+    result: dict[str, object],
+    turn_id: str,
+) -> None:
+    with workspace.trace_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "sequence": sequence,
+                    "timestamp": "2026-08-14T00:00:02Z",
+                    "event": "pi_event",
+                    "payload": {
+                        "type": "tool_execution_start",
+                        "tool_call_id": call_id,
+                        "tool_name": capability,
+                        "args": args,
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        stream.write(
+            json.dumps(
+                {
+                    "sequence": sequence + 1,
+                    "timestamp": "2026-08-14T00:00:02.250000Z",
+                    "event": "pi_event",
+                    "payload": {
+                        "type": "tool_result",
+                        "tool_call_id": call_id,
+                        "tool_name": capability,
+                        "capability": capability,
+                        "ok": True,
+                        "result": result,
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+    with workspace.events_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "event_type": "tool.completed",
+                    "scope": {
+                        "turn_id": turn_id,
+                        "tool_call_id": call_id,
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
 
 
 def _build_context(
@@ -691,4 +899,9 @@ def _append_context_event(
 
 @pytest.fixture
 def report_fixture(tmp_path: Path) -> ReportFixture:
+    return _build_report_fixture(tmp_path)
+
+
+@pytest.fixture
+def failed_report_fixture(tmp_path: Path) -> ReportFixture:
     return _build_report_fixture(tmp_path)

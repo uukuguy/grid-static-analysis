@@ -50,7 +50,7 @@ def render_analysis_report(
         lines.extend(_render_narrative_turn(context, turn, workspace, trace.steps, trace_pages, diagnostics))
     audit = _render_audit_review(context, workspace, diagnostics)
     if audit:
-        lines.extend(["", "## 审计复核", "", *audit])
+        lines.extend(["", "## 完整性诊断", "", *audit])
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -73,6 +73,11 @@ class _TraceRead:
     diagnostics: tuple[str, ...]
 
 
+_READER_MAX_DEPTH = 6
+_READER_MAX_MAPPING_ITEMS = 50
+_READER_MAX_SEQUENCE_ITEMS = 20
+
+
 def _render_narrative_turn(
     context: AnalysisContext,
     turn: TurnRecord,
@@ -84,35 +89,39 @@ def _render_narrative_turn(
     limitations = [item for item in context.unresolved_limitations if item.turn_id == turn.turn_id]
     answer = _reader_answer(_accepted_answer_text(turn, workspace, limitations, diagnostics))
     steps = _steps_for_turn(context, turn.turn_id, trace_steps)
+    trace_link = (
+        _workspace_link(
+            workspace,
+            trace_pages[turn.turn_id],
+            label="查看本题调用输入、输出和原始工件",
+            unavailable_label="轨迹页不可用",
+            diagnostics=diagnostics,
+            description="详细执行轨迹",
+        )
+        + "。"
+        if turn.turn_id in trace_pages
+        else "详细执行轨迹不可用。"
+    )
     lines = [
         "",
         f"## {turn.ordinal}. {_md(turn.instruction)}",
         "",
-        "### 回答",
+        "### 仿真与工具结果",
         "",
-        answer,
+        *_render_tool_results(steps),
         "",
-        "### 执行信息",
+        "### 模型结论",
+        "",
+        answer if turn.answer_path else "模型未返回可接受的最终回答。",
+        "",
+        "### 执行状态与证据",
         "",
         f"- 状态：{_reader_status(turn.status)}",
         f"- 总时长：{turn.duration_seconds:.2f} 秒" if turn.duration_seconds is not None else "- 总时长：未记录",
-        f"- 本题原始回答：{_answer_link_or_label(turn, workspace, diagnostics)}",
-        "",
-        "### 仿真环境上下文",
-        "",
-        *_render_turn_context(context, turn, steps, workspace, diagnostics),
-        "",
-        "### 实际分析过程",
-        "",
-        *_render_trace_steps(steps),
-        f"- 详细执行轨迹：{_workspace_link(workspace, trace_pages[turn.turn_id], label='查看本题调用输入、输出和原始工件', unavailable_label='轨迹页不可用', diagnostics=diagnostics, description='详细执行轨迹')}。" if turn.turn_id in trace_pages else "- 详细执行轨迹不可用。",
-        "",
-        "### 证据来源",
-        "",
+        f"- 原始回答：{_answer_link_or_label(turn, workspace, diagnostics)}",
         *_render_turn_evidence(context, turn, workspace, diagnostics),
+        f"- 详细执行轨迹：{trace_link}",
     ]
-    if limitations:
-        lines.extend(["", "### 审计提示", "", *[f"- {_reader_diagnostic(item.message)}" for item in _unique_limitations(limitations)]])
     return lines
 
 
@@ -226,6 +235,76 @@ def _render_trace_steps(steps: Sequence[_TraceStep]) -> list[str]:
         duration = f"，{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else ""
         lines.append(f"{ordinal}. {_trace_step_summary(step)}（`{step.capability}`，{state}{duration}）")
     return lines
+
+
+def _render_tool_results(steps: Sequence[_TraceStep]) -> list[str]:
+    if not steps:
+        return ["未观察到与本题关联的领域工具调用。"]
+    lines: list[str] = []
+    for ordinal, step in enumerate(steps, start=1):
+        state = "完成" if step.ok else "返回受限/错误"
+        duration = f"，{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else ""
+        projected = _reader_result_value(step.result)
+        lines.append(f"{ordinal}. {_trace_step_summary(step)}（`{step.capability}`，{state}{duration}）")
+        lines.extend(
+            [
+                f"   - 能力：`{step.capability}`",
+                f"   - 状态：{state}",
+                f"   - 耗时：{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else "   - 耗时：未记录",
+            ]
+        )
+        if isinstance(projected, Mapping) and not projected:
+            lines.append("   - 结果为空。")
+            continue
+        lines.extend(
+            [
+                "   - 结果：",
+                "",
+                "```json",
+                _reader_json(projected),
+                "```",
+            ]
+        )
+    return lines
+
+
+def _reader_result_value(value: Any, *, depth: int = 0) -> Any:
+    if depth >= _READER_MAX_DEPTH:
+        return "[nested value omitted]"
+    if isinstance(value, Mapping):
+        projected_mapping: dict[str, Any] = {}
+        visible = [
+            (str(key), item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if not _is_internal_or_secret_field(str(key))
+        ]
+        for key, item in visible[:_READER_MAX_MAPPING_ITEMS]:
+            projected_mapping[key] = _reader_result_value(item, depth=depth + 1)
+        if len(visible) > _READER_MAX_MAPPING_ITEMS:
+            projected_mapping["_omitted_fields"] = len(visible) - _READER_MAX_MAPPING_ITEMS
+        return projected_mapping
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        projected_sequence = [
+            _reader_result_value(item, depth=depth + 1)
+            for item in value[:_READER_MAX_SEQUENCE_ITEMS]
+        ]
+        if len(value) > _READER_MAX_SEQUENCE_ITEMS:
+            projected_sequence.append({"_omitted_items": len(value) - _READER_MAX_SEQUENCE_ITEMS})
+        return projected_sequence
+    return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
+
+
+def _is_internal_or_secret_field(key: str) -> bool:
+    lowered = key.lower()
+    return (
+        lowered.endswith("_ref")
+        or lowered.endswith("_refs")
+        or any(term in lowered for term in ("secret", "token", "authorization", "api_key"))
+    )
+
+
+def _reader_json(value: Any) -> str:
+    return _redact_internal_refs(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def _trace_step_summary(step: _TraceStep) -> str:
