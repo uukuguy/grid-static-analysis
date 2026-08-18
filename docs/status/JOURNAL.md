@@ -257,6 +257,7 @@
 The following append-only entries were recovered before closing the fully merged historical worktree.
 
 - 15:55 恢复历史轨迹文档并清理已合并 worktree，消除悬空分支
+- 15:59 固化全能力完成态与历史 worktree 恢复记录，确保可恢复闭环 [5771a73]
 - 17:01 建立 provider 验证的 v0.2 基线，供后续开发从干净起点开始 [dc7a2cf]
 - 19:15 锁定统一轨迹事件脊柱、投影、历史导入与只读工作台边界 [95ae9dd]
 - 20:05 Added typed canonical trajectory event envelope for authoritative native run hashing [a761a98]
