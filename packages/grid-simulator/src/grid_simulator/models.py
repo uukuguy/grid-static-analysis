@@ -13,6 +13,7 @@ from grid_simulator.workspace import SimulatorWorkspace
 
 CONTEXT_REF_PATTERN = re.compile(r"^context:sha256:([0-9a-f]{64})$")
 REVISION_REF_PATTERN = re.compile(r"^revision:sha256:([0-9a-f]{64})$")
+LINEAGE_REF_PATTERN = re.compile(r"^lineage:sha256:([0-9a-f]{64})$")
 
 
 class ModelNotFoundError(Exception):
@@ -53,6 +54,9 @@ class OpenedContext(BaseModel):
     revision_ref: str
     engine: Literal["pandapower"]
     engine_version: Literal["3.4.0"]
+    origin: Literal["registered", "created", "derived"] = "registered"
+    parent_context_ref: str | None = None
+    lineage_ref: str | None = None
 
 
 def _registered_models() -> tuple[RegisteredModel, ...]:
@@ -153,12 +157,46 @@ class ContextStore:
     def _verify_metadata(self, context: OpenedContext) -> None:
         if context.engine != self._engine.name or context.engine_version != self._engine.version:
             raise ContextIntegrityError("context engine metadata does not match runtime")
+        if context.origin != "registered":
+            self._verify_revision_lineage(context)
+            return
         try:
             expected_revision_ref = self._registry.trusted_revision_ref(context.model_id)
         except ModelNotFoundError as exc:
             raise ContextIntegrityError("context model is not registered") from exc
         if context.revision_ref != expected_revision_ref:
             raise ContextIntegrityError("context revision does not match registered model")
+
+    def _verify_revision_lineage(self, context: OpenedContext) -> None:
+        if context.lineage_ref is None:
+            raise ContextIntegrityError("non-registered revision has no lineage reference")
+        lineage_digest = _parse_lineage_ref(context.lineage_ref)
+        path = self._workspace.lineage_document(context.lineage_ref)
+        if not path.is_file():
+            raise ContextIntegrityError("non-registered revision lineage is unavailable")
+        try:
+            payload = path.read_text(encoding="utf-8")
+            if fingerprint(payload) != lineage_digest:
+                raise ContextIntegrityError("revision lineage digest does not match reference")
+            lineage = json.loads(payload)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ContextIntegrityError("non-registered revision lineage is invalid") from exc
+        expected = {
+            "revision_ref": context.revision_ref,
+            "model_id": context.model_id,
+            "origin": context.origin,
+            "parent_context_ref": context.parent_context_ref,
+            "engine": context.engine,
+            "engine_version": context.engine_version,
+        }
+        if any(lineage.get(key) != value for key, value in expected.items()):
+            raise ContextIntegrityError("revision lineage does not match context")
+        if context.origin == "derived":
+            if context.parent_context_ref is None:
+                raise ContextIntegrityError("derived context has no parent")
+            parent = self.require(context.parent_context_ref)
+            if lineage.get("parent_revision_ref") != parent.revision_ref:
+                raise ContextIntegrityError("derived revision parent does not match")
 
     def _verify_artifact(self, revision_ref: str) -> None:
         expected_digest = _parse_revision_ref(revision_ref)
@@ -180,4 +218,11 @@ def _parse_revision_ref(revision_ref: str) -> str:
     match = REVISION_REF_PATTERN.fullmatch(revision_ref)
     if match is None:
         raise ContextIntegrityError("revision reference must be revision:sha256:<64 lowercase hex>")
+    return match.group(1)
+
+
+def _parse_lineage_ref(lineage_ref: str) -> str:
+    match = LINEAGE_REF_PATTERN.fullmatch(lineage_ref)
+    if match is None:
+        raise ContextIntegrityError("lineage reference must be lineage:sha256:<64 lowercase hex>")
     return match.group(1)

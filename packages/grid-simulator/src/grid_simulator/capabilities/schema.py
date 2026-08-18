@@ -46,5 +46,5 @@ class CapabilityContract(StrictModel):
     context_effect: CapabilityContextEffect
     state_effect: Literal["none", "creates_context", "creates_result"]
     evidence_required: bool
-    risk: Literal["catalog", "read_only_model", "read_only_analysis"]
+    risk: Literal["catalog", "read_only_model", "read_only_analysis", "model_revision"]
     pandapower: PandapowerBinding | None

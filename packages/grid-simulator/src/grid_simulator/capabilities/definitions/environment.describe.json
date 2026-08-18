@@ -37,7 +37,7 @@
             "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"},
             "tool_name": {"type": "string", "pattern": "^grid_[a-z0-9_]+$"},
             "title": {"type": "string", "minLength": 1},
-            "risk": {"type": "string", "enum": ["catalog", "read_only_model", "read_only_analysis"]},
+            "risk": {"type": "string", "enum": ["catalog", "read_only_model", "read_only_analysis", "model_revision"]},
             "availability": {"type": "string", "enum": ["published"]},
             "context_effect": {
               "type": "object",

@@ -1,0 +1,123 @@
+{
+  "id": "model.revision.derive",
+  "version": "1.0",
+  "package": "grid_simulator",
+  "tool_name": "grid_model_revision_derive",
+  "availability": "published",
+  "title": "Derive an immutable model revision",
+  "purpose": "Apply ordered, typed, transactional patches to a copy of an opened revision and persist new lineage.",
+  "applies_to": ["parameter edits", "load scaling", "element outages", "switch states", "element creation", "referential element removal"],
+  "not_for": ["in-place mutation", "raw DataFrame assignment", "partial commits"],
+  "terms": {"zh": ["派生场景", "负荷缩放", "元件停运", "不可变修订"], "en": ["derived scenario", "load scaling", "outage", "immutable revision"]},
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["context_ref", "patches"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "patches": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "oneOf": [
+            {"$ref": "#/$defs/scale_patch"},
+            {"$ref": "#/$defs/set_patch"},
+            {"$ref": "#/$defs/in_service_patch"},
+            {"$ref": "#/$defs/switch_state_patch"},
+            {"$ref": "#/$defs/create_patch"},
+            {"$ref": "#/$defs/drop_patch"}
+          ]
+        }
+      }
+    },
+    "$defs": {
+      "selector": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "indices": {"type": "array", "items": {"type": "integer"}, "uniqueItems": true},
+          "where": {"type": "object", "x-schema-described": true, "additionalProperties": {}}
+        },
+        "oneOf": [{"required": ["indices"]}, {"required": ["where"]}]
+      },
+      "scale_patch": {
+        "type": "object", "additionalProperties": false,
+        "required": ["operation", "kind", "selector", "fields", "factor"],
+        "properties": {
+          "operation": {"const": "scale"}, "kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "selector": {"$ref": "#/$defs/selector"}, "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+          "factor": {"type": "number"}
+        }
+      },
+      "set_patch": {
+        "type": "object", "additionalProperties": false,
+        "required": ["operation", "kind", "selector", "values"],
+        "properties": {
+          "operation": {"const": "set"}, "kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "selector": {"$ref": "#/$defs/selector"}, "values": {"type": "object", "x-schema-described": true, "additionalProperties": {}, "minProperties": 1}
+        }
+      },
+      "in_service_patch": {
+        "type": "object", "additionalProperties": false,
+        "required": ["operation", "kind", "selector", "value"],
+        "properties": {
+          "operation": {"const": "in_service"}, "kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "selector": {"$ref": "#/$defs/selector"}, "value": {"type": "boolean"}
+        }
+      },
+      "switch_state_patch": {
+        "type": "object", "additionalProperties": false,
+        "required": ["operation", "kind", "selector", "closed"],
+        "properties": {
+          "operation": {"const": "switch_state"}, "kind": {"const": "switch"},
+          "selector": {"$ref": "#/$defs/selector"}, "closed": {"type": "boolean"}
+        }
+      },
+      "create_patch": {
+        "type": "object", "additionalProperties": false,
+        "required": ["operation", "id", "creator", "arguments"],
+        "properties": {
+          "operation": {"const": "create"}, "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
+          "creator": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "arguments": {"type": "object", "x-creator-arguments": true, "additionalProperties": {}}
+        }
+      },
+      "drop_patch": {
+        "type": "object", "additionalProperties": false,
+        "required": ["operation", "kind", "selector"],
+        "properties": {
+          "operation": {"const": "drop"}, "kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "selector": {"$ref": "#/$defs/selector"}
+        }
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object", "additionalProperties": false,
+    "required": ["context_ref", "revision_ref", "lineage_ref", "model", "origin", "counts", "parent_context_ref", "parent_revision_ref"],
+    "properties": {
+      "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
+      "lineage_ref": {"type": "string", "pattern": "^lineage:sha256:[0-9a-f]{64}$"},
+      "model": {"type": "string"}, "origin": {"const": "derived"},
+      "parent_context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
+      "parent_revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
+      "counts": {"type": "object", "additionalProperties": false, "required": ["buses", "lines", "transformers"], "properties": {"buses": {"type": "integer"}, "lines": {"type": "integer"}, "transformers": {"type": "integer"}}}
+    }
+  },
+  "requires": ["context.open"],
+  "consumes": ["network.context", "network.revision", "creator.registry"],
+  "produces": ["network.context", "network.revision", "revision.lineage"],
+  "common_next": ["model.dataset.query", "analysis.run", "result.compare"],
+  "errors": ["unknown_context", "patch_field_unavailable", "patch_selector_invalid", "patch_operation_unavailable", "unknown_creator", "creator_arguments_invalid", "unknown_local_element_ref", "persist_failed"],
+  "recovery": {
+    "unknown_context": ["open the parent model"], "patch_field_unavailable": ["describe the selected network dataset"],
+    "patch_selector_invalid": ["query valid element indices"], "patch_operation_unavailable": ["use a published typed patch operation"],
+    "unknown_creator": ["call model.creator.list"], "creator_arguments_invalid": ["call model.creator.describe"],
+    "unknown_local_element_ref": ["order create patches by dependency"], "persist_failed": ["check workspace persistence"]
+  },
+  "context_effect": {"requires_state": ["model.active"], "consumes_state": ["model.active"], "produces_state": ["model.active"], "invalidates_state": ["model.active"], "result_kind": null, "projector": "model-context-v1"},
+  "state_effect": "creates_context", "evidence_required": true, "risk": "model_revision",
+  "pandapower": {"version": "3.4.0", "operation": "copy network then apply validated typed patches", "limitations": ["Parent artifacts are immutable; any invalid patch aborts the full transaction"]}
+}

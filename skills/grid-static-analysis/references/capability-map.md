@@ -18,12 +18,16 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 
 - `environment.describe`: returns protocol, simulator, pandapower version, and executable capability catalog.
 - `model.list`: lists supported registered models.
+- `model.creator.list`: lists the complete pinned pandapower 3.4.0 element-creator allowlist and required arguments.
+- `model.creator.describe`: describes one creator's signature, defaults, and local-reference arguments before construction.
+- `model.create`: creates an immutable network from ordered allowlisted pandapower element creators and local element references.
 - `context.open`: opens a supported model and creates a context with evidence.
 - `context.get`: returns metadata for an existing context.
 - `model.dataset.list`: lists every schema-described static network table in the active revision.
 - `model.dataset.describe`: describes fields, types, units, nullability and provenance for a listed dataset.
 - `model.dataset.query`: queries described fields with bounded filters, sorting and paging.
 - `model.element.get`: resolves an element from any listed element table to `asset_ref`.
+- `model.revision.derive`: applies transactional `scale`, `set`, `in_service`, `switch_state`, `create`, or referential `drop` patches and returns a new context without changing its parent.
 - `model.constraints.describe`: returns voltage and loading constraints stored in the active model with their source fields.
 - `topology.branch.endpoints.get`: returns branch endpoint buses and topology evidence.
 - `topology.components.get`: returns connected component summaries.
@@ -36,7 +40,7 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 
 Catalog calls take no context. Model-specific calls require `context_ref`. Calculation calls require the same `context_ref` and contract-enumerated solver overrides only. Ranking requires an existing `result_ref`, explicit `metric`, `direction`, and `limit`.
 
-Use `model.list` to select an exact model ID; `ieee39` remains the stable ID for case39. N-1 requires the base context and stable branch refs.
+Use `model.list` to select an exact model ID; `ieee39` remains the stable ID for case39. Before custom construction or a `create` patch, use `model.creator.list` and `model.creator.describe` instead of guessing a pandapower signature. N-1 requires the base context and stable branch refs.
 For a model voltage range or branch loading limit, call `model.constraints.describe` with the active context. User criteria and named standards must remain separately identified sources.
 
 ## Result Fields and Units
@@ -57,7 +61,7 @@ The catalog reports capability IDs and tool names. Model context outputs include
 
 ## Failures and Legal Recovery
 
-For `model_not_found`, call `model.list`. For `unknown_context`, call `context.open`. For `unknown_element` or `unknown_branch`, use `model.dataset.query` or `model.element.get`. For `unknown_result`, rerun the prerequisite power flow in the current workspace and use the new `result_ref`.
+For `model_not_found`, call `model.list`. For `unknown_creator` or `creator_arguments_invalid`, call `model.creator.list` then `model.creator.describe`. For `unknown_context`, call `context.open`. For `unknown_element` or `unknown_branch`, use `model.dataset.query` or `model.element.get`. For `unknown_result`, rerun the prerequisite power flow in the current workspace and use the new `result_ref`.
 
 ## Evidence Requirements
 

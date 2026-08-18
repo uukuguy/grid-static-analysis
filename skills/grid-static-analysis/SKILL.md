@@ -23,7 +23,7 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 
 ## Choose the Analysis Domain
 
-- Model and runtime catalog: [capability-map](references/capability-map.md), [model-and-context](references/model-and-context.md).
+- Model, creator, and runtime catalogs: [capability-map](references/capability-map.md), [model-and-context](references/model-and-context.md).
 - Network elements and datasets: call `model.dataset.list`, then use [network-elements](references/network-elements.md) for describe/query and element resolution.
 - Topology endpoints and components: [topology-analysis](references/topology-analysis.md).
 - AC power flow and solver profile: [ac-powerflow](references/ac-powerflow.md).
@@ -66,6 +66,6 @@ If evidence cannot be read, preserve the original reference and report the artif
 
 ## Capability Status
 
-Published executable capabilities are returned by `environment.describe`. The model/data surface includes `model.dataset.list`, `model.dataset.describe`, `model.dataset.query`, universal `model.element.get`, and the versioned multi-network catalog.
+Published executable capabilities are returned by `environment.describe`. The model/data surface includes `model.creator.list`, `model.creator.describe`, `model.create`, `model.revision.derive`, `model.dataset.list`, `model.dataset.describe`, `model.dataset.query`, universal `model.element.get`, and the versioned multi-network catalog.
 
 The complete pandapower static-analysis surface is current implementation scope. Until a matrix row is published in `environment.describe`, report that exact runtime gap without substituting another calculation. Time-series/control, plotting, arbitrary I/O/Python and unpinned external solver backends are intentional exclusions.

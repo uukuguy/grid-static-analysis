@@ -72,6 +72,10 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
     assert ids == {
         "environment.describe",
         "model.list",
+        "model.create",
+        "model.creator.describe",
+        "model.creator.list",
+        "model.revision.derive",
         "context.open",
         "context.get",
         "model.constraints.describe",

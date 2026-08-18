@@ -16,11 +16,15 @@ EXPECTED_IDS = (
     "environment.describe",
     "evidence.get",
     "model.constraints.describe",
+    "model.create",
+    "model.creator.describe",
+    "model.creator.list",
     "model.dataset.describe",
     "model.dataset.list",
     "model.dataset.query",
     "model.element.get",
     "model.list",
+    "model.revision.derive",
     "result.branches.rank",
     "topology.branch.endpoints.get",
     "topology.components.get",
@@ -129,7 +133,7 @@ def test_analysis_contracts_bind_to_pandapower_340() -> None:
 def test_all_nested_object_schemas_forbid_extra_properties() -> None:
     for contract in CapabilityRegistry.load_packaged().list():
         for schema in _walk_object_schemas(contract.input_schema):
-            assert schema.get("additionalProperties") is False, contract.id
+            assert schema.get("additionalProperties") is False or schema.get("x-creator-arguments") is True or schema.get("x-schema-described") is True, contract.id
         for schema in _walk_object_schemas(contract.output_schema):
             assert schema.get("additionalProperties") is False or schema.get("x-schema-described") is True, contract.id
 
@@ -152,6 +156,10 @@ def _walk_properties(schema: object) -> list[tuple[str, dict[str, object]]]:
     items = schema.get("items")
     if isinstance(items, dict):
         found.extend(_walk_properties(items))
+    definitions = schema.get("$defs")
+    if isinstance(definitions, dict):
+        for definition in definitions.values():
+            found.extend(_walk_properties(definition))
     return found
 
 
@@ -172,4 +180,8 @@ def _walk_object_schemas(schema: object) -> list[dict[str, object]]:
         if isinstance(branches, list):
             for branch in branches:
                 found.extend(_walk_object_schemas(branch))
+    definitions = schema.get("$defs")
+    if isinstance(definitions, dict):
+        for definition in definitions.values():
+            found.extend(_walk_object_schemas(definition))
     return found

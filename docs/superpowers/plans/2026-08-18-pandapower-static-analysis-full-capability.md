@@ -32,11 +32,11 @@
 - Produces: `load_matrix(path) -> CapabilityMatrix`, `score_matrix(matrix, registry, tests) -> CoverageScore`
 - Produces: `tools/climb/eval-local.sh` JSON with `total`, `per_task`, and gate status.
 
-- [ ] Write a failing test proving duplicate IDs, excluded rows with non-excluded status, unknown statuses and missing implementation evidence are rejected.
-- [ ] Run `uv run --project packages/grid-simulator pytest packages/grid-simulator/tests/test_capability_matrix.py -q` and verify the intended failure.
-- [ ] Implement the parser/scorer and a `--check` CLI that exits nonzero until all in-scope rows are published and verified.
-- [ ] Add the climb adapter and deterministic research-tree generation; record the baseline score without changing production capabilities.
-- [ ] Run the focused test and `tools/climb/eval-local.sh`.
+- [x] Write a failing test proving duplicate IDs, excluded rows with non-excluded status, unknown statuses and missing implementation evidence are rejected.
+- [x] Run `uv run --project packages/grid-simulator pytest packages/grid-simulator/tests/test_capability_matrix.py -q` and verify the intended failure.
+- [x] Implement the parser/scorer and a `--check` CLI that exits nonzero until all in-scope rows are published and verified.
+- [x] Add the climb adapter and deterministic research-tree generation; record the baseline score without changing production capabilities.
+- [x] Run the focused test and `tools/climb/eval-local.sh`.
 
 ### Task 2: Complete registered model catalog
 
@@ -50,10 +50,10 @@
 **Interfaces:**
 - Produces: `RegisteredModel.factory: str`; `Pandapower340Engine.open_registered(factory_id: str)` resolves only the versioned allowlist.
 
-- [ ] Write failing tests that open case9, case14, case39 and a non-IEEE packaged network while rejecting unknown and argument-requiring factories.
-- [ ] Generate and review the zero-required-argument factory catalog from the pinned environment.
-- [ ] Implement catalog loading without `eval`, `getattr` on user input or filesystem input.
-- [ ] Verify deterministic fingerprints and run all model/context tests.
+- [x] Write failing tests that open case9, case14, case39 and a non-IEEE packaged network while rejecting unknown and argument-requiring factories.
+- [x] Generate and review the zero-required-argument factory catalog from the pinned environment.
+- [x] Implement catalog loading without `eval`, `getattr` on user input or filesystem input.
+- [x] Verify deterministic fingerprints and run all model/context tests.
 
 ### Task 3: Universal schema-described network datasets and element resolution
 
@@ -67,10 +67,10 @@
 - Produces: `NetworkDatasetCatalog.list/describe/query(net, revision_ref, request)`.
 - Every returned field has type, unit, meaning, nullability and provenance.
 
-- [ ] Write failing parameterized tests over every non-empty static element table in case39 and representative specialized networks.
-- [ ] Implement scalar normalization, unit metadata, stable asset references, bounded predicates, sorting and paging.
-- [ ] Extend element resolution to every element table while preserving branch/bus aliases.
-- [ ] Verify unknown tables/fields/operators fail with typed errors and no raw object leaks.
+- [x] Write failing parameterized tests over every non-empty static element table in case39 and representative specialized networks.
+- [x] Implement scalar normalization, unit metadata, stable asset references, bounded predicates, sorting and paging.
+- [x] Extend element resolution to every element table while preserving branch/bus aliases.
+- [x] Verify unknown tables/fields/operators fail with typed errors and no raw object leaks.
 
 ### Task 4: Declarative creation and immutable revision derivation
 
@@ -82,10 +82,10 @@
 **Interfaces:**
 - Produces: `CreatorRegistry.create(definition) -> net`; `RevisionStore.derive(parent, patches) -> OpenedContext`.
 
-- [ ] Write failing tests for a one-bus ext-grid short-circuit network, load scaling, branch outage, switch state, element creation and transactional rollback.
-- [ ] Implement a versioned creator registry with local symbolic reference resolution.
-- [ ] Implement allowlisted `set`, `scale`, `in_service`, `switch_state`, `create`, and referentially safe `drop` patches.
-- [ ] Persist derived revision/context lineage and verify parent artifacts remain byte-identical.
+- [x] Write failing tests for a one-bus ext-grid short-circuit network, load scaling, branch outage, switch state, element creation and transactional rollback.
+- [x] Implement a versioned creator registry with local symbolic reference resolution.
+- [x] Implement allowlisted `set`, `scale`, `in_service`, `switch_state`, `create`, and referentially safe `drop` patches.
+- [x] Persist derived revision/context lineage and verify parent artifacts remain byte-identical.
 
 ### Task 5: Complete analysis and result substrate
 
@@ -181,4 +181,3 @@
 - [ ] Run provider-backed `make analysis INSTRUCTIONS=validation/questions/test.md.txt` using the configured `.env` credentials.
 - [ ] Inspect report, current-run evidence and semantic oracle; require all gates green.
 - [ ] Commit coherent changes, regenerate climb state, refresh the active-session checkpoint, and verify no worktree or branch is left half-integrated.
-

@@ -29,6 +29,12 @@ from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.capabilities.families import CAPABILITY_FAMILIES
 from grid_simulator.capabilities.schema import CapabilityContract
 from grid_simulator.constraints import describe_model_constraints
+from grid_simulator.creators import (
+    CreatorArgumentsError,
+    CreatorRegistry,
+    UnknownCreatorError,
+    UnknownElementReferenceError,
+)
 from grid_simulator.engine import Pandapower340Engine
 from grid_simulator.evidence import canonical_json, fingerprint, write_json
 from grid_simulator.models import (
@@ -54,12 +60,22 @@ from grid_simulator.queries import (
     records_for_dataset,
 )
 from grid_simulator.workspace import SimulatorWorkspace
+from grid_simulator.revisions import (
+    PatchFieldError,
+    PatchKindError,
+    PatchSelectorError,
+    RevisionStore,
+)
 
 
 EXECUTABLE_CAPABILITIES = frozenset(
     {
         "environment.describe",
         "model.list",
+        "model.creator.list",
+        "model.creator.describe",
+        "model.create",
+        "model.revision.derive",
         "context.open",
         "context.get",
         "model.constraints.describe",
@@ -108,6 +124,14 @@ def _dispatch(
         return _environment_describe(services.capability_registry)
     if request.capability == "model.list":
         return _model_list(services.engine)
+    if request.capability == "model.creator.list":
+        return _model_creator_list(services.engine)
+    if request.capability == "model.creator.describe":
+        return _model_creator_describe(services.engine, request.arguments)
+    if request.capability == "model.create":
+        return _model_create(workspace, services.engine, request.arguments)
+    if request.capability == "model.revision.derive":
+        return _model_revision_derive(workspace, services.engine, request.arguments)
     if request.capability == "context.open":
         return _context_open(workspace, services.engine, request.arguments)
     if request.capability == "context.get":
@@ -165,6 +189,147 @@ def _model_list(engine: Pandapower340Engine) -> dict[str, Any]:
             {"model": model.model_id, "source": model.source, "pandapower_version": model.engine_version}
             for model in ModelRegistry(engine).list()
         ]
+    }
+
+
+def _model_creator_list(engine: Pandapower340Engine) -> dict[str, Any]:
+    registry = CreatorRegistry()
+    return {
+        "pandapower_version": engine.version,
+        "registry_version": registry.version,
+        "creators": registry.summaries(),
+    }
+
+
+def _model_creator_describe(
+    engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    registry = CreatorRegistry()
+    creator = str(arguments["creator"])
+    try:
+        description = registry.describe(creator)
+    except UnknownCreatorError as exc:
+        raise _failure(
+            "unknown_creator",
+            f"Creator {exc.creator!r} is not in the pandapower 3.4.0 creator registry",
+            phase="resolve",
+            allowed_recovery_actions=("list_creators",),
+            details={"creator": exc.creator, "allowed_creators": list(exc.allowed)},
+        ) from exc
+    return {
+        "pandapower_version": engine.version,
+        "registry_version": registry.version,
+        **description,
+    }
+
+
+def _model_create(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        created = RevisionStore(workspace, engine).create(
+            name=str(arguments["name"]),
+            sn_mva=float(arguments.get("sn_mva", 1.0)),
+            f_hz=float(arguments.get("f_hz", 50.0)),
+            elements=list(arguments["elements"]),
+        )
+    except UnknownCreatorError as exc:
+        raise _failure(
+            "unknown_creator",
+            f"Creator {exc.creator!r} is not in the pandapower 3.4.0 creator registry",
+            phase="resolve",
+            allowed_recovery_actions=("list_creators",),
+            details={"creator": exc.creator, "allowed_creators": list(exc.allowed)},
+        ) from exc
+    except UnknownElementReferenceError as exc:
+        raise _failure(
+            "unknown_local_element_ref",
+            "Element arguments reference an ID that has not been created earlier in the transaction",
+            phase="validate",
+            allowed_recovery_actions=("order_elements_by_dependency",),
+        ) from exc
+    except CreatorArgumentsError as exc:
+        raise _failure(
+            "creator_arguments_invalid",
+            str(exc),
+            phase="validate",
+            allowed_recovery_actions=("describe_creator",),
+        ) from exc
+    except OSError as exc:
+        raise _failure("persist_failed", "Created model could not be persisted", phase="persist") from exc
+    return _revision_result(created)
+
+
+def _model_revision_derive(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    parent, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    try:
+        derived = RevisionStore(workspace, engine).derive(
+            parent_context=parent,
+            parent_net=net,
+            patches=list(arguments["patches"]),
+        )
+    except UnknownCreatorError as exc:
+        raise _failure(
+            "unknown_creator",
+            f"Creator {exc.creator!r} is not in the pandapower 3.4.0 creator registry",
+            phase="resolve",
+            allowed_recovery_actions=("list_creators",),
+            details={"creator": exc.creator, "allowed_creators": list(exc.allowed)},
+        ) from exc
+    except UnknownElementReferenceError as exc:
+        raise _failure(
+            "unknown_local_element_ref",
+            "Create patch references an ID not created by an earlier patch",
+            phase="validate",
+            allowed_recovery_actions=("order_create_patches_by_dependency",),
+        ) from exc
+    except CreatorArgumentsError as exc:
+        raise _failure(
+            "creator_arguments_invalid",
+            str(exc),
+            phase="validate",
+            allowed_recovery_actions=("describe_creator",),
+        ) from exc
+    except PatchFieldError as exc:
+        raise _failure(
+            "patch_field_unavailable",
+            "Patch references fields unavailable for the selected element kind",
+            phase="validate",
+            allowed_recovery_actions=("describe_dataset",),
+            details={"kind": exc.kind, "fields": exc.fields, "allowed_fields": exc.allowed},
+        ) from exc
+    except PatchSelectorError as exc:
+        raise _failure(
+            "patch_selector_invalid",
+            str(exc),
+            phase="validate",
+            allowed_recovery_actions=("query_dataset",),
+        ) from exc
+    except PatchKindError as exc:
+        raise _failure(
+            "patch_operation_unavailable",
+            "Patch element kind or operation is not supported by this revision",
+            phase="validate",
+            allowed_recovery_actions=("list_datasets",),
+        ) from exc
+    except OSError as exc:
+        raise _failure("persist_failed", "Derived model could not be persisted", phase="persist") from exc
+    result = _revision_result(derived)
+    result["parent_context_ref"] = parent.context_ref
+    result["parent_revision_ref"] = parent.revision_ref
+    return result
+
+
+def _revision_result(revision: Any) -> dict[str, Any]:
+    return {
+        "context_ref": revision.context.context_ref,
+        "revision_ref": revision.context.revision_ref,
+        "lineage_ref": revision.context.lineage_ref,
+        "model": revision.context.model_id,
+        "origin": revision.context.origin,
+        "counts": revision.counts,
     }
 
 

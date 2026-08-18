@@ -11,6 +11,7 @@ def test_environment_distinguishes_future_capability_families(grid) -> None:
     assert families["short-circuit"] == "not_published"
     assert families["state-estimation"] == "not_published"
     assert families["time-series"] == "not_published"
+    assert families["model-lifecycle"] == "published"
 
 
 def test_environment_exposes_contract_context_effects(grid) -> None:

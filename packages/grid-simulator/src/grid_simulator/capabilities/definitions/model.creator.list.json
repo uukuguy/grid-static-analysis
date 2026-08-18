@@ -1,0 +1,12 @@
+{
+  "id":"model.creator.list","version":"1.0","package":"grid_simulator","tool_name":"grid_model_creator_list","availability":"published","title":"List declarative model element creators",
+  "purpose":"List the pinned pandapower 3.4.0 element-creator allowlist and each creator's required arguments.",
+  "applies_to":["custom network planning","creator discovery","unknown creator recovery"],"not_for":["creating a model","calling arbitrary Python","mutating an opened revision"],
+  "terms":{"zh":["元件创建器列表","声明式建模","创建器注册表"],"en":["element creator list","declarative modeling","creator registry"]},
+  "input_schema":{"type":"object","additionalProperties":false,"required":[],"properties":{}},
+  "output_schema":{"type":"object","additionalProperties":false,"required":["pandapower_version","registry_version","creators"],"properties":{"pandapower_version":{"const":"3.4.0"},"registry_version":{"type":"string","pattern":"^pandapower-3\\.4\\.0:sha256:[0-9a-f]{64}$"},"creators":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","required_arguments"],"properties":{"id":{"type":"string","pattern":"^[a-z][a-z0-9_]*$"},"required_arguments":{"type":"array","items":{"type":"string"},"uniqueItems":true}}}}}},
+  "requires":[],"consumes":["creator.registry"],"produces":["creator.catalog"],"common_next":["model.creator.describe","model.create"],
+  "errors":["creator_catalog_unavailable"],"recovery":{"creator_catalog_unavailable":["report the pinned creator registry failure"]},
+  "context_effect":{"requires_state":[],"consumes_state":["capabilities.catalog"],"produces_state":["model.creator_catalog"],"invalidates_state":[],"result_kind":null,"projector":"model-catalog-v1"},"state_effect":"none","evidence_required":false,"risk":"catalog",
+  "pandapower":{"version":"3.4.0","operation":"inspect allowlisted pandapower.create signatures","limitations":["Only functions whose first argument is net are published"]}
+}

@@ -6,6 +6,7 @@ import re
 
 _CONTEXT_REF_PATTERN = re.compile(r"^context:sha256:([0-9a-f]{64})$")
 _REVISION_REF_PATTERN = re.compile(r"^revision:sha256:([0-9a-f]{64})$")
+_LINEAGE_REF_PATTERN = re.compile(r"^lineage:sha256:([0-9a-f]{64})$")
 
 
 class SimulatorWorkspace:
@@ -41,6 +42,9 @@ class SimulatorWorkspace:
     def model_artifact(self, revision_ref: str) -> Path:
         return self.model_artifacts_dir / f"{_parse_revision_ref(revision_ref)}.json"
 
+    def lineage_document(self, lineage_ref: str) -> Path:
+        return self.root / "evidence" / "revisions" / f"{_parse_lineage_ref(lineage_ref)}.json"
+
 
 def _parse_context_ref(context_ref: str) -> str:
     match = _CONTEXT_REF_PATTERN.fullmatch(context_ref)
@@ -53,4 +57,11 @@ def _parse_revision_ref(revision_ref: str) -> str:
     match = _REVISION_REF_PATTERN.fullmatch(revision_ref)
     if match is None:
         raise ValueError("invalid revision reference")
+    return match.group(1)
+
+
+def _parse_lineage_ref(lineage_ref: str) -> str:
+    match = _LINEAGE_REF_PATTERN.fullmatch(lineage_ref)
+    if match is None:
+        raise ValueError("invalid lineage reference")
     return match.group(1)

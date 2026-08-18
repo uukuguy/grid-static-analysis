@@ -1,18 +1,18 @@
 # Live Session Checkpoint
 
-> Updated: 2026-08-18 12:44 CST. **Session remains active — not a final handoff.**
+> Updated: 2026-08-18 13:45 CST. **Session remains active — not a final handoff.**
 
 ## TL;DR
 
 - Product scope is now the complete pandapower 3.4.0 static-analysis surface, not the prior WP-A slice.
-- H-001 is confirmed and committed as `3a2d7bf`: the executable matrix reports 2/24 published capabilities (8.33%).
-- H-002 is in flight: complete registered model catalog, universal network datasets, declarative model creation and immutable revisions.
+- H-001 is confirmed and committed as `3a2d7bf`.
+- H-002 implementation is green: 60 registered networks, universal static datasets, a discoverable creator registry, declarative model creation, and six immutable revision patch types raise matrix coverage to 6/24 (25%).
 
 ## Durable baseline
 
 - Branch: `main`
-- Latest climb commit: `3a2d7bf docs: establish full static analysis capability gate`
-- Existing regression baseline: agent 564 passed, simulator 87 passed before the new matrix tests, Pi tools 33 passed.
+- Latest climb commit: `40c60fa feat: publish multi-model schema-driven data access`
+- Current full regression gate: agent 564 passed, simulator 120 passed, Pi tools 33 passed.
 - Focused matrix gate: 6 passed.
 - Capability source of truth: `configs/capabilities/pandapower-3.4.0-static-analysis.json`
 - Architecture: `docs/superpowers/specs/2026-08-18-pandapower-static-analysis-full-capability-design.md`
@@ -21,13 +21,12 @@
 
 ## In-flight work
 
-- H-002 will replace the one-model registry with a versioned allowlist of compatible `pandapower.networks` factories.
-- Network datasets will become schema-described across all relevant element tables.
-- Controlled declarative creation and immutable typed patches will support arbitrary static-analysis scenarios without fixture-specific models.
+- H-002 implementation is ready to commit; parent revisions remain byte-identical and distinct operations producing identical network content retain distinct content-addressed lineage.
+- H-003 is next: unify analysis execution and persist/query every generated `res_*` table.
 
 ## Immediate next action
 
-Write and run failing model-catalog tests for case9, case14, case39, a specialized packaged network, unknown IDs and factories with required arguments; then implement the versioned catalog.
+Commit H-002, then start Task 5 RED tests for operation-specific analysis schemas, generic result datasets, stable result identity, aggregation, and comparison.
 
 ## Ruled-out paths
 

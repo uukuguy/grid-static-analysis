@@ -2,7 +2,7 @@
 
 ## Use This For
 
-Use this guide for runtime discovery, supported model selection, context creation, and context metadata lookup with `environment.describe`, `model.list`, `context.open`, and `context.get`.
+Use this guide for runtime discovery, supported model selection, declarative creator discovery, model creation, immutable revision derivation, and context lookup with `environment.describe`, `model.list`, `model.creator.list`, `model.creator.describe`, `model.create`, `context.open`, `model.revision.derive`, and `context.get`.
 
 ## Do Not Use This For
 
@@ -16,12 +16,16 @@ The runtime exposes a versioned allowlist of compatible zero-required-argument f
 
 - `environment.describe`: inspect protocol `grid-capability`, protocol version `1.0`, simulator `grid-simulator`, pandapower version `3.4.0`, and executable capability catalog.
 - `model.list`: list all supported registered models and their exact source factories.
+- `model.creator.list`: list every pinned `pandapower.create` operation published by the runtime and its required arguments.
+- `model.creator.describe`: inspect one creator's complete signature, defaults, and which arguments accept a prior local `element_ref`.
+- `model.create`: create a new immutable model through ordered allowlisted creator operations; local `element_ref` values may reference earlier elements in the same transaction.
 - `context.open`: input `model_id`; output `context_ref`, `model`, `engine`, `pandapower_version`, `source`, `semantic_sha256`, and counts.
 - `context.get`: input `context_ref`; output `model` and counts for buses, lines, and transformers.
+- `model.revision.derive`: create a child revision through typed `set`, `scale`, `in_service`, `switch_state`, `create`, and referential `drop` patches; failed patches leave the parent and workspace revision set unchanged.
 
 ## Parameters and Defaults
 
-`environment.describe` has no parameters. `model.list` optionally accepts `family: "pandapower.networks"`. `context.open` requires `model_id`. `context.get` requires `context_ref`.
+`environment.describe` and `model.creator.list` have no parameters. `model.creator.describe` requires the exact creator ID. `model.list` optionally accepts `family: "pandapower.networks"`. `context.open` requires `model_id`. `context.get` requires `context_ref`.
 
 ## Result Fields and Units
 
@@ -31,6 +35,7 @@ Counts are integers: `buses`, `lines`, and `transformers`. `semantic_sha256` ide
 
 - "What simulator is available?" -> call `environment.describe`.
 - "Which models can I use?" -> call `model.list`.
+- "How do I add an asymmetric load?" -> `model.creator.list` -> `model.creator.describe` for the selected creator.
 - "Open IEEE-39" -> call `context.open` with `model_id: "ieee39"`.
 - "Open case9" -> first confirm `case9` in `model.list`, then call `context.open` with `model_id: "case9"`.
 
@@ -41,7 +46,7 @@ Counts are integers: `buses`, `lines`, and `transformers`. `semantic_sha256` ide
 
 ## Failures and Legal Recovery
 
-`catalog_unavailable` means report runtime discovery failure. `model_not_found` means call `model.list` and choose a supported model. `unknown_context` means reopen a supported model. `persist_failed` means report persistence failure rather than inventing a context.
+`catalog_unavailable` means report runtime discovery failure. `model_not_found` means call `model.list` and choose a supported model. `unknown_creator` means call `model.creator.list`; `creator_arguments_invalid` means call `model.creator.describe`. `unknown_context` means reopen a supported model. `persist_failed` means report persistence failure rather than inventing a context.
 
 ## Evidence Requirements
 

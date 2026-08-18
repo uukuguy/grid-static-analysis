@@ -72,11 +72,13 @@ def test_score_reports_truthful_in_scope_coverage() -> None:
     score = matrix_module.score_matrix(matrix)
 
     assert score.total_in_scope == 24
-    assert score.published == 2
-    assert score.partial == 6
-    assert score.missing == 16
-    assert score.coverage_percent == pytest.approx(8.333333, rel=1e-5)
+    assert score.published == 6
+    assert score.partial == 4
+    assert score.missing == 14
+    assert score.coverage_percent == 25.0
     assert score.release_ready is False
+    assert score.per_package["model-lifecycle"] == 75.0
+    assert score.per_package["model-data"] == 100.0
     assert score.per_package["power-flow"] == pytest.approx(100 / 3)
 
 
