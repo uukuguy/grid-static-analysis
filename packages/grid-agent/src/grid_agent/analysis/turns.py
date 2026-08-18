@@ -191,28 +191,23 @@ class TurnController:
                 self._submission_allowed_refs(),
             )
         except (RuntimeError, ValueError) as exc:
-            submission = AnswerSubmission(
-                submission_id=str(draft.get("submission_id", handle.turn_id)),
-                answer_output=answer,
-                result_refs=(),
-                claim_evidence_refs=(),
-                claims=(),
+            diagnostic = ReferenceDiagnostic(
+                category="submission_metadata_invalid",
+                severity="error",
+                reference="",
+                message=f"answer metadata was not admitted: {type(exc).__name__}: {exc}",
+                impact="The answer text was not accepted because its simulator lineage was invalid.",
+                remediation="Review the submission metadata recorded in the answer draft.",
             )
-            validation_diagnostics = (
-                ReferenceDiagnostic(
-                    category="submission_metadata_invalid",
-                    severity="warning",
-                    reference="",
-                    message=f"answer metadata was not admitted: {type(exc).__name__}: {exc}",
-                    impact="The answer text was accepted; invalid structured metadata was omitted.",
-                    remediation="Review the submission metadata recorded in the answer draft.",
-                ),
+            return self._reject_draft(
+                handle,
+                raw_draft=raw_draft,
+                diagnostics=(*_draft_diagnostics(draft), diagnostic),
+                duration_seconds=duration_seconds,
+                error=diagnostic.message,
             )
-        else:
-            validation_diagnostics = ()
         diagnostics = (
             *_draft_diagnostics(draft),
-            *validation_diagnostics,
             *self._audit_answer(claim_evidence_refs, result_refs),
         )
 
@@ -272,6 +267,28 @@ class TurnController:
             error=None,
         )
 
+    def _reject_draft(
+        self,
+        handle: ActiveTurnHandle,
+        *,
+        raw_draft: bytes,
+        diagnostics: tuple[ReferenceDiagnostic, ...],
+        duration_seconds: float,
+        error: str,
+    ) -> FinalizedTurn:
+        turn_path = self._workspace.turn_path(handle.ordinal)
+        _write_bytes_atomic(turn_path / "answer-draft.json", raw_draft)
+        _write_audit(turn_path / "answer-audit.json", diagnostics)
+        self._record_answer_rejection(handle, error)
+        for diagnostic in diagnostics:
+            self._record_audit_diagnostic(handle, diagnostic)
+        return self.fail(
+            handle,
+            error=error,
+            duration_seconds=duration_seconds,
+            publish_answer=False,
+        )
+
     def _submission_allowed_refs(self) -> Set[str]:
         if self._allowed_refs is not None:
             return self._allowed_refs
@@ -312,7 +329,7 @@ class TurnController:
                 )
             )
 
-    def _record_answer_rejection(self, handle: ActiveTurnHandle) -> None:
+    def _record_answer_rejection(self, handle: ActiveTurnHandle, message: str) -> None:
         if self._recorder is None:
             return
         self._recorder.append(
@@ -321,12 +338,19 @@ class TurnController:
                 scope=RunScope(turn_id=handle.turn_id),
                 payload={
                     "error_type": "invalid_submission",
-                    "message": "answer submission failed structural validation",
+                    "message": message,
                 },
             )
         )
 
-    def fail(self, handle: ActiveTurnHandle, *, error: str, duration_seconds: float) -> FinalizedTurn:
+    def fail(
+        self,
+        handle: ActiveTurnHandle,
+        *,
+        error: str,
+        duration_seconds: float,
+        publish_answer: bool = True,
+    ) -> FinalizedTurn:
         answer = f"执行限制 / execution limitation: {error}"
         self._store.append(
             ContextEventDraft(
@@ -353,7 +377,8 @@ class TurnController:
             ),
             integrity="diagnostic",
         )
-        _append_jsonl_fsync(self._workspace.answers_path, {"question_id": handle.turn_id, "answer_output": answer})
+        if publish_answer:
+            _append_jsonl_fsync(self._workspace.answers_path, {"question_id": handle.turn_id, "answer_output": answer})
         self._remove_active_turn()
         return FinalizedTurn(
             turn_id=handle.turn_id,

@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Generator
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -65,7 +66,7 @@ class ScriptedAnalysis:
 
 
 @pytest.fixture
-def scripted_analysis(tmp_path: Path) -> ScriptedAnalysis:
+def scripted_analysis(tmp_path: Path) -> Generator[ScriptedAnalysis, None, None]:
     artifact_root = ROOT / "runs" / f"task12-continuous-{tmp_path.name}"
     shutil.rmtree(artifact_root, ignore_errors=True)
     pi_path = tmp_path / "scripted-continuous-pi.py"

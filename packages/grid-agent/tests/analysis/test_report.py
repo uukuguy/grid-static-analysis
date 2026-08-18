@@ -82,6 +82,40 @@ def test_report_renders_recorded_tool_results_before_model_conclusion(
     assert "turns/001/trace.md" in first_turn
 
 
+def test_report_redacts_nested_credential_fields_without_dropping_electrical_values(
+    report_fixture: ReportFixture,
+) -> None:
+    report = render_report_with_tool_result(
+        report_fixture,
+        capability="analysis.future.operation",
+        result={
+            "vm_pu": 1.03,
+            "p_mw": 24.5,
+            "password": "must-not-leak",
+            "passwd": "must-not-leak",
+            "private-key": "must-not-leak",
+            "clientSecret": "must-not-leak",
+            "credentials": {"username": "operator", "apiKey": "must-not-leak"},
+            "nested": [
+                {
+                    "normal_label": "branch-11",
+                    "x_api_key": "must-not-leak",
+                    "passwordless_enabled": True,
+                }
+            ],
+        },
+    )
+
+    assert '"vm_pu": 1.03' in report
+    assert '"p_mw": 24.5' in report
+    assert '"normal_label": "branch-11"' in report
+    assert '"passwordless_enabled": true' in report
+    assert "must-not-leak" not in report
+    assert "clientSecret" not in report
+    assert "private-key" not in report
+    assert "credentials" not in report
+
+
 def test_failed_turn_keeps_successful_tool_result_in_main_report(
     failed_report_fixture: ReportFixture,
 ) -> None:

@@ -349,7 +349,8 @@ def _execute_scripted_static_case(
         answer = f"listed {result['returned_row_count']} buses"
     elif case.id == "static-branch-dataset-schema-001":
         result = client.invoke("model.dataset.describe", {"context_ref": context_ref, "dataset": "network.branches"})
-        answer = f"branch fields {len(result.get('fields', []))}"
+        fields = result.get("fields")
+        answer = f"branch fields {len(fields) if isinstance(fields, list) else 0}"
     elif case.id == "static-components-001":
         result = client.invoke("topology.components.get", {"context_ref": context_ref})
         answer = f"components {result['component_count']}"
@@ -415,12 +416,20 @@ def _execute_scripted_static_case(
             "model.element.get",
             {"context_ref": context_ref, "kind": "line", "namespace": "pandapower_index", "identifier": "11"},
         )
+        element_record = _require_json_mapping(element.get("element"), "resolved element")
+        asset_ref = element_record.get("asset_ref")
+        if not isinstance(asset_ref, str):
+            raise RuntimeError("resolved element did not include a string asset_ref")
         result = client.invoke(
             "analysis.contingency.n_minus_one.run",
             {
                 "context_ref": context_ref,
-                "branch_refs": [str(dict(element["element"])["asset_ref"])],
+                "branch_refs": [asset_ref],
             },
+        )
+        constraint_evaluation = _require_json_mapping(
+            result.get("constraint_evaluation"),
+            "constraint evaluation",
         )
         evidence_ref = _write_synthetic_evidence(
             workspace.root_path,
@@ -433,15 +442,15 @@ def _execute_scripted_static_case(
         )
         client.events[-1] = ToolResultEvent(
             capability="analysis.contingency.n_minus_one.run",
-            result={
+            result=cast(Mapping[str, JsonValue], {
                 "status": "partial",
-                "constraint_evaluation": result["constraint_evaluation"],
+                "constraint_evaluation": dict(constraint_evaluation),
                 "scenarios": [
                     {"status": "succeeded", "pandapower_index": 11},
                     {"status": "non_converged", "pandapower_index": 21},
                 ],
-            },
-            evidence_refs=tuple(result.get("evidence_refs", ())) + (evidence_ref,),
+            }),
+            evidence_refs=_extract_evidence_refs(result) + (evidence_ref,),
         )
         answer = "typed partial N-1 result"
     elif case.id == "static-sourced-risk-001":
@@ -479,7 +488,8 @@ def _execute_scripted_static_case(
             "analysis.result.risk.rank",
             {"result_ref": str(violations["result_ref"]), "limit": 5},
         )
-        answer = f"ranked {len(risk['rankings'])} sourced risks"
+        rankings = risk.get("rankings")
+        answer = f"ranked {len(rankings) if isinstance(rankings, list) else 0} sourced risks"
     else:
         answer = "执行限制 / execution limitation: scripted validation case is not implemented"
 
@@ -1155,6 +1165,12 @@ def _extract_evidence_refs(value: Mapping[str, object]) -> tuple[str, ...]:
     if isinstance(many, list):
         refs.extend(item for item in many if isinstance(item, str))
     return tuple(dict.fromkeys(refs))
+
+
+def _require_json_mapping(value: object, description: str) -> Mapping[str, JsonValue]:
+    if not isinstance(value, Mapping):
+        raise RuntimeError(f"{description} was not an object")
+    return cast(Mapping[str, JsonValue], value)
 
 
 def _write_synthetic_evidence(run_path: Path, document: Mapping[str, object]) -> str:

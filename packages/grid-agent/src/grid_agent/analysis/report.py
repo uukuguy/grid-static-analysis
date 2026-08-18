@@ -76,6 +76,14 @@ class _TraceRead:
 _READER_MAX_DEPTH = 6
 _READER_MAX_MAPPING_ITEMS = 50
 _READER_MAX_SEQUENCE_ITEMS = 20
+_SECRET_FIELD_TOKENS = {
+    "authorization",
+    "credential",
+    "credentials",
+    "passwd",
+    "password",
+    "secret",
+}
 
 
 def _render_narrative_turn(
@@ -296,11 +304,21 @@ def _reader_result_value(value: Any, *, depth: int = 0) -> Any:
 
 def _is_internal_or_secret_field(key: str) -> bool:
     lowered = key.lower()
-    return (
-        lowered.endswith("_ref")
-        or lowered.endswith("_refs")
-        or any(term in lowered for term in ("secret", "token", "authorization", "api_key"))
-    )
+    if lowered.endswith("_ref") or lowered.endswith("_refs"):
+        return True
+    tokens = _field_name_tokens(key)
+    if any(token in _SECRET_FIELD_TOKENS for token in tokens):
+        return True
+    pairs = set(zip(tokens, tokens[1:], strict=False))
+    if ("api", "key") in pairs or ("private", "key") in pairs:
+        return True
+    compact = "".join(tokens)
+    return compact.endswith("apikey") or compact.endswith("privatekey")
+
+
+def _field_name_tokens(key: str) -> tuple[str, ...]:
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key)
+    return tuple(token for token in re.split(r"[^A-Za-z0-9]+", separated.lower()) if token)
 
 
 def _reader_json(value: Any) -> str:

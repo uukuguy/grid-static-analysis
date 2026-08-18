@@ -14,6 +14,7 @@ from grid_agent.analysis import turns as turns_module
 from grid_agent.analysis.turns import ActiveTurnHandle, StaleAnswerDraftError, TurnController
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
+from grid_agent.trajectory.answers import ReferenceVerifier
 from grid_agent.trajectory.context_bridge import NativeContextBridge
 from grid_agent.trajectory.reader import RunEventReader
 from grid_agent.trajectory.recorder import RunEventRecorder
@@ -290,6 +291,80 @@ def test_answer_commit_failure_emits_no_accepted_answer(
     assert not any(event.event_type == "answer.submitted" for event in events)
 
 
+def test_controller_submission_fails_closed_when_derived_ref_is_not_allowed(
+    tmp_path: Path,
+) -> None:
+    allowed_result_ref = "result:sha256:" + "a" * 64
+    controller, recorder, store, workspace, handle, result_ref, evidence_ref = answer_fixture(
+        tmp_path,
+        allowed_refs={allowed_result_ref},
+    )
+    register_answer_lineage(store, handle, result_ref, evidence_ref)
+
+    finalized = controller.submit(
+        handle,
+        answer_output="线路结果来自本题仿真。",
+        duration_seconds=1.0,
+    )
+
+    assert finalized.status == "failed"
+    assert finalized.answer_path is None
+    assert finalized.error is not None
+    assert "claim reference is not known in the current run" in finalized.error
+    archived_draft = workspace.turn_path(1) / "answer-draft.json"
+    assert json.loads(archived_draft.read_text(encoding="utf-8"))["answer_output"] == "线路结果来自本题仿真。"
+    assert not (workspace.turn_path(1) / "answer.json").exists()
+    if workspace.answers_path.exists():
+        assert "线路结果来自本题仿真。" not in workspace.answers_path.read_text(encoding="utf-8")
+    native_events = [json.loads(line) for line in recorder.events_path.read_text(encoding="utf-8").splitlines()]
+    assert not any(event["event_type"] == "answer.submitted" for event in native_events)
+    assert not any(
+        event["event_type"] == "turn.completed"
+        and isinstance(event.get("payload"), dict)
+        and event["payload"].get("status") == "success"
+        for event in native_events
+    )
+    assert any(
+        event["event_type"] == "turn.completed"
+        and isinstance(event.get("payload"), dict)
+        and event["payload"].get("status") == "failed"
+        for event in native_events
+    )
+
+
+def test_controller_submission_fails_closed_when_verifier_rejects_ref(
+    tmp_path: Path,
+) -> None:
+    controller, recorder, store, workspace, handle, result_ref, evidence_ref = answer_fixture(
+        tmp_path,
+        verifier=RejectingVerifier(),
+    )
+    register_answer_lineage(store, handle, result_ref, evidence_ref)
+
+    finalized = controller.submit(
+        handle,
+        answer_output="线路结果来自本题仿真。",
+        duration_seconds=1.0,
+    )
+
+    assert finalized.status == "failed"
+    assert finalized.answer_path is None
+    assert finalized.error is not None
+    assert "result object missing" in finalized.error
+    assert (workspace.turn_path(1) / "answer-draft.json").is_file()
+    assert not (workspace.turn_path(1) / "answer.json").exists()
+    if workspace.answers_path.exists():
+        assert "线路结果来自本题仿真。" not in workspace.answers_path.read_text(encoding="utf-8")
+    native_events = [json.loads(line) for line in recorder.events_path.read_text(encoding="utf-8").splitlines()]
+    assert not any(event["event_type"] == "answer.submitted" for event in native_events)
+    assert any(
+        event["event_type"] == "answer.rejected"
+        and isinstance(event.get("payload"), dict)
+        and "result object missing" in event["payload"].get("message", "")
+        for event in native_events
+    )
+
+
 class AcceptingVerifier:
     def verify_result(self, reference: str) -> object:
         return reference
@@ -298,8 +373,19 @@ class AcceptingVerifier:
         return reference
 
 
+class RejectingVerifier:
+    def verify_result(self, reference: str) -> object:
+        raise RuntimeError(f"result object missing: {reference}")
+
+    def verify_evidence(self, reference: str) -> object:
+        return reference
+
+
 def answer_fixture(
     tmp_path: Path,
+    *,
+    verifier: ReferenceVerifier | None = None,
+    allowed_refs: set[str] | None = None,
 ):
     result_ref = "result:sha256:" + "a" * 64
     evidence_ref = "evidence:sha256:" + "b" * 64
@@ -321,8 +407,8 @@ def answer_fixture(
         workspace,
         store,
         audit_callback=lambda _claimed, _results: (),
-        verifier=AcceptingVerifier(),
-        allowed_refs={result_ref, evidence_ref},
+        verifier=verifier if verifier is not None else AcceptingVerifier(),
+        allowed_refs=allowed_refs if allowed_refs is not None else {result_ref, evidence_ref},
         recorder=recorder,
     )
     handle = controller.start(1, "Assess line 11")

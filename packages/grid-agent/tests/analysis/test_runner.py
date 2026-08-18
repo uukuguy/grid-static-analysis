@@ -213,6 +213,14 @@ class FakeProjector:
             )
 
 
+class AcceptingVerifier:
+    def verify_result(self, reference: str) -> object:
+        return reference
+
+    def verify_evidence(self, reference: str) -> object:
+        return reference
+
+
 @dataclass
 class RunnerHarness:
     workspace: AnalysisWorkspace
@@ -253,7 +261,13 @@ def runner_harness(tmp_path: Path) -> RunnerHarness:
     runner = AnalysisRunner(
         workspace=workspace,
         store=store,
-        turn_controller=TurnController(workspace, store, audit_callback=lambda _claimed, _results: ()),
+        turn_controller=TurnController(
+            workspace,
+            store,
+            audit_callback=lambda _claimed, _results: (),
+            verifier=AcceptingVerifier(),
+            allowed_refs={RESULT_REF},
+        ),
         pi_client=pi,
         projector=projector,
         environment={"provider": "test-provider", "model": "test-model"},
@@ -458,6 +472,36 @@ def test_runner_stops_and_fails_when_model_returns_no_final_answer(
     assert runner_harness.store.snapshot.status == "failed"
     assert "analysis.failed" in event_types
     assert "analysis.completed" not in event_types
+
+
+def test_runner_fails_analysis_when_controller_rejects_answer_lineage(
+    runner_harness: RunnerHarness,
+) -> None:
+    rejected_ref = "result:sha256:" + "9" * 64
+    runner_harness.pi.behavior = [
+        {"answer": "不应采纳的回答", "produce_result_ref": rejected_ref},
+        SHOULD_NOT_RUN,
+    ]
+
+    outcome = runner_harness.runner.run(
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二"))
+    )
+
+    events = [
+        json.loads(line)
+        for line in runner_harness.workspace.context_events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    event_types = [event["event_type"] for event in events]
+    assert outcome.status == "failed"
+    assert len(runner_harness.pi.prompts) == 1
+    assert runner_harness.store.snapshot.turns[0].status == "failed"
+    assert runner_harness.store.snapshot.status == "failed"
+    assert "answer.submitted" not in event_types
+    assert "analysis.failed" in event_types
+    assert "analysis.completed" not in event_types
+    assert not (runner_harness.workspace.turn_path(1) / "answer.json").exists()
+    if runner_harness.workspace.answers_path.exists():
+        assert "不应采纳的回答" not in runner_harness.workspace.answers_path.read_text(encoding="utf-8")
 
 
 def test_runner_keeps_normal_gridctl_error_nonterminal_and_checkpoints_report(

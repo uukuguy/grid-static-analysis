@@ -153,9 +153,11 @@ def test_pi_launch_exposes_native_capture_paths_only_when_configured(
     assert native_launch.environment["GRID_AGENT_TRAJECTORY_ACKS"] == str(
         native.trajectory_acks_path
     )
-    assert native.trajectory_acks_path.is_dir()
-    assert native.trajectory_acks_path.parent.stat().st_mode & 0o777 == 0o700
-    assert native.trajectory_acks_path.stat().st_mode & 0o777 == 0o700
+    trajectory_acks_path = native.trajectory_acks_path
+    assert trajectory_acks_path is not None
+    assert trajectory_acks_path.is_dir()
+    assert trajectory_acks_path.parent.stat().st_mode & 0o777 == 0o700
+    assert trajectory_acks_path.stat().st_mode & 0o777 == 0o700
     trajectory_environment = {
         key: value
         for key, value in native_launch.environment.items()

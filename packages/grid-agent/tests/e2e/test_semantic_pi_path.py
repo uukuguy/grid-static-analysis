@@ -216,16 +216,16 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         else:
             assert order[:2] == ["before_model_request", "provider_enter"]
 
-            questions = tmp_path / "questions.txt"
-            questions.write_text("IEEE-39节点系统中线路11连接哪两个母线?\n", encoding="utf-8")
-            managed_script.write_bytes(pi.read_bytes())
-            managed_cli.write_text(
-                'import { spawnSync } from "node:child_process";\n'
-                'const result = spawnSync(process.env.PYTHON ?? "python3", [new URL("./grid-agent-scripted-pi.py", import.meta.url).pathname, ...process.argv.slice(2)], { stdio: "inherit" });\n'
-                'process.exit(result.status ?? 1);\n',
-                encoding="utf-8",
-            )
-            report = subprocess.run(
+        questions = tmp_path / "questions.txt"
+        questions.write_text("IEEE-39节点系统中线路11连接哪两个母线?\n", encoding="utf-8")
+        managed_script.write_bytes(pi.read_bytes())
+        managed_cli.write_text(
+            'import { spawnSync } from "node:child_process";\n'
+            'const result = spawnSync(process.env.PYTHON ?? "python3", [new URL("./grid-agent-scripted-pi.py", import.meta.url).pathname, ...process.argv.slice(2)], { stdio: "inherit" });\n'
+            'process.exit(result.status ?? 1);\n',
+            encoding="utf-8",
+        )
+        report = subprocess.run(
             [
                 "uv",
                 "run",
