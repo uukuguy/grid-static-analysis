@@ -360,3 +360,8 @@ The following append-only entries were recovered before closing the fully merged
 - 06:05 Refreshed reviewed workbench visual baselines after theme and responsive delivery [1843fbd]
 - 06:17 Admitted fixed historical v0.2 manifest metadata without accepting arbitrary fields [d6ed010]
 - 11:43 Added workbench operator guide for safe daily trajectory browsing [d678b92]
+
+## 2026-08-18 — Capability composition documentation
+
+- 19:03 明确动态规划是目录、上下文与工具结果驱动的 LLM 编排，并记录其形式化规划边界
+- 21:09 v1.0.0 发布门禁通过：doctor、770 tests、17 E2E、三套 validate，24/24 release-ready

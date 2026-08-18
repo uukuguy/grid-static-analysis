@@ -1,48 +1,42 @@
-# Completed Session Checkpoint
+# Live Session Checkpoint
 
-> Updated: 2026-08-18 15:48 CST. The full-capability Climb session is complete.
+> Updated: 2026-08-18 21:10 CST. **Session remains active — not a final handoff.**
 
 ## TL;DR
 
-- The full pandapower 3.4.0 static-analysis architecture is implemented without question-specific branches.
-- All 24/24 in-scope matrix rows are published, materialized across Simulator/Agent/Pi/Skill, and verified by four evidence lanes.
-- The authored seven-question corpus and a focused model-construction regression both pass against the configured DeepSeek provider.
+- 用户确认当前完整静态分析版本可以进入正式发布，目标 tag 为 `v1.0.0`。
+- 根项目、Agent、Simulator、Pi 工具与 Workbench 的版本元数据已从 `0.2.0` 更新为 `1.0.0`。
+- 完整发布门禁已通过；release commit 与 annotated tag 尚未创建。
 
-## Durable baseline
+## Durable release evidence
 
-- Branch: `main`
-- Latest capability fix: `3c2dcf7 fix: make model construction contracts self-describing`
-- Verified gates: agent 572 passed, simulator 164 passed, Pi tools 34 passed, E2E 17 passed.
-- Capability matrix: 24/24 published (100%), 0 partial, 0 missing, release-ready.
-- Capability source of truth: `configs/capabilities/pandapower-3.4.0-static-analysis.json`
-- Cross-layer materialization: `configs/capabilities/pandapower-3.4.0-materialization.json`
-- Architecture: `docs/superpowers/specs/2026-08-18-pandapower-static-analysis-full-capability-design.md`
-- Plan: `docs/superpowers/plans/2026-08-18-pandapower-static-analysis-full-capability.md`
+- `make doctor`: passed; `gridctl` resolved from the pinned simulator environment.
+- `make test`: Agent 572 passed, Simulator 164 passed, Pi tools 34 passed.
+- `make test-e2e`: 17 passed.
+- `make validate`: offline task-required、scripted static-analysis-core、scripted static-analysis-full 全部通过。
+- Capability matrix: 24/24 published, partial=0, missing=0, `release_ready=True`.
+- Focused Workbench suite: 120 passed.
+- 上游 FastAPI、pandapower、pandas/NumPy 弃用警告仍存在，但没有测试失败。
 
-## Completed work
+## In-flight release contents
 
-- Tasks 1–10 are complete.
-- Deterministic validation passes 7/7 offline, 10/10 static core, and 8/8 full semantic cases.
-- Provider run `analysis-20260818T072653Z` completed 7/7 with the expected topology, power-flow, OPF, short-circuit and scaled-load results.
-- Provider regression `analysis-20260818T073514Z` used the published local-reference syntax on its first `model.create` attempt and completed 1/1 without audit findings.
+- `docs/architecture/pandapower-capability-composition.md` — 当前能力覆盖和 LLM 工具组合边界说明。
+- `pyproject.toml` — root release version.
+- `packages/grid-agent/` — package、runtime version and lock metadata.
+- `packages/grid-simulator/` — package、runtime version、lock metadata and version assertion.
+- `packages/pi-grid-tools/package*.json` — package version metadata.
+- `packages/trajectory-workbench/package*.json` — package version metadata.
+- `docs/status/JOURNAL.md` — 架构文档与发布门禁事件。
+- 本次不纳入既有未跟踪 PDF、ZIP、测试脚本目录和 `validation/questions/test.md.txt`。
 
-## Immediate next action
+## Immediate next actions
 
-None for this release. Start a new scoped plan for any subsequent product change.
+1. 检查 release diff，确认只有上述发布文件进入提交。
+2. 创建 `release: grid-static-analysis v1.0.0` commit。
+3. 在该提交上创建 annotated tag `v1.0.0`，但未经明确授权不推送远端。
 
 ## Ruled-out paths
 
-- Do not add one tool per validation question.
-- Do not use orchestration completion as semantic correctness.
-- Do not expose arbitrary Python, callable names, filesystem paths, DataFrames, or pandapowerNet objects.
-- Do not make observer or advisory validation failures block primary analysis execution.
-- Do not treat model formatting differences as semantic mismatches.
-
-## Ready-to-paste commands
-
-```sh
-python3 tools/capability_matrix.py --check --json
-tools/climb/eval-local.sh
-make validate
-git status --short --branch
-```
+- 不在仍声明 `0.2.0` 的旧提交上创建 `v1.0.0` tag。
+- 不把历史 `v0.2` trajectory compatibility 名称或 `grid-capability/1.0` 协议版本改成产品版本。
+- 不把未跟踪报告、压缩包、用户手册或临时测试资料加入 release commit。
