@@ -139,13 +139,69 @@ class TurnController:
             raw_draft = self._workspace.active_answer_draft_path.read_bytes()
             draft = _load_answer_draft(raw_draft)
             _require_current_turn_binding(draft, handle)
-            answer = _require_non_empty_string(draft, "answer_output")
-            claim_evidence_refs = _require_string_list(draft, "claim_evidence_refs")
-            result_refs = _require_string_list(draft, "result_refs")
+            _require_non_empty_string(draft, "answer_output")
+            _require_string_list(draft, "claim_evidence_refs")
+            _require_string_list(draft, "result_refs")
         except StaleAnswerDraftError:
             raise
         except AnswerDraftError as exc:
             return self.fail(handle, error=str(exc), duration_seconds=duration_seconds)
+        return self._accept_draft(
+            handle,
+            draft=draft,
+            raw_draft=raw_draft,
+            duration_seconds=duration_seconds,
+        )
+
+    def submit(
+        self,
+        handle: ActiveTurnHandle,
+        *,
+        answer_output: str,
+        duration_seconds: float,
+    ) -> FinalizedTurn:
+        if not answer_output.strip():
+            return self.fail(
+                handle,
+                error="model returned no final answer",
+                duration_seconds=duration_seconds,
+            )
+        active = self._store.snapshot.current_turn
+        if active is None or active.turn_id != handle.turn_id:
+            raise StaleAnswerDraftError("answer submission is bound to a different turn")
+        result_refs, evidence_refs = _answer_level_refs(
+            (*active.consumed_refs, *active.produced_refs)
+        )
+        draft = {
+            "turn_id": handle.turn_id,
+            "turn_nonce": handle.turn_nonce,
+            "submission_id": handle.turn_id,
+            "answer_output": answer_output,
+            "result_refs": list(result_refs),
+            "claim_evidence_refs": list(evidence_refs),
+            "claims": [],
+            "submission_diagnostics": [],
+        }
+        raw_draft = _json_bytes(draft)
+        _write_bytes_atomic(self._workspace.active_answer_draft_path, raw_draft)
+        return self._accept_draft(
+            handle,
+            draft=draft,
+            raw_draft=raw_draft,
+            duration_seconds=duration_seconds,
+        )
+
+    def _accept_draft(
+        self,
+        handle: ActiveTurnHandle,
+        *,
+        draft: Mapping[str, Any],
+        raw_draft: bytes,
+        duration_seconds: float,
+    ) -> FinalizedTurn:
+        answer = _require_non_empty_string(draft, "answer_output")
+        claim_evidence_refs = _require_string_list(draft, "claim_evidence_refs")
+        result_refs = _require_string_list(draft, "result_refs")
         try:
             submission = validate_submission(
                 {
@@ -194,8 +250,6 @@ class TurnController:
         answer_bytes = _write_json_atomic(answer_path, envelope)
         _append_jsonl_fsync(self._workspace.answers_path, envelope)
 
-        # Keep the accepted answer auditable in the context ledger before the
-        # turn becomes terminal.
         accepted_answer = self._store.append(
             ContextEventDraft(
                 event_type="answer.submitted",
@@ -435,6 +489,16 @@ def _require_string_list(draft: Mapping[str, Any], key: str) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _answer_level_refs(
+    references: Sequence[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    unique = tuple(dict.fromkeys(references))
+    return (
+        tuple(ref for ref in unique if ref.startswith("result:sha256:")),
+        tuple(ref for ref in unique if ref.startswith("evidence:sha256:")),
+    )
+
+
 def _draft_diagnostics(draft: Mapping[str, Any]) -> tuple[ReferenceDiagnostic, ...]:
     value = draft.get("submission_diagnostics", ())
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
@@ -497,9 +561,21 @@ def _append_jsonl_fsync(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> bytes:
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    encoded = _json_bytes(payload)
     _write_bytes_atomic(path, encoded)
     return encoded
+
+
+def _json_bytes(payload: Mapping[str, Any]) -> bytes:
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
 
 
 def _write_bytes_atomic(path: Path, payload: bytes) -> None:

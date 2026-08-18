@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from grid_agent.analysis.models import ContextEventDraft
 from grid_agent.analysis.integrity import ReferenceDiagnostic
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.analysis import turns as turns_module
@@ -334,6 +335,61 @@ def test_turn_finalization_emits_claims_only_for_accepted_submission(tmp_path: P
     assert claim.causation.parent_sequence == answer.sequence
 
 
+def test_controller_submits_model_text_with_projected_turn_refs(tmp_path: Path) -> None:
+    controller, recorder, store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
+    register_answer_lineage(store, handle, result_ref, evidence_ref)
+
+    completed = controller.submit(
+        handle,
+        answer_output="线路结果来自本题仿真。",
+        duration_seconds=1.0,
+    )
+
+    draft = json.loads(
+        (workspace.turn_path(1) / "answer-draft.json").read_text(encoding="utf-8")
+    )
+    assert completed.status == "success"
+    assert completed.answer_output == "线路结果来自本题仿真。"
+    assert draft["turn_id"] == handle.turn_id
+    assert draft["turn_nonce"] == handle.turn_nonce
+    assert draft["result_refs"] == [result_ref]
+    assert draft["claim_evidence_refs"] == [evidence_ref]
+    assert draft["claims"] == []
+    events = RunEventReader(recorder.events_path).read_prefix().events
+    assert not any(event.event_type == "business.claim.declared" for event in events)
+
+
+def test_controller_submission_keeps_only_result_and_evidence_refs() -> None:
+    refs = turns_module._answer_level_refs(
+        (
+            "context:sha256:" + "1" * 64,
+            "result:sha256:" + "2" * 64,
+            "evidence:sha256:" + "3" * 64,
+            "result:sha256:" + "2" * 64,
+            "observation:sha256:" + "4" * 64,
+        )
+    )
+    assert refs == (
+        ("result:sha256:" + "2" * 64,),
+        ("evidence:sha256:" + "3" * 64,),
+    )
+
+
+def test_controller_rejects_empty_model_final_text(harness: Harness) -> None:
+    turn = harness.turns.start(1, "没有最终文本")
+
+    finalized = harness.turns.submit(
+        turn,
+        answer_output="  \n",
+        duration_seconds=0.5,
+    )
+
+    assert finalized.status == "failed"
+    assert finalized.error == "model returned no final answer"
+    assert harness.store.snapshot.turns[-1].status == "failed"
+    assert not (harness.workspace.turn_path(1) / "answer.json").exists()
+
+
 def test_invalid_submission_metadata_is_diagnostic_without_rejecting_answer(tmp_path: Path) -> None:
     controller, recorder, store, workspace, handle, _result_ref, _evidence_ref = answer_fixture(tmp_path)
     write_bound_draft(
@@ -460,6 +516,78 @@ def answer_fixture(
     )
     handle = controller.start(1, "Assess line 11")
     return controller, recorder, store, workspace, handle, result_ref, evidence_ref
+
+
+def register_answer_lineage(
+    store: AnalysisContextStore,
+    handle,
+    result_ref: str,
+    evidence_ref: str,
+) -> None:
+    store.append(
+        ContextEventDraft(
+            event_type="simulator.context.opened",
+            turn_id=handle.turn_id,
+            capability="context.open",
+            payload={
+                "context_ref": "context:sha256:" + "1" * 64,
+                "revision_ref": "revision:sha256:" + "2" * 64,
+                "path": "evidence/contexts/context.json",
+                "source": {
+                    "capability": "context.open",
+                    "grid_capability_protocol": "1.0",
+                    "pandapower_version": "3.4.0",
+                },
+                "network": {
+                    "name": "case-test",
+                    "bus_count": 3,
+                    "line_count": 2,
+                    "trafo_count": 0,
+                },
+            },
+        )
+    )
+    store.append(
+        ContextEventDraft(
+            event_type="result.registered",
+            turn_id=handle.turn_id,
+            capability="analysis.powerflow.ac.run",
+            payload={
+                "result_ref": result_ref,
+                "revision_ref": "revision:sha256:" + "2" * 64,
+                "path": "evidence/results/powerflow.json",
+                "evidence_refs": [evidence_ref],
+                "solver_summary": {
+                    "success": True,
+                    "algorithm": "nr",
+                    "iterations": 3,
+                    "total_loss_mw": 0.125,
+                },
+                "producer_observation": {
+                    "capability": "analysis.powerflow.ac.run",
+                    "grid_capability_protocol": "1.0",
+                    "pandapower_version": "3.4.0",
+                },
+            },
+        )
+    )
+    store.append(
+        ContextEventDraft(
+            event_type="evidence.registered",
+            turn_id=handle.turn_id,
+            capability="gridctl.evidence.register",
+            payload={
+                "evidence_ref": evidence_ref,
+                "path": "evidence/network-facts/powerflow-fact.json",
+                "kind": "simulator",
+                "refs": [result_ref],
+                "summary": {
+                    "provenance": "gridctl",
+                    "description": "deterministic simulator evidence",
+                },
+            },
+        )
+    )
 
 
 def write_bound_draft(
