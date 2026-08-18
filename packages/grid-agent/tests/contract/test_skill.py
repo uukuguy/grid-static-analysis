@@ -50,10 +50,8 @@ def test_skill_describes_evidence_get_for_current_run_topology_and_analysis_docu
         assert "topology" in lowered and "network_fact" in lowered, resource_id
 
     assert "current-run topology or analysis" in combined
-    assert (
-        "ac, ranking, and n-1 results must cite returned `result_ref` and `evidence_refs`"
-        in combined
-    )
+    assert "return ordinary reader-facing final text without internal refs in prose" in combined
+    assert "the controller binds current-turn result and evidence lineage" in combined
 
     forbidden_guidance = (
         "reading files directly instead of using `evidence.get`",

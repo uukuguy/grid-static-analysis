@@ -1212,10 +1212,8 @@ guide("topology-analysis")
 opened = grid("context.open", {"model_id": "ieee39"})
 result = grid("topology.branch.endpoints.get", {"context_ref": opened["context_ref"], "kind": "line", "namespace": "pandapower_index", "identifier": "11"})
 ref = result["evidence_ref"]
-answer = f"线路11连接母线{result['from_bus']['name']}与{result['to_bus']['name']}；证据 {ref}。"
-draft = {"answer_output": answer, "result_refs": [], "claim_evidence_refs": [ref]}
-open(os.environ["GRID_AGENT_ANSWER_DRAFT"], "w", encoding="utf-8").write(json.dumps(draft, ensure_ascii=False))
-emit({"type": "tool_result", "capability": "grid_submit_answer", "ok": True, "result": draft, "evidence_refs": [ref]})
+answer = f"线路11连接母线{result['from_bus']['name']}与{result['to_bus']['name']}。"
+emit({"type": "text_delta", "text": answer})
 emit({"type": "agent_end"})
 """
 

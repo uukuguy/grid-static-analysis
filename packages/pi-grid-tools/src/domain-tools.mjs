@@ -2,7 +2,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 
@@ -427,6 +427,23 @@ function requiredExistingRealPath(env, name) {
   }
 }
 
+function requiredWritableRealPath(env, name) {
+  const path = requiredAbsolutePath(env, name);
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw new Error(`${name} must resolve to a writable path: ${error.message}`);
+    }
+    const parent = dirname(path);
+    try {
+      return resolve(realpathSync(parent), basename(path));
+    } catch (parentError) {
+      throw new Error(`${name} parent must resolve to an existing path: ${parentError.message}`);
+    }
+  }
+}
+
 function optionalExistingRealPath(env, name) {
   if (env[name] === undefined || env[name] === "") {
     return undefined;
@@ -438,7 +455,7 @@ function optionalWritableRealPath(env, name) {
   if (env[name] === undefined || env[name] === "") {
     return undefined;
   }
-  return requiredExistingRealPath(env, name);
+  return requiredWritableRealPath(env, name);
 }
 
 function isInside(candidate, root) {

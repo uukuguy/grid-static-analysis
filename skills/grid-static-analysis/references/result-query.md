@@ -61,7 +61,7 @@ Outputs include `result_ref`, `context_ref`, `revision_ref`, `metric`, `metric_u
 
 ## Evidence Requirements
 
-`result.branches.rank` has `evidence_required: true` because it depends on persisted AC result references. Cite the input `result_ref` and relevant `evidence_refs` from the producing power-flow result. Submit that primary `result_ref` in `grid_submit_answer.result_refs`. AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs`; `evidence.get` may inspect their persisted evidence when needed.
+`result.branches.rank` has `evidence_required: true` because it depends on persisted AC result references. Base the answer on the input `result_ref` and relevant `evidence_refs` from the producing power-flow result. AC, ranking, and N-1 results must use returned result/evidence lineage internally, but final prose should stay reader-facing and omit internal refs. `evidence.get` may inspect persisted evidence when needed.
 
 ## Common Mistakes
 

@@ -37,7 +37,7 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 
 Open a context with `context.open` before model-specific operations. Use the returned `context_ref` for every later call. Treat `revision_ref`, `asset_ref`, `dataset_ref`, `result_ref`, `artifact_ref`, and `evidence_ref` as opaque stable references. Source aliases such as `pandapower:line:11` help resolve user language, but stable refs are used for composition.
 
-Only cite evidence that exists in the current run. If a capability says `evidence_required: true`, final network-specific claims must include the returned evidence or result reference. Submit final answers with `grid_submit_answer` using separate `result_refs` (the primary result(s) used for the conclusion) and `claim_evidence_refs` arrays. The verifier also follows and verifies result references already bound into claimed analysis evidence, so do not repeat every scenario result merely to satisfy a format rule. Use `result_refs: []` only for topology-only or limitation answers with no persisted result. Offline informational answers may not create run workspaces or imply simulator evidence.
+Base network-specific claims only on evidence and results returned in the current run. If a capability says `evidence_required: true`, use its returned result/evidence lineage internally, then return ordinary reader-facing final text without internal refs in prose. The controller binds current-turn result and evidence lineage from successful simulator tool events. Offline informational answers may not create run workspaces or imply simulator evidence.
 
 ## Simple Questions
 

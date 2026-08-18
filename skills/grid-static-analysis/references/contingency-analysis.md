@@ -49,7 +49,7 @@ Each scenario includes `scenario_result_ref`, `branch_ref`, `element_kind`, `pan
 
 ## Evidence Requirements
 
-`analysis.contingency.n_minus_one.run` has `evidence_required: true`. Cite aggregate `result_ref`, aggregate `evidence_refs`, and scenario `evidence_ref` values for branch-specific risk claims. Submit the aggregate `result_ref` in `grid_submit_answer.result_refs`; include scenario result refs too when the answer relies on scenario-specific facts.
+`analysis.contingency.n_minus_one.run` has `evidence_required: true`. Use aggregate `result_ref`, aggregate `evidence_refs`, and scenario `evidence_ref` values internally for branch-specific risk claims. Return ordinary reader-facing final text without internal refs in prose; the controller binds current-turn lineage.
 
 ## Common Mistakes
 

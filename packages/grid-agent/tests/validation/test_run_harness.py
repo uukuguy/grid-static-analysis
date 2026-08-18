@@ -378,9 +378,9 @@ def test_validation_runner_supports_scripted_pi_mode_with_wrapped_trace(tmp_path
         "grid_guide_open",
         "context.open",
         "topology.branch.endpoints.get",
-        "grid_submit_answer",
     ]
-    assert case["trace"]["tool_calls"] == 4
+    assert "grid_submit_answer" not in case["trace"]["capabilities"]
+    assert case["trace"]["tool_calls"] == 3
     assert case["evidence_refs"]
 
 

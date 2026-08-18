@@ -46,7 +46,7 @@ Outputs: `result_ref`, `context_ref`, `revision_ref`, `converged`, `solver`, `to
 
 ## Evidence Requirements
 
-`analysis.powerflow.ac.run` has `evidence_required: true`. Any numerical AC claim must reference the current-run `result_ref` and returned `evidence_refs`; submit the same `result_ref` in `grid_submit_answer.result_refs` and the evidence refs in `claim_evidence_refs`.
+`analysis.powerflow.ac.run` has `evidence_required: true`. Any numerical AC claim must be based on the current-run `result_ref` and returned `evidence_refs`. Return ordinary reader-facing final text without internal refs in prose; the controller binds the current-turn result/evidence lineage.
 
 ## Common Mistakes
 

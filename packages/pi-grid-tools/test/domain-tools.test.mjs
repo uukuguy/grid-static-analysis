@@ -119,6 +119,22 @@ test("analysis context tool is optional for legacy single-run launches", async (
   assert.equal(registered.some((tool) => tool.name === "grid_submit_answer"), false);
 });
 
+test("startup accepts future writable active-turn file inside workspace", async () => {
+  const root = await makeFixtureRoot();
+  clearOptionalAnalysisEnvironment();
+  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
+  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
+  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
+  process.env.GRID_AGENT_ACTIVE_TURN = join(root, "run/active-turn.json");
+  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
+  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
+
+  const registered = [];
+  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
+
+  assert.equal(registered.some((tool) => tool.name === "grid_record_decision"), false);
+});
+
 test("records bounded decisions only against controller-known refs", async () => {
   const { registered, root } = await configuredNativeTools();
   const known = "result:sha256:" + "a".repeat(64);
@@ -385,6 +401,12 @@ test("startup rejects configured symlink paths that escape the workspace", async
       link: "guide-index-link.json",
       outside: "guide-index.json",
       writeOutside: async (path, root) => writeGuideIndex(path, root),
+    },
+    {
+      name: "GRID_AGENT_ACTIVE_TURN",
+      link: "active-turn.json",
+      outside: "active-turn.json",
+      writeOutside: async (path) => writeFile(path, JSON.stringify({ turn_id: "x", turn_nonce: "n" }), "utf8"),
     },
   ];
 
