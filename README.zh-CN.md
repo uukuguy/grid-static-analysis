@@ -64,7 +64,7 @@ make install-pi
 make run-llm QUESTION="对 IEEE-39 节点系统运行交流潮流，并报告有功网损。"
 ```
 
-如需使用项目自有的 OpenAI Codex OAuth 而不是 API key，执行 `make auth-login`。Provider 配置、认证优先级、运行时安装和失败诊断详见[运行操作指南](docs/RUNBOOK.md)。
+如需使用项目自有的 OpenAI Codex OAuth 而不是 API key，请先在 `.env` 中设置 `GRID_AGENT_LLM_PROVIDER=openai-codex`，再执行 `make auth-login`；该登录命令不会自动选择 Provider。也可以在单次调用中使用 `make run-llm PROVIDER=openai-codex QUESTION="..."` 指定 Provider。Provider 配置、认证优先级、运行时安装和失败诊断详见[运行操作指南](docs/RUNBOOK.md)。
 
 ## 主要工作流
 

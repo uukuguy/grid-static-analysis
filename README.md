@@ -70,7 +70,7 @@ make doctor
 Run a deterministic offline smoke check:
 
 ```sh
-make run QUESTION="Which buses are connected by line 11 in the IEEE 39-bus network?"
+make run
 ```
 
 Run the primary natural-language agent path:
@@ -82,9 +82,12 @@ make install-pi
 make run-llm QUESTION="Run an AC power flow on the IEEE 39-bus network and report active power losses."
 ```
 
-For project-owned OpenAI Codex OAuth instead of an API key, use
-`make auth-login`. See the [runbook](docs/RUNBOOK.md) for provider setup,
-authentication precedence, runtime installation, and failure diagnosis.
+For project-owned OpenAI Codex OAuth instead of an API key, set
+`GRID_AGENT_LLM_PROVIDER=openai-codex` in `.env` before using `make auth-login`;
+the login command does not select the provider. You can also select it per
+invocation with `make run-llm PROVIDER=openai-codex QUESTION="..."`. See the
+[runbook](docs/RUNBOOK.md) for provider setup, authentication precedence,
+runtime installation, and failure diagnosis.
 
 ## Primary Workflows
 
