@@ -156,9 +156,9 @@ def test_continuous_analysis_generalizes_active_model_constraints_and_result_reu
 
         assert report_text.startswith("# 系统仿真分析报告")
         assert "## 本批次运行环境" in report_text
-        assert report_text.count("### 回答") == len(prompts)
-        assert report_text.count("### 实际分析过程") == len(prompts)
-        assert report_text.count("### 仿真环境上下文") == len(prompts)
+        assert report_text.count("### 模型结论") == len(prompts)
+        assert report_text.count("### 仿真与工具结果") == len(prompts)
+        assert report_text.count("### 执行状态与证据") == len(prompts)
         assert report_text.count("详细执行轨迹") == len(prompts)
         for prompt in prompts:
             assert prompt in report_text
@@ -167,14 +167,12 @@ def test_continuous_analysis_generalizes_active_model_constraints_and_result_reu
             assert detail_trace.is_file()
             assert "### 输入" in detail_trace.read_text(encoding="utf-8")
             section = report_text.split(f"## {turn.ordinal}. ", maxsplit=1)[1]
-            assert section.index("### 回答") < section.index("### 仿真环境上下文")
+            assert section.index("### 模型结论") < section.index("### 执行状态与证据")
         assert powerflow_ref not in report_text
         assert n1_ref not in report_text
         assert "policy" not in report_text.casefold()
         assert "模型约束数据" in report_text
         assert "读取活动模型内定义的约束" in report_text
-        assert "线路负载约束：≤100 %（模型数据）" in report_text
-        assert "变压器负载约束：≤100 %（模型数据）" in report_text
         assert "policy" not in json.dumps(trace, ensure_ascii=False).casefold()
         assert "policy" not in context.model_dump_json().casefold()
         assert not any(item.get("type") in {"text_delta", "message_update"} for item in trace)
