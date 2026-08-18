@@ -10,7 +10,7 @@ import pytest
 from grid_agent.analysis.integrity import ReferenceDiagnostic
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.analysis import turns as turns_module
-from grid_agent.analysis.turns import AnswerDraftError, StaleAnswerDraftError, TurnController
+from grid_agent.analysis.turns import StaleAnswerDraftError, TurnController
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
 from grid_agent.trajectory.context_bridge import NativeContextBridge

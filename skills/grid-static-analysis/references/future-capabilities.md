@@ -10,7 +10,7 @@ Do not use this as permission to simulate unsupported studies, import user model
 
 ## Concepts and Terminology
 
-Unavailable means there is no advertised executable WP-A capability ID for the workflow. The agent may explain the limitation and, when useful, suggest the closest available WP-A workflow without changing the user's requested study type.
+Unavailable means there is no advertised executable capability ID for the workflow. The agent may explain the current matrix gap and, when useful, suggest the closest published workflow without changing the user's requested study type.
 
 ## Available Capabilities
 
@@ -23,14 +23,13 @@ Unavailable in WP-A:
 - Short circuit.
 - State estimation.
 - Time series.
-- Model import, create, edit, or delete.
-- Topology switching or branch status modification outside isolated N-1 scenarios.
+- Arbitrary model file import or in-place mutation; declarative creation and immutable typed revisions are published.
 - Richer risk evaluation against user criteria or named external standards.
 - Dynamic stability, protection relay simulation, and remedial action optimization.
 
 ## Parameters and Defaults
 
-No parameters exist for unavailable capabilities. Do not invent capability IDs or schemas.
+Use `analysis.operation.list` and `environment.describe` as runtime authority. Do not invent capability IDs or schemas for missing rows.
 
 ## Result Fields and Units
 

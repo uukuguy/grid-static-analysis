@@ -10,7 +10,10 @@ from grid_simulator.capabilities.schema import CapabilityContract
 
 EXPECTED_IDS = (
     "analysis.contingency.n_minus_one.run",
+    "analysis.operation.describe",
+    "analysis.operation.list",
     "analysis.powerflow.ac.run",
+    "analysis.run",
     "context.get",
     "context.open",
     "environment.describe",
@@ -25,7 +28,12 @@ EXPECTED_IDS = (
     "model.element.get",
     "model.list",
     "model.revision.derive",
+    "result.aggregate",
     "result.branches.rank",
+    "result.compare",
+    "result.dataset.describe",
+    "result.dataset.list",
+    "result.dataset.query",
     "topology.branch.endpoints.get",
     "topology.components.get",
 )
@@ -133,9 +141,9 @@ def test_analysis_contracts_bind_to_pandapower_340() -> None:
 def test_all_nested_object_schemas_forbid_extra_properties() -> None:
     for contract in CapabilityRegistry.load_packaged().list():
         for schema in _walk_object_schemas(contract.input_schema):
-            assert schema.get("additionalProperties") is False or schema.get("x-creator-arguments") is True or schema.get("x-schema-described") is True, contract.id
+            assert schema.get("additionalProperties") is False or schema.get("x-creator-arguments") is True or schema.get("x-schema-described") is True or schema.get("x-operation-options") is True, contract.id
         for schema in _walk_object_schemas(contract.output_schema):
-            assert schema.get("additionalProperties") is False or schema.get("x-schema-described") is True, contract.id
+            assert schema.get("additionalProperties") is False or schema.get("x-schema-described") is True or schema.get("x-json-schema") is True, contract.id
 
 
 def _walk_properties(schema: object) -> list[tuple[str, dict[str, object]]]:

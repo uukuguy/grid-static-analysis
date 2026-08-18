@@ -10,11 +10,13 @@ from typing import Any, Literal
 import pandas as pd
 from pandapower.auxiliary import LoadflowNotConverged
 
+from grid_simulator.analysis_registry import AnalysisOutcome
 from grid_simulator.constraints import ModelConstraints, evaluate_constraints, extract_model_constraints
 from grid_simulator.evidence import canonical_json, fingerprint, write_json
 from grid_simulator.models import OpenedContext
 from grid_simulator.queries import BranchRecord, asset_ref, find_branch, list_branch_records, list_bus_records
 from grid_simulator.workspace import SimulatorWorkspace
+from grid_simulator.results import ResultStore
 
 
 POWERFLOW_CAPABILITY_ID = "analysis.powerflow.ac.run"
@@ -70,31 +72,46 @@ def run_ac_powerflow(
         net=net,
         solver=solver,
     )
-    persisted = _persist_result(workspace.results_dir, "powerflow", document)
-    evidence_ref = _persist_evidence(
-        workspace,
-        {
-            "evidence_type": "analysis_result",
-            "capability_id": POWERFLOW_CAPABILITY_ID,
-            "context_ref": context.context_ref,
-            "revision_ref": context.revision_ref,
-            "result_ref": persisted.ref,
-            "facts": {
-                "converged": True,
-                "total_active_loss": persisted.document["losses"]["total_active_loss"],
-                "branch_result_count": len(persisted.document["branch_results"]),
-            },
-            "provenance": _provenance(engine),
+    legacy_fields = {
+        key: value
+        for key, value in document.items()
+        if key
+        not in {
+            "result_type",
+            "capability_id",
+            "context_ref",
+            "revision_ref",
+            "engine",
+            "pandapower_version",
+            "provenance",
+        }
+    }
+    persisted = ResultStore(workspace).persist(
+        context=context,
+        engine=engine,
+        net=net,
+        outcome=AnalysisOutcome(
+            operation="powerflow.ac",
+            status="succeeded",
+            effective_options=dict(solver["options"]),
+            metadata={"converged": True},
+        ),
+        capability_id=POWERFLOW_CAPABILITY_ID,
+        extra_document=legacy_fields,
+        evidence_facts={
+            "converged": True,
+            "total_active_loss": document["losses"]["total_active_loss"],
+            "branch_result_count": len(document["branch_results"]),
         },
     )
     return {
-        "result_ref": persisted.ref,
+        "result_ref": persisted.result_ref,
         "context_ref": context.context_ref,
         "revision_ref": context.revision_ref,
         "converged": True,
         "solver": _solver_summary(solver),
         "total_active_loss": persisted.document["losses"]["total_active_loss"],
-        "evidence_refs": [evidence_ref],
+        "evidence_refs": [persisted.evidence_ref],
     }
 
 
@@ -314,13 +331,8 @@ def _run_contingency_scenario(
     min_vm_pu, max_vm_pu = _voltage_extrema(powerflow)
     scenario_status = "succeeded"
     scenario_document = {
-        "result_type": "analysis.contingency.n_minus_one.scenario",
-        "capability_id": CONTINGENCY_CAPABILITY_ID,
-        "context_ref": context.context_ref,
-        "revision_ref": context.revision_ref,
         "scenario_index": scenario_index,
         "outage": branch.summary(),
-        "status": scenario_status,
         "converged": True,
         "max_loading_percent": max_loading_percent,
         "min_vm_pu": min_vm_pu,
@@ -330,29 +342,31 @@ def _run_contingency_scenario(
         "powerflow": powerflow,
         "provenance": _provenance(engine),
     }
-    scenario_result = _persist_result(workspace.results_dir, "contingency-scenario", scenario_document)
-    evidence_ref = _persist_evidence(
-        workspace,
-        {
-            "evidence_type": "contingency_scenario",
-            "capability_id": CONTINGENCY_CAPABILITY_ID,
-            "context_ref": context.context_ref,
-            "revision_ref": context.revision_ref,
-            "result_ref": scenario_result.ref,
-            "subject_ref": branch.asset_ref,
-            "facts": {
-                "status": scenario_status,
-                "max_loading_percent": max_loading_percent,
-                "min_vm_pu": min_vm_pu,
-                "max_vm_pu": max_vm_pu,
-                "violation_count": len(violations),
-                "constraint_evaluation": constraint_evaluation,
-            },
-            "provenance": _provenance(engine),
+    scenario_result = ResultStore(workspace).persist(
+        context=context,
+        engine=engine,
+        net=net,
+        outcome=AnalysisOutcome(
+            operation="contingency.n_minus_one.scenario",
+            status=scenario_status,
+            effective_options=dict(solver["options"]),
+            metadata={"scenario_index": scenario_index, "outage": branch.summary()},
+        ),
+        capability_id=CONTINGENCY_CAPABILITY_ID,
+        evidence_type="contingency_scenario",
+        evidence_subject_ref=branch.asset_ref,
+        extra_document=scenario_document,
+        evidence_facts={
+            "status": scenario_status,
+            "max_loading_percent": max_loading_percent,
+            "min_vm_pu": min_vm_pu,
+            "max_vm_pu": max_vm_pu,
+            "violation_count": len(violations),
+            "constraint_evaluation": constraint_evaluation,
         },
     )
     return {
-        "scenario_result_ref": scenario_result.ref,
+        "scenario_result_ref": scenario_result.result_ref,
         "branch_ref": branch.asset_ref,
         "element_kind": branch.kind,
         "pandapower_index": branch.index,
@@ -363,7 +377,7 @@ def _run_contingency_scenario(
         "max_vm_pu": max_vm_pu,
         "violations": violations,
         "constraint_evaluation": constraint_evaluation,
-        "evidence_ref": evidence_ref,
+        "evidence_ref": scenario_result.evidence_ref,
     }
 
 
@@ -614,7 +628,7 @@ def _load_powerflow_result(workspace: SimulatorWorkspace, result_ref: str) -> di
     match = _RESULT_REF_PATTERN.fullmatch(result_ref)
     if match is None:
         raise UnknownResultError("result reference is malformed")
-    path = workspace.result_document("powerflow", match.group(1))
+    path = workspace.result_document("result", match.group(1))
     if not path.is_file():
         raise UnknownResultError("powerflow result is unavailable in this workspace")
     try:
@@ -641,7 +655,13 @@ def _verify_powerflow_result_document(document: object, result_ref: str) -> None
         raise ResultIntegrityError("powerflow result document is not canonical JSON") from exc
     if result_ref != f"result:sha256:{digest}":
         raise ResultIntegrityError("powerflow result document content does not match result reference")
-    if document.get("result_type") != "analysis.powerflow.ac":
+    if not (
+        document.get("result_type") == "analysis.powerflow.ac"
+        or (
+            document.get("result_type") == "analysis.operation"
+            and document.get("operation") == "powerflow.ac"
+        )
+    ):
         raise ResultIntegrityError("powerflow result document has an unsupported result type")
     if not isinstance(document.get("context_ref"), str) or not isinstance(document.get("revision_ref"), str):
         raise ResultIntegrityError("powerflow result document is missing context references")

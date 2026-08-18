@@ -25,7 +25,7 @@ KIND_LAYOUT: dict[str, tuple[str, str]] = {
 }
 _RESULT_IDENTITY_PATTERN = re.compile(r"^result:sha256:([0-9a-f]{64})$")
 _EVIDENCE_IDENTITY_PATTERN = re.compile(r"^evidence:sha256:([0-9a-f]{64})$")
-_RESULT_PREFIXES = ("powerflow", "contingency", "contingency-scenario")
+_RESULT_PREFIXES = ("result", "powerflow", "contingency", "contingency-scenario")
 _EVIDENCE_LAYOUTS = (
     ("network-facts", "network-fact"),
     ("analysis", "analysis-evidence"),

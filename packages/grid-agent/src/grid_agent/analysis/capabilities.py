@@ -6,6 +6,7 @@ from dataclasses import dataclass
 KNOWN_CONTEXT_PROJECTORS = frozenset(
     {
         "artifact-observation-v1",
+        "analysis-result-v1",
         "capability-catalog-v1",
         "contingency-n1-v1",
         "model-catalog-v1",

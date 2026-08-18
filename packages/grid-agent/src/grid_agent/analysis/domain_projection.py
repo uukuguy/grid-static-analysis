@@ -34,9 +34,31 @@ def project_domain_result(
             result_paths,
             status="converged" if result.get("converged") else "failed",
         )
+    if spec.projector == "analysis-result-v1":
+        return _generic_analysis(spec, result, turn_id, result_paths)
     if spec.projector == "contingency-n1-v1":
         return _contingency(spec, result, arguments, turn_id, result_paths)
     return DomainStateDelta(projector=spec.projector)
+
+
+def _generic_analysis(
+    spec: CapabilityContextSpec,
+    result: Mapping[str, Any],
+    turn_id: str,
+    result_paths: Mapping[str, str],
+) -> DomainStateDelta:
+    projected = dict(result)
+    projected["status"] = str(result.get("status", "unknown"))
+    datasets = result.get("datasets")
+    if isinstance(datasets, list):
+        projected["dataset_count"] = len(datasets)
+    return _calculation(
+        spec,
+        projected,
+        turn_id,
+        result_paths,
+        status=str(result.get("status", "unknown")),
+    )
 
 
 def _model_context(
@@ -116,7 +138,7 @@ def _calculation(
 ) -> DomainStateDelta:
     result_ref = _required_string(result, "result_ref")
     summary = {}
-    for field in ("total_active_loss", "constraint_evaluation", "status"):
+    for field in ("total_active_loss", "constraint_evaluation", "status", "operation", "dataset_count"):
         if field in result:
             summary[field] = result[field]
     calculation = CalculationState(

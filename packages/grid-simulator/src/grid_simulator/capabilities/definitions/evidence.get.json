@@ -38,7 +38,8 @@
         ],
         "properties": {
           "evidence_type": {"type": "string", "enum": ["network_fact", "analysis_result", "contingency_scenario", "powerflow_non_convergence"]},
-          "capability_id": {"type": "string", "enum": ["topology.branch.endpoints.get", "model.constraints.describe", "analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run"]},
+          "capability_id": {"type": "string", "enum": ["topology.branch.endpoints.get", "model.constraints.describe", "analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run", "analysis.run"]},
+          "operation": {"type": "string"},
           "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
           "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},
           "subject_ref": {"type": ["string", "null"]},
@@ -54,6 +55,7 @@
               "converged": {"type": "boolean"},
               "total_active_loss": {"type": "object", "additionalProperties": false, "required": ["value", "unit"], "properties": {"value": {"type": "number"}, "unit": {"type": "string", "enum": ["MW"]}}},
               "branch_result_count": {"type": "integer", "minimum": 0},
+              "datasets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["dataset", "row_count"], "properties": {"dataset": {"type": "string", "pattern": "^result\\.res_[a-z0-9_]+$"}, "row_count": {"type": "integer", "minimum": 0}}}},
               "status": {"type": "string", "enum": ["succeeded", "partial", "failed", "non_converged"]},
               "max_loading_percent": {"type": "number"},
               "min_vm_pu": {"type": "number"},

@@ -313,7 +313,7 @@ def _tool_start(trace: list[dict[str, Any]], tool_name: str) -> dict[str, Any]:
     raise AssertionError(f"missing traced tool start: {tool_name}")
 
 
-_SCRIPTED_PI = f"""#!/usr/bin/env python3
+_SCRIPTED_PI = """#!/usr/bin/env python3
 import hashlib
 import json
 import os
@@ -336,7 +336,7 @@ def sort_json(value):
     if isinstance(value, list):
         return [sort_json(item) for item in value]
     if isinstance(value, dict):
-        return {{key: sort_json(value[key]) for key in sorted(value)}}
+        return {key: sort_json(value[key]) for key in sorted(value)}
     return value
 
 
@@ -356,7 +356,7 @@ def write_json_atomic(path, value):
         ensure_ascii=False,
         separators=(",", ":"),
     ) + "\\n"
-    temporary = path.with_name(f".{{path.name}}.{{os.getpid()}}.tmp")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(encoded, encoding="utf-8")
     temporary.replace(path)
 
@@ -383,49 +383,49 @@ def prompt_text(prompt):
 
 def semantic_tools():
     tools = [
-        {{
+        {
             "name": tool["name"],
             "description": tool["description"],
             "parameters": tool["input_schema"],
-        }}
+        }
         for tool in CATALOG["tools"]
     ]
     tools.append(
-        {{
+        {
             "name": "grid_guide_open",
             "description": "Open a packaged grid analysis guide.",
-            "parameters": {{
+            "parameters": {
                 "type": "object",
                 "additionalProperties": False,
-                "properties": {{"resource_id": {{"type": "string", "minLength": 1}}}},
+                "properties": {"resource_id": {"type": "string", "minLength": 1}},
                 "required": ["resource_id"],
-            }},
-        }}
+            },
+        }
     )
     tools.append(
-        {{
+        {
             "name": "grid_submit_answer",
             "description": "Submit the final user-facing answer.",
-            "parameters": {{
+            "parameters": {
                 "type": "object",
                 "additionalProperties": False,
-                "properties": {{
-                    "answer_output": {{"type": "string", "minLength": 1}},
-                    "result_refs": {{"type": "array", "items": {{"type": "string"}}}},
-                    "claim_evidence_refs": {{
+                "properties": {
+                    "answer_output": {"type": "string", "minLength": 1},
+                    "result_refs": {"type": "array", "items": {"type": "string"}},
+                    "claim_evidence_refs": {
                         "type": "array",
-                        "items": {{"type": "string"}},
-                    }},
-                }},
+                        "items": {"type": "string"},
+                    },
+                },
                 "required": ["answer_output"],
-            }},
-        }}
+            },
+        }
     )
     return tools
 
 
 def runtime_identity():
-    return {{
+    return {
         "pi_coding_agent_version": os.environ.get(
             "GRID_AGENT_PI_CODING_AGENT_VERSION", "scripted-test"
         ),
@@ -434,14 +434,14 @@ def runtime_identity():
         "pi_patch_set_sha256": os.environ.get(
             "GRID_AGENT_PI_PATCH_SET_SHA256", "2" * 64
         ),
-    }}
+    }
 
 
 def wait_for_request_ack(request_id, expected_digest):
     ack_dir = os.environ.get("GRID_AGENT_TRAJECTORY_ACKS")
     if not ack_dir:
         return
-    path = Path(ack_dir) / f"{{request_id}}.committed.json"
+    path = Path(ack_dir) / f"{request_id}.committed.json"
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if path.exists():
@@ -464,31 +464,31 @@ def capture_provider_request(prompt):
     request_index += 1
     turn = load_json(os.environ["GRID_AGENT_ACTIVE_TURN"])
     capture_state = load_json(os.environ["GRID_AGENT_TRAJECTORY_CAPTURE_STATE"])
-    request_id = f"{{turn['turn_id']}}-r{{request_index:03d}}"
+    request_id = f"{turn['turn_id']}-r{request_index:03d}"
     request_path = Path(requests_path) / request_id / "input.json"
     request_path.parent.mkdir()
-    semantic_request = {{
-        "model": {{
+    semantic_request = {
+        "model": {
             "provider": argv_value("--provider", "scripted"),
             "api": "openai-responses",
             "id": argv_value("--model", "scripted-model"),
-        }},
-        "context": {{
+        },
+        "context": {
             "system_prompt": system_prompt(),
             "messages": [
-                {{
+                {
                     "role": "user",
-                    "content": [{{"type": "text", "text": prompt_text(prompt)}}],
-                }}
+                    "content": [{"type": "text", "text": prompt_text(prompt)}],
+                }
             ],
             "tools": semantic_tools(),
-        }},
-        "options": {{"transport": "sse", "temperature": 0}},
-    }}
+        },
+        "options": {"transport": "sse", "temperature": 0},
+    }
     semantic_digest = digest(semantic_request)
     write_json_atomic(
         request_path,
-        {{
+        {
             "schema_version": "grid-model-request-input/2.0",
             "request_id": request_id,
             "request_index": request_index,
@@ -500,7 +500,7 @@ def capture_provider_request(prompt):
             "runtime": runtime_identity(),
             "semantic_request": semantic_request,
             "semantic_request_sha256": semantic_digest,
-        }},
+        },
     )
     wait_for_request_ack(request_id, semantic_digest)
 
@@ -509,7 +509,7 @@ def tool_name_for(capability):
     for tool in CATALOG["tools"]:
         if tool["capability"] == capability:
             return tool["name"]
-    raise RuntimeError(f"capability not in tool catalog: {{capability}}")
+    raise RuntimeError(f"capability not in tool catalog: {capability}")
 
 
 def evidence_refs_for(result):
@@ -522,14 +522,14 @@ def evidence_refs_for(result):
 
 def grid(capability, args, call_id):
     tool_name = tool_name_for(capability)
-    emit({{"type": "tool_execution_start", "toolCallId": call_id, "toolName": tool_name, "args": args}})
-    request = {{
+    emit({"type": "tool_execution_start", "toolCallId": call_id, "toolName": tool_name, "args": args})
+    request = {
         "protocol": "grid-capability",
         "protocol_version": "1.0",
         "request_id": call_id,
         "capability": capability,
         "arguments": args,
-    }}
+    }
     completed = subprocess.run(
         ["gridctl", "request", "--workspace", os.environ["GRID_AGENT_WORKSPACE"]],
         input=json.dumps(request, ensure_ascii=False) + "\\n",
@@ -538,71 +538,71 @@ def grid(capability, args, call_id):
         check=True,
     )
     response = json.loads(completed.stdout)
-    result = response.get("result") if isinstance(response.get("result"), dict) else {{}}
-    details = {{
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    details = {
         "event": "tool_result",
         "capability": capability,
         "ok": response.get("ok") is True,
         "result": result,
         "evidence_refs": evidence_refs_for(result),
-    }}
+    }
     if response.get("ok") is not True:
-        details["error"] = response.get("error", {{"message": "gridctl request failed"}})
-    emit({{
+        details["error"] = response.get("error", {"message": "gridctl request failed"})
+    emit({
         "type": "tool_execution_end",
         "toolCallId": call_id,
         "toolName": tool_name,
         "isError": response.get("ok") is not True,
-        "result": {{"details": details}},
-    }})
+        "result": {"details": details},
+    })
     if response.get("ok") is not True:
-        raise RuntimeError(f"{{capability}} failed: {{response.get('error')}}")
+        raise RuntimeError(f"{capability} failed: {response.get('error')}")
     return result
 
 
 def submit_answer(answer_output, result_refs, claim_evidence_refs, call_id):
     active_turn = load_json(os.environ["GRID_AGENT_ACTIVE_TURN"])
-    draft = {{
+    draft = {
         "turn_id": active_turn["turn_id"],
         "turn_nonce": active_turn["turn_nonce"],
         "answer_output": answer_output,
         "result_refs": result_refs,
         "claim_evidence_refs": claim_evidence_refs,
-    }}
-    emit({{
+    }
+    emit({
         "type": "tool_execution_start",
         "toolCallId": call_id,
         "toolName": "grid_submit_answer",
-        "args": {{"answer_output": answer_output, "result_refs": result_refs, "claim_evidence_refs": claim_evidence_refs}},
-    }})
+        "args": {"answer_output": answer_output, "result_refs": result_refs, "claim_evidence_refs": claim_evidence_refs},
+    })
     Path(os.environ["GRID_AGENT_ANSWER_DRAFT"]).write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
-    emit({{
+    emit({
         "type": "tool_execution_end",
         "toolCallId": call_id,
         "toolName": "grid_submit_answer",
         "isError": False,
-        "result": {{"answer_output": answer_output}},
-    }})
+        "result": {"answer_output": answer_output},
+    })
 
 
 def latest_reusable_calculation(kind):
     view = load_json(os.environ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"])
     matches = [item for item in view["reusable_calculations"] if item["kind"] == kind]
     if not matches:
-        raise RuntimeError(f"context view has no reusable calculation for {{kind}}")
+        raise RuntimeError(f"context view has no reusable calculation for {kind}")
     return matches[-1]
 
 
 def answer_first_turn():
-    opened = grid("context.open", {{"model_id": "ieee39"}}, "call-001-open")
+    opened = grid("context.open", {"model_id": "ieee39"}, "call-001-open")
     endpoints = grid(
         "topology.branch.endpoints.get",
-        {{"context_ref": opened["context_ref"], "kind": "line", "namespace": "pandapower_index", "identifier": "11"}},
+        {"context_ref": opened["context_ref"], "kind": "line", "namespace": "pandapower_index", "identifier": "11"},
         "call-002-endpoints",
     )
     STATE["context_ref"] = opened["context_ref"]
     submit_answer(
-        f"第11号线路连接母线 {{endpoints['from_bus']['name']}} 与 {{endpoints['to_bus']['name']}}。",
+        f"第11号线路连接母线 {endpoints['from_bus']['name']} 与 {endpoints['to_bus']['name']}。",
         [],
         evidence_refs_for(endpoints),
         "call-003-submit",
@@ -616,14 +616,14 @@ def answer_second_turn():
         raise RuntimeError("continuous context did not expose the active IEEE-39 model")
     constraints = grid(
         "model.constraints.describe",
-        {{"context_ref": active_model["context_ref"]}},
+        {"context_ref": active_model["context_ref"]},
         "call-004-constraints",
     )
     voltage = next(item for item in constraints["constraints"] if item["quantity"] == "bus.vm_pu")
     if voltage["lower"] != 0.94 or voltage["upper"] != 1.06 or voltage["source"]["kind"] != "model":
         raise RuntimeError("voltage constraints were not sourced from the active model")
     submit_answer(
-        f"该模型的母线电压上下界为 {{voltage['lower']}}–{{voltage['upper']}} {{voltage['unit']}}，来源为模型数据。",
+        f"该模型的母线电压上下界为 {voltage['lower']}–{voltage['upper']} {voltage['unit']}，来源为模型数据。",
         [],
         evidence_refs_for(constraints),
         "call-005-submit",
@@ -635,13 +635,13 @@ def answer_third_turn():
     active_model = view["active_model"]
     powerflow = grid(
         "analysis.powerflow.ac.run",
-        {{"context_ref": active_model["context_ref"]}},
+        {"context_ref": active_model["context_ref"]},
         "call-006-powerflow",
     )
     STATE["powerflow_ref"] = powerflow["result_ref"]
     loss = powerflow["total_active_loss"]
     submit_answer(
-        f"交流潮流已收敛，有功损耗为 {{loss['value']}} {{loss['unit']}}。",
+        f"交流潮流已收敛，有功损耗为 {loss['value']} {loss['unit']}。",
         [powerflow["result_ref"]],
         evidence_refs_for(powerflow),
         "call-007-submit",
@@ -655,7 +655,7 @@ def answer_fourth_turn():
         raise RuntimeError("context view did not preserve exact powerflow result_ref")
     ranking = grid(
         "result.branches.rank",
-        {{"result_ref": powerflow_ref, "metric": "loading_percent", "direction": "descending", "limit": 5, "element_kind": "line"}},
+        {"result_ref": powerflow_ref, "metric": "loading_percent", "direction": "descending", "limit": 5, "element_kind": "line"},
         "call-008-ranking",
     )
     STATE["ranking"] = ranking
@@ -675,12 +675,12 @@ def answer_fifth_turn():
     top_branch = ranking["branches"][0]["branch_ref"]
     n1 = grid(
         "analysis.contingency.n_minus_one.run",
-        {{"context_ref": ranking["context_ref"], "branch_refs": [top_branch]}},
+        {"context_ref": ranking["context_ref"], "branch_refs": [top_branch]},
         "call-010-n1",
     )
     scenario = n1["scenarios"][0]
     submit_answer(
-        f"首位支路停运场景状态 {{scenario['status']}}，最大负载率 {{scenario.get('max_loading_percent')}}%，约束来源 {{scenario['constraint_evaluation']['source']}}。",
+        f"首位支路停运场景状态 {scenario['status']}，最大负载率 {scenario.get('max_loading_percent')}%，约束来源 {scenario['constraint_evaluation']['source']}。",
         [n1["result_ref"]],
         evidence_refs_for(n1),
         "call-011-submit",
@@ -691,7 +691,7 @@ marker = Path(os.environ["GRID_AGENT_WORKSPACE"]) / "pi" / "process-starts.txt"
 previous_starts = marker.read_text(encoding="utf-8").strip() if marker.exists() else "0"
 marker.write_text(str(int(previous_starts or "0") + 1) + "\\n", encoding="utf-8")
 CATALOG = load_json(os.environ["GRID_AGENT_TOOL_CATALOG"])
-STATE = {{}}
+STATE = {}
 TURN_HANDLERS = [answer_first_turn, answer_second_turn, answer_third_turn, answer_fourth_turn, answer_fifth_turn]
 turn_index = 0
 request_index = 0
@@ -701,19 +701,19 @@ for raw in sys.stdin:
         continue
     prompt = json.loads(raw)
     capture_provider_request(prompt)
-    emit({{"type": "response", "command": "prompt", "success": True}})
+    emit({"type": "response", "command": "prompt", "success": True})
     if turn_index >= len(TURN_HANDLERS):
         raise RuntimeError("received more prompts than scripted turns")
     TURN_HANDLERS[turn_index]()
     turn_index += 1
-    emit({{
+    emit({
         "type": "message_end",
-        "message": {{
+        "message": {
             "role": "assistant",
-            "content": [{{"type": "text", "text": "scripted answer submitted"}}],
-            "usage": {{"input": 1, "output": 1}},
+            "content": [{"type": "text", "text": "scripted answer submitted"}],
+            "usage": {"input": 1, "output": 1},
             "stopReason": "stop",
-        }},
-    }})
-    emit({{"type": "agent_end", "messages": []}})
+        },
+    })
+    emit({"type": "agent_end", "messages": []})
 """

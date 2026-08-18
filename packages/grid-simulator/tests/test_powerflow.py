@@ -14,7 +14,7 @@ AC_LOSS_ABS_TOL_MW = 1e-9
 
 
 def _result_document_path(result_ref: str, root: Path) -> Path:
-    return root / "evidence" / "results" / f"powerflow-{result_ref.removeprefix('result:sha256:')}.json"
+    return root / "evidence" / "results" / f"result-{result_ref.removeprefix('result:sha256:')}.json"
 
 
 def test_ac_powerflow_records_effective_solver_and_evidence(grid, context_ref: str) -> None:

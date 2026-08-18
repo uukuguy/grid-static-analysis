@@ -137,7 +137,7 @@ class ContentReferenceVerifier:
         for result_ref in _tool_result_refs(result):
             artifact = self.verify_result(result_ref)
             results[result_ref] = artifact
-            self._admit_result_linked_artifacts(artifact, contexts, evidence)
+            self._admit_result_linked_artifacts(artifact, results, contexts, evidence)
 
         for evidence_ref in evidence_refs + tuple(_tool_evidence_refs(result)):
             artifact = self.verify_evidence(evidence_ref)
@@ -175,6 +175,7 @@ class ContentReferenceVerifier:
     def _admit_result_linked_artifacts(
         self,
         artifact: VerifiedArtifact,
+        results: dict[str, VerifiedArtifact],
         contexts: dict[str, VerifiedArtifact],
         evidence: dict[str, VerifiedArtifact],
     ) -> None:
@@ -186,6 +187,7 @@ class ContentReferenceVerifier:
         for scenario_ref in _scenario_result_refs(artifact.document):
             scenario = self.verify_result(scenario_ref)
             self._verify_matching_context(scenario_ref, scenario.document, artifact.document)
+            results[scenario_ref] = scenario
 
     def _admit_evidence_linked_artifacts(
         self,
@@ -330,6 +332,7 @@ def _allowed_evidence_document_path(evidence_root: Path, digest: str) -> Path | 
 
 def _allowed_result_document_path(evidence_root: Path, digest: str) -> Path | None:
     candidates = (
+        evidence_root / "results" / f"result-{digest}.json",
         evidence_root / "results" / f"powerflow-{digest}.json",
         evidence_root / "results" / f"contingency-{digest}.json",
         evidence_root / "results" / f"contingency-scenario-{digest}.json",
@@ -371,10 +374,12 @@ def _verify_evidence_document(reference: str, digest: str, path: Path, document:
             raise SimulatorIntegrityError(f"claimed evidence document type is not allowed: {reference}")
         return
     allowed_analysis = {
+        ("analysis_result", "analysis.run"),
         ("analysis_result", "analysis.powerflow.ac.run"),
         ("contingency_scenario", "analysis.contingency.n_minus_one.run"),
         ("powerflow_non_convergence", "analysis.powerflow.ac.run"),
         ("powerflow_non_convergence", "analysis.contingency.n_minus_one.run"),
+        ("powerflow_non_convergence", "analysis.run"),
     }
     if (str(evidence_type), str(capability_id)) not in allowed_analysis:
         raise SimulatorIntegrityError(f"claimed evidence document type is not allowed: {reference}")

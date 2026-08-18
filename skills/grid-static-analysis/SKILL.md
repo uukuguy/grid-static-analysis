@@ -26,10 +26,10 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 - Model, creator, and runtime catalogs: [capability-map](references/capability-map.md), [model-and-context](references/model-and-context.md).
 - Network elements and datasets: call `model.dataset.list`, then use [network-elements](references/network-elements.md) for describe/query and element resolution.
 - Topology endpoints and components: [topology-analysis](references/topology-analysis.md).
-- AC power flow and solver profile: [ac-powerflow](references/ac-powerflow.md).
+- Registered analysis discovery and execution: call `analysis.operation.list`, then `analysis.operation.describe` and `analysis.run`; see [ac-powerflow](references/ac-powerflow.md) for AC semantics.
 - N-1 static contingency: [contingency-analysis](references/contingency-analysis.md).
 - Model-owned voltage and loading limits: `model.constraints.describe` with the active `context_ref`; identify model, user, or named-standard sources explicitly.
-- Result ranking and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
+- Complete result-table access, aggregation, comparison, branch ranking, and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
 - Runtime status and intentional non-static exclusions: [future-capabilities](references/future-capabilities.md).
 
 ## Context and Evidence Discipline
@@ -53,8 +53,8 @@ Plan from stable references:
 1. Discover runtime and model support with `environment.describe` or `model.list`.
 2. Open the model once with `context.open`.
 3. Discover tables with `model.dataset.list`, then resolve any described element or field with `model.element.get`, `model.dataset.describe`, or `model.dataset.query`.
-4. Run `analysis.powerflow.ac.run` for numerical AC steady-state values.
-5. Rank existing branch results with `result.branches.rank`; do not rerun power flow for ranking.
+4. Discover an operation with `analysis.operation.list` / `analysis.operation.describe`, then call `analysis.run`; the dedicated `analysis.powerflow.ac.run` remains available for the AC-specific summary contract.
+5. Discover every persisted `res_*` table with `result.dataset.list`; describe before query, aggregate, or compare. Rank existing AC branch results with `result.branches.rank`; do not rerun power flow for result access.
 6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context; interpret violations only against returned model constraints.
 7. Use `evidence.get` to inspect a current-run topology or analysis document when its persisted facts are needed. For AC, ranking, and N-1, cite the returned primary `result_ref` and relevant `evidence_refs`; scenario results linked by claimed N-1 evidence are verified automatically.
 
@@ -66,6 +66,6 @@ If evidence cannot be read, preserve the original reference and report the artif
 
 ## Capability Status
 
-Published executable capabilities are returned by `environment.describe`. The model/data surface includes `model.creator.list`, `model.creator.describe`, `model.create`, `model.revision.derive`, `model.dataset.list`, `model.dataset.describe`, `model.dataset.query`, universal `model.element.get`, and the versioned multi-network catalog.
+Published executable capabilities are returned by `environment.describe`. The model/data surface includes `model.creator.list`, `model.creator.describe`, `model.create`, `model.revision.derive`, `model.dataset.list`, `model.dataset.describe`, `model.dataset.query`, universal `model.element.get`, and the versioned multi-network catalog. The analysis/result substrate includes `analysis.operation.list`, `analysis.operation.describe`, `analysis.run`, `result.dataset.list`, `result.dataset.describe`, `result.dataset.query`, `result.aggregate`, and `result.compare`.
 
 The complete pandapower static-analysis surface is current implementation scope. Until a matrix row is published in `environment.describe`, report that exact runtime gap without substituting another calculation. Time-series/control, plotting, arbitrary I/O/Python and unpinned external solver backends are intentional exclusions.

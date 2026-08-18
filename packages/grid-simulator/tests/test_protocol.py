@@ -87,7 +87,15 @@ def test_registry_is_discoverable(tmp_path: Path) -> None:
         "topology.components.get",
         "evidence.get",
         "analysis.powerflow.ac.run",
+        "analysis.operation.describe",
+        "analysis.operation.list",
+        "analysis.run",
+        "result.aggregate",
         "result.branches.rank",
+        "result.compare",
+        "result.dataset.describe",
+        "result.dataset.list",
+        "result.dataset.query",
         "analysis.contingency.n_minus_one.run",
     }
     assert "capabilities" not in response.result

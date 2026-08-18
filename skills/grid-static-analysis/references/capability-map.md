@@ -31,7 +31,15 @@ Source aliases such as `pandapower:line:11` are resolvable identifiers for user-
 - `model.constraints.describe`: returns voltage and loading constraints stored in the active model with their source fields.
 - `topology.branch.endpoints.get`: returns branch endpoint buses and topology evidence.
 - `topology.components.get`: returns connected component summaries.
+- `analysis.operation.list`: lists published static analysis operations.
+- `analysis.operation.describe`: returns the closed options schema for one operation.
+- `analysis.run`: executes a registered operation and persists every generated `res_*` table.
 - `analysis.powerflow.ac.run`: runs AC steady-state power flow.
+- `result.dataset.list`: lists all result tables stored under a `result_ref`.
+- `result.dataset.describe`: reports result fields, types, units, nullability, and provenance.
+- `result.dataset.query`: performs bounded select/filter/sort/page access without rerunning analysis.
+- `result.aggregate`: computes bounded count/sum/min/max/average summaries.
+- `result.compare`: aligns two result datasets by explicit keys and returns base/candidate/delta values.
 - `result.branches.rank`: ranks branch rows from a prior power-flow result.
 - `analysis.contingency.n_minus_one.run`: runs isolated single-branch outage scenarios.
 - `evidence.get`: retrieves persisted evidence documents by `evidence_ref`.
@@ -56,7 +64,9 @@ The catalog reports capability IDs and tool names. Model context outputs include
 ## Multi-step Examples
 
 - Endpoint answer: `context.open` -> `topology.branch.endpoints.get` -> cite `evidence_ref`.
+- Generic result lookup: `context.open` -> `analysis.operation.describe` -> `analysis.run` -> `result.dataset.list` -> describe/query.
 - Highest loaded lines: `context.open` -> `analysis.powerflow.ac.run` -> `result.branches.rank`.
+- Scenario delta: run the same operation on parent and derived contexts, then call `result.compare` with explicit dataset, keys, and fields.
 - N-1 of critical branches: `context.open` -> resolve or rank branch refs -> `analysis.contingency.n_minus_one.run`.
 
 ## Failures and Legal Recovery

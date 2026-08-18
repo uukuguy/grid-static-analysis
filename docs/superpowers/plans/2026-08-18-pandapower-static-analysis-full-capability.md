@@ -99,11 +99,11 @@
 - Produces: `AnalysisRegistry.execute(operation, net, options) -> AnalysisOutcome`.
 - Produces: `ResultStore.persist/load/list/describe/query/aggregate/compare`.
 
-- [ ] Write failing tests proving operation-specific schemas reject unknown options and callable/path injection.
-- [ ] Write failing tests proving every generated `res_*` table is persisted and queryable, including `res_ext_grid.p_mw`.
-- [ ] Implement the operation registry and generic scalar/table normalizer.
-- [ ] Make result identity independent of producer turn and add idempotent consumption lineage.
-- [ ] Verify bounded pages never truncate persisted full results.
+- [x] Write failing tests proving operation-specific schemas reject unknown options and callable/path injection.
+- [x] Write failing tests proving every generated `res_*` table is persisted and queryable, including `res_ext_grid.p_mw`.
+- [x] Implement the operation registry and generic scalar/table normalizer.
+- [x] Make result identity independent of producer turn and add idempotent consumption lineage.
+- [x] Verify bounded pages never truncate persisted full results.
 
 ### Task 6: Publish native static-analysis families
 

@@ -1,0 +1,9 @@
+{
+  "id":"analysis.operation.describe","version":"1.0","package":"grid_simulator","tool_name":"grid_analysis_operation_describe","availability":"published","title":"Describe a static analysis operation",
+  "purpose":"Return the closed operation-specific options schema used by analysis.run.","applies_to":["analysis option planning","invalid option recovery","solver selection"],"not_for":["running analysis","raw callable inspection","unpublished operations"],
+  "terms":{"zh":["描述分析操作","操作参数模式","求解器选项"],"en":["describe analysis operation","operation option schema","solver options"]},
+  "input_schema":{"type":"object","additionalProperties":false,"required":["operation"],"properties":{"operation":{"type":"string","pattern":"^[a-z][a-z0-9_.]*$"}}},
+  "output_schema":{"type":"object","additionalProperties":false,"required":["operation","title","pandapower_operation","options_schema"],"properties":{"operation":{"type":"string"},"title":{"type":"string"},"pandapower_operation":{"type":"string"},"options_schema":{"type":"object","x-json-schema":true,"additionalProperties":{}}}},
+  "requires":["analysis.operation.list"],"consumes":["analysis.registry"],"produces":["analysis.operation.schema"],"common_next":["analysis.run"],"errors":["unknown_analysis_operation"],"recovery":{"unknown_analysis_operation":["call analysis.operation.list"]},
+  "context_effect":{"requires_state":[],"consumes_state":["analysis.catalog"],"produces_state":["analysis.operation_schema"],"invalidates_state":[],"result_kind":null,"projector":"capability-catalog-v1"},"state_effect":"none","evidence_required":false,"risk":"catalog","pandapower":{"version":"3.4.0","operation":"describe server-owned operation schema","limitations":["Schema is descriptive; execution validates it again"]}
+}

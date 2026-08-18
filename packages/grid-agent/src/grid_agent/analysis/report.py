@@ -15,7 +15,6 @@ from pydantic import ValidationError
 from grid_agent.analysis.models import (
     AnalysisContext,
     AnalysisContextEvent,
-    BaselineRecord,
     DiagnosticRecord,
     LimitationRecord,
     TurnRecord,

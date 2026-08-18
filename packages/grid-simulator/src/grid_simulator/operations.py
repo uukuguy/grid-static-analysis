@@ -25,6 +25,11 @@ from grid_simulator.analyses import (
     run_ac_powerflow,
     run_n_minus_one,
 )
+from grid_simulator.analysis_registry import (
+    AnalysisOptionsError,
+    AnalysisRegistry,
+    UnknownAnalysisOperationError,
+)
 from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.capabilities.families import CAPABILITY_FAMILIES
 from grid_simulator.capabilities.schema import CapabilityContract
@@ -66,11 +71,22 @@ from grid_simulator.revisions import (
     PatchSelectorError,
     RevisionStore,
 )
+from grid_simulator.results import (
+    ResultFieldError,
+    ResultQueryError,
+    ResultStore,
+    StoredResultIntegrityError,
+    UnknownResultDatasetError,
+    UnknownStoredResultError,
+)
 
 
 EXECUTABLE_CAPABILITIES = frozenset(
     {
         "environment.describe",
+        "analysis.operation.list",
+        "analysis.operation.describe",
+        "analysis.run",
         "model.list",
         "model.creator.list",
         "model.creator.describe",
@@ -88,6 +104,11 @@ EXECUTABLE_CAPABILITIES = frozenset(
         "evidence.get",
         "analysis.powerflow.ac.run",
         "result.branches.rank",
+        "result.dataset.list",
+        "result.dataset.describe",
+        "result.dataset.query",
+        "result.aggregate",
+        "result.compare",
         "analysis.contingency.n_minus_one.run",
     }
 )
@@ -122,6 +143,12 @@ def _dispatch(
 ) -> dict[str, Any]:
     if request.capability == "environment.describe":
         return _environment_describe(services.capability_registry)
+    if request.capability == "analysis.operation.list":
+        return _analysis_operation_list(services.engine)
+    if request.capability == "analysis.operation.describe":
+        return _analysis_operation_describe(request.arguments)
+    if request.capability == "analysis.run":
+        return _analysis_run(workspace, services.engine, request.arguments)
     if request.capability == "model.list":
         return _model_list(services.engine)
     if request.capability == "model.creator.list":
@@ -156,6 +183,16 @@ def _dispatch(
         return _analysis_powerflow_ac_run(workspace, services.engine, request.arguments)
     if request.capability == "result.branches.rank":
         return _result_branches_rank(workspace, request.arguments)
+    if request.capability == "result.dataset.list":
+        return _result_dataset_list(workspace, request.arguments)
+    if request.capability == "result.dataset.describe":
+        return _result_dataset_describe(workspace, request.arguments)
+    if request.capability == "result.dataset.query":
+        return _result_dataset_query(workspace, request.arguments)
+    if request.capability == "result.aggregate":
+        return _result_aggregate(workspace, request.arguments)
+    if request.capability == "result.compare":
+        return _result_compare(workspace, request.arguments)
     if request.capability == "analysis.contingency.n_minus_one.run":
         return _analysis_contingency_n_minus_one_run(workspace, services.engine, request.arguments)
     raise _unsupported_capability(request.capability)
@@ -180,6 +217,103 @@ def _environment_describe(registry: CapabilityRegistry) -> dict[str, Any]:
             if contract.id in EXECUTABLE_CAPABILITIES
         ],
         "capability_families": [family.model_dump(mode="json") for family in CAPABILITY_FAMILIES],
+    }
+
+
+def _analysis_operation_list(engine: Pandapower340Engine) -> dict[str, Any]:
+    return {
+        "pandapower_version": engine.version,
+        "operations": [
+            {
+                "id": operation.identifier,
+                "title": operation.title,
+                "pandapower_operation": operation.pandapower_operation,
+            }
+            for operation in AnalysisRegistry().list()
+        ],
+    }
+
+
+def _analysis_operation_describe(arguments: dict[str, Any]) -> dict[str, Any]:
+    operation = str(arguments["operation"])
+    try:
+        return AnalysisRegistry().describe(operation)
+    except UnknownAnalysisOperationError as exc:
+        raise _failure(
+            "unknown_analysis_operation",
+            f"Analysis operation {exc.operation!r} is not published",
+            phase="resolve",
+            allowed_recovery_actions=("list_analysis_operations",),
+            details={"operation": exc.operation, "allowed_operations": list(exc.allowed)},
+        ) from exc
+
+
+def _analysis_run(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    operation = str(arguments["operation"])
+    options = dict(arguments["options"])
+    context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    try:
+        outcome = AnalysisRegistry().execute(operation, engine, net, options)
+    except UnknownAnalysisOperationError as exc:
+        raise _failure(
+            "unknown_analysis_operation",
+            f"Analysis operation {exc.operation!r} is not published",
+            phase="resolve",
+            allowed_recovery_actions=("list_analysis_operations",),
+            details={"operation": exc.operation, "allowed_operations": list(exc.allowed)},
+        ) from exc
+    except AnalysisOptionsError as exc:
+        raise _failure(
+            "analysis_options_invalid",
+            str(exc),
+            phase="validate",
+            allowed_recovery_actions=("describe_analysis_operation",),
+            details={"operation": operation},
+        ) from exc
+    except LoadflowNotConverged as exc:
+        diagnostic = persist_non_convergence_diagnostics(
+            workspace=workspace,
+            engine=engine,
+            context=context,
+            capability_id="analysis.run",
+        )
+        raise _failure(
+            "analysis_non_converged",
+            f"Analysis operation {operation!r} did not converge",
+            phase="execute",
+            allowed_recovery_actions=RECOVERY_ACTIONS_NON_CONVERGENCE,
+            evidence_refs=(diagnostic.evidence_ref,),
+            artifact_refs=(diagnostic.artifact_ref,),
+        ) from exc
+    except Exception as exc:
+        raise _failure(
+            "analysis_failed",
+            f"Analysis operation {operation!r} failed inside pandapower",
+            phase="execute",
+            allowed_recovery_actions=("inspect_network_diagnostics", "report_failure"),
+        ) from exc
+    try:
+        persisted = ResultStore(workspace).persist(
+            context=context,
+            engine=engine,
+            net=net,
+            outcome=outcome,
+        )
+    except (OSError, StoredResultIntegrityError) as exc:
+        raise _failure("persist_failed", "Analysis result could not be persisted", phase="persist") from exc
+    return {
+        "result_ref": persisted.result_ref,
+        "context_ref": context.context_ref,
+        "revision_ref": context.revision_ref,
+        "operation": outcome.operation,
+        "status": outcome.status,
+        "datasets": [
+            {"dataset": name, "row_count": data["row_count"]}
+            for name, data in persisted.document["datasets"].items()
+        ],
+        "evidence_refs": [persisted.evidence_ref],
     }
 
 
@@ -635,6 +769,82 @@ def _result_branches_rank(workspace: SimulatorWorkspace, arguments: dict[str, An
             phase="resolve",
             allowed_recovery_actions=("run_powerflow",),
         ) from exc
+
+
+def _result_dataset_list(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return ResultStore(workspace).list_datasets(str(arguments["result_ref"]))
+    except Exception as exc:
+        _raise_result_store_failure(exc)
+
+
+def _result_dataset_describe(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return ResultStore(workspace).describe(str(arguments["result_ref"]), str(arguments["dataset"]))
+    except Exception as exc:
+        _raise_result_store_failure(exc)
+
+
+def _result_dataset_query(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return ResultStore(workspace).query(str(arguments["result_ref"]), arguments)
+    except Exception as exc:
+        _raise_result_store_failure(exc)
+
+
+def _result_aggregate(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return ResultStore(workspace).aggregate(str(arguments["result_ref"]), arguments)
+    except Exception as exc:
+        _raise_result_store_failure(exc)
+
+
+def _result_compare(workspace: SimulatorWorkspace, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return ResultStore(workspace).compare(arguments)
+    except Exception as exc:
+        _raise_result_store_failure(exc)
+
+
+def _raise_result_store_failure(exc: Exception) -> None:
+    if isinstance(exc, UnknownStoredResultError):
+        raise _failure(
+            "unknown_result",
+            str(exc),
+            phase="resolve",
+            allowed_recovery_actions=("run_analysis",),
+        ) from exc
+    if isinstance(exc, StoredResultIntegrityError):
+        raise _failure(
+            "result_integrity_failed",
+            str(exc),
+            phase="resolve",
+            allowed_recovery_actions=("rerun_analysis",),
+        ) from exc
+    if isinstance(exc, UnknownResultDatasetError):
+        raise _failure(
+            "unknown_result_dataset",
+            f"Result dataset {exc.dataset!r} is unavailable",
+            phase="resolve",
+            allowed_recovery_actions=("list_result_datasets",),
+            details={"dataset": exc.dataset, "allowed_datasets": exc.allowed},
+        ) from exc
+    if isinstance(exc, ResultFieldError):
+        raise _failure(
+            "result_field_unavailable",
+            "Result query references fields not present in the described dataset",
+            phase="validate",
+            allowed_recovery_actions=("describe_result_dataset",),
+            details={"fields": exc.fields, "allowed_fields": exc.allowed},
+        ) from exc
+    if isinstance(exc, ResultQueryError):
+        raise _failure(
+            "result_query_invalid",
+            str(exc),
+            phase="validate",
+            allowed_recovery_actions=("correct_result_query",),
+        ) from exc
+    raise exc
 
 
 def _analysis_contingency_n_minus_one_run(

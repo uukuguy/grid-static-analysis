@@ -25,7 +25,15 @@ _TOOL_NAME_TO_CAPABILITY: Mapping[str, str] = {
     "grid_context_open": "context.open",
     "grid_topology_branch_endpoints": "topology.branch.endpoints.get",
     "grid_analysis_powerflow_ac": "analysis.powerflow.ac.run",
+    "grid_analysis_operation_list": "analysis.operation.list",
+    "grid_analysis_operation_describe": "analysis.operation.describe",
+    "grid_analysis_run": "analysis.run",
     "grid_result_branches_rank": "result.branches.rank",
+    "grid_result_dataset_list": "result.dataset.list",
+    "grid_result_dataset_describe": "result.dataset.describe",
+    "grid_result_dataset_query": "result.dataset.query",
+    "grid_result_aggregate": "result.aggregate",
+    "grid_result_compare": "result.compare",
     "grid_analysis_contingency_n_minus_one": "analysis.contingency.n_minus_one.run",
 }
 
@@ -100,6 +108,11 @@ class AnalysisContextProjector:
             ranking_source_artifact = self._verified_ranking_source(start)
             result_artifacts: tuple[VerifiedArtifact, ...] = ()
             evidence_artifacts: tuple[VerifiedArtifact, ...] = ()
+        elif capability.startswith("result."):
+            self._verify_result_consumers(capability, start, result)
+            result_artifacts = ()
+            evidence_artifacts = ()
+            ranking_source_artifact = None
         else:
             references = self._verifier.admit_successful_tool_references(
                 capability,
@@ -335,12 +348,13 @@ class AnalysisContextProjector:
             if artifact.reference in self._store.snapshot.results:
                 continue
             document = artifact.document
+            registered_capability = _registered_result_capability(capability, document)
             evidence_refs = _dedupe([*_string_items(document.get("evidence_refs")), *event_evidence_refs])
             self._store.append(
                 ContextEventDraft(
                     event_type="result.registered",
                     turn_id=turn_id,
-                    capability=capability,
+                    capability=registered_capability,
                     payload={
                         "result_ref": artifact.reference,
                         "revision_ref": str(document["revision_ref"]),
@@ -431,6 +445,44 @@ class AnalysisContextProjector:
         if result_ref not in self._store.snapshot.results:
             raise SimulatorIntegrityError(f"result.branches.rank references unregistered result: {result_ref}")
         return self._verifier.verify_result(result_ref)
+
+    def _verify_result_consumers(
+        self,
+        capability: str,
+        start: Mapping[str, Any],
+        result: Mapping[str, Any],
+    ) -> None:
+        args = _start_args(start)
+        requested = [
+            value
+            for key in ("result_ref", "base_result_ref", "candidate_result_ref")
+            if isinstance((value := args.get(key)), str)
+        ]
+        if not requested:
+            raise SimulatorIntegrityError(f"{capability} requires a source result reference")
+        artifacts: dict[str, VerifiedArtifact] = {}
+        for result_ref in requested:
+            if result_ref not in self._store.snapshot.results:
+                raise SimulatorIntegrityError(f"{capability} references unregistered result: {result_ref}")
+            artifacts[result_ref] = self._verifier.verify_result(result_ref)
+        single_ref = args.get("result_ref")
+        if isinstance(single_ref, str):
+            returned_ref = result.get("result_ref")
+            if isinstance(returned_ref, str) and returned_ref != single_ref:
+                raise SimulatorIntegrityError(
+                    f"{capability} returned result_ref {returned_ref} for requested {single_ref}"
+                )
+            source = artifacts[single_ref].document
+            for field in ("context_ref", "revision_ref"):
+                returned = result.get(field)
+                if isinstance(returned, str) and returned != source.get(field):
+                    raise SimulatorIntegrityError(f"{capability} returned mismatched {field}")
+        for prefix in ("base", "candidate"):
+            result_ref = args.get(f"{prefix}_result_ref")
+            returned_context = result.get(f"{prefix}_context_ref")
+            if isinstance(result_ref, str) and isinstance(returned_context, str):
+                if artifacts[result_ref].document.get("context_ref") != returned_context:
+                    raise SimulatorIntegrityError(f"{capability} returned mismatched {prefix}_context_ref")
 
     def _assert_result_matches_started_inputs(
         self,
@@ -534,6 +586,17 @@ def _solver_summary(document: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(scenarios, list):
         summary["scenario_count"] = len(scenarios)
     return summary
+
+
+def _registered_result_capability(parent_capability: str, document: Mapping[str, Any]) -> str:
+    """Give linked child results their own semantic producer identity."""
+    if parent_capability != "analysis.contingency.n_minus_one.run":
+        return parent_capability
+    result_type = document.get("result_type")
+    operation = document.get("operation")
+    if result_type == "analysis.contingency.n_minus_one.scenario" or operation == "contingency.n_minus_one.scenario":
+        return "analysis.contingency.n_minus_one.scenario"
+    return parent_capability
 
 
 def _promoted_fact_payloads(
@@ -740,7 +803,7 @@ def _consumed_refs(capability: str, args: Mapping[str, Any]) -> list[str]:
     if capability == "context.open":
         return []
     refs: list[str] = []
-    for key in ("context_ref", "result_ref", "evidence_ref"):
+    for key in ("context_ref", "result_ref", "base_result_ref", "candidate_result_ref", "evidence_ref"):
         value = args.get(key)
         if isinstance(value, str):
             refs.append(value)
@@ -750,7 +813,7 @@ def _consumed_refs(capability: str, args: Mapping[str, Any]) -> list[str]:
 
 
 def _produced_refs(capability: str, result: Mapping[str, Any], event: Mapping[str, Any]) -> list[str]:
-    if capability == "result.branches.rank":
+    if capability.startswith("result."):
         return []
     refs: list[str] = []
     context_ref = result.get("context_ref")

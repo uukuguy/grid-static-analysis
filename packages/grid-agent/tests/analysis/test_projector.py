@@ -155,6 +155,82 @@ def test_projector_registers_powerflow_and_ranking_dependency(context_harness: C
     )
 
 
+def test_projector_treats_generic_result_views_as_consumers_not_producers(
+    context_harness: ContextHarness,
+) -> None:
+    opened = write_context(context_harness.workspace, model_id="ieee39")
+    body = {
+        "result_type": "analysis.operation",
+        "operation": "powerflow.ac",
+        "context_ref": opened.context_ref,
+        "revision_ref": opened.revision_ref,
+        "status": "succeeded",
+        "datasets": {"result.res_bus": {"source_table": "res_bus", "row_count": 39, "fields": [], "rows": []}},
+    }
+    result_ref = write_result_document(context_harness.workspace, "result", body)
+    evidence_ref = write_evidence_document(
+        context_harness.workspace,
+        "analysis",
+        "analysis-evidence",
+        {
+            "evidence_type": "analysis_result",
+            "capability_id": "analysis.run",
+            "context_ref": opened.context_ref,
+            "revision_ref": opened.revision_ref,
+            "result_ref": result_ref,
+            "facts": {"status": "succeeded"},
+        },
+    )
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("run", "grid_analysis_run", {"context_ref": opened.context_ref, "operation": "powerflow.ac", "options": {}}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "run",
+            "analysis.run",
+            {
+                "result_ref": result_ref,
+                "context_ref": opened.context_ref,
+                "revision_ref": opened.revision_ref,
+                "operation": "powerflow.ac",
+                "status": "succeeded",
+                "datasets": [{"dataset": "result.res_bus", "row_count": 39}],
+                "evidence_refs": [evidence_ref],
+            },
+            evidence_refs=[evidence_ref],
+        ),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_start("list", "grid_result_dataset_list", {"result_ref": result_ref}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "list",
+            "result.dataset.list",
+            {
+                "result_ref": result_ref,
+                "context_ref": opened.context_ref,
+                "revision_ref": opened.revision_ref,
+                "operation": "powerflow.ac",
+                "datasets": [],
+            },
+        ),
+        turn_id="analysis-test-t001",
+    )
+
+    state = context_harness.store.snapshot
+    views = [item for item in state.observations.values() if item.capability == "result.dataset.list"]
+    assert len(views) == 1
+    assert views[0].consumed_refs == [result_ref]
+    assert views[0].produced_refs == []
+    assert list(state.results) == [result_ref]
+
+
 def test_projector_stops_on_integrity_failure_but_records_normal_tool_error(
     context_harness: ContextHarness,
 ) -> None:
@@ -630,6 +706,10 @@ def test_projector_promotes_n_minus_one_aggregate_and_scenario_facts(
     )
 
     facts = [fact_statement(fact) for fact in context_harness.store.snapshot.verified_facts.values()]
+    registered = context_harness.store.snapshot.results
+    assert registered[n1_result["result_ref"]].capability == "analysis.contingency.n_minus_one.run"
+    for scenario in n1_result["scenarios"]:
+        assert registered[scenario["scenario_result_ref"]].capability == "analysis.contingency.n_minus_one.scenario"
     assert {"n1.status", "n1.scenario_count", "n1.max_loading_percent", "n1.violation_count"} <= {
         fact["predicate"] for fact in facts
     }

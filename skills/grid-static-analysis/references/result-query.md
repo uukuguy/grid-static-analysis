@@ -2,24 +2,33 @@
 
 ## Use This For
 
-Use this guide for ranking branch rows from a persisted AC result with `result.branches.rank` and for deciding which returned references ground the answer.
+Use this guide for complete persisted result access with `result.dataset.list`, `result.dataset.describe`, `result.dataset.query`, `result.aggregate`, `result.compare`, for AC branch ranking with `result.branches.rank`, and for deciding which returned references ground the answer.
 
 ## Do Not Use This For
 
-Do not use ranking to run a new power flow, fabricate missing result rows, query raw result tables, or rank metrics not in the contract.
+Do not use result tools to run a new analysis, fabricate missing rows, read raw files, execute arbitrary expressions, or guess fields not returned by `describe`.
 
 ## Concepts and Terminology
 
-`result.branches.rank` consumes a prior current-run `result_ref` from `analysis.powerflow.ac.run`. It must not rerun power flow. Ranking is a read-only result query over persisted analysis artifacts.
+`analysis.run` captures every generated pandapower `res_*` table under one content-addressed `result_ref`. Result tools consume that reference and never rerun the analysis. Dataset names preserve the source table, for example `result.res_bus` and `result.res_ext_grid`.
+
+`result.branches.rank` consumes a prior current-run `result_ref` from the dedicated `analysis.powerflow.ac.run` contract. It remains a compatibility convenience for AC branch metrics.
 
 `evidence.get` retrieves a current-run topology or analysis evidence document. A topology `network_fact` document supports a structural answer (for example, a line's two terminal buses); an analysis document supports a computed conclusion. It is useful for inspecting persisted facts and provenance, but it is not a substitute for result queries or a way to access arbitrary files.
 
 ## Available Capabilities
 
 - `result.branches.rank`: rank branches by `loading_percent`, `p_from_mw`, `p_to_mw`, or `pl_mw`.
+- `result.dataset.list`: list every captured `res_*` table and row count.
+- `result.dataset.describe`: inspect fields and units before constructing a query.
+- `result.dataset.query`: bounded select/filter/sort/page access.
+- `result.aggregate`: count, sum, min, max, or average, optionally grouped by up to three fields.
+- `result.compare`: compare identical datasets across two results using explicit key and value fields.
 - `evidence.get`: retrieve current-run topology or analysis evidence by its returned reference; do not use it to retrieve ranking rows.
 
 ## Parameters and Defaults
+
+All generic result operations require persisted `result_ref` values and a dataset returned by `result.dataset.list`. Query fields, aggregate fields, comparison keys, and comparison values must exist in `result.dataset.describe`. Query and comparison limits are at most 100.
 
 Required for ranking: `result_ref`, `metric`, `direction`, and `limit`. `limit` is 1 to 100. Optional `element_kind` filters to `line`, `trafo`, or `trafo3w`.
 
@@ -33,10 +42,14 @@ Outputs include `result_ref`, `context_ref`, `revision_ref`, `metric`, `metric_u
 
 - "Top 5 loaded lines" after power flow -> `result.branches.rank` with `metric: "loading_percent"`, `direction: "descending"`, `limit: 5`, `element_kind: "line"`.
 - "Largest branch active losses" -> rank by `pl_mw` descending.
+- "External-grid active power" -> list/describe/query `result.res_ext_grid`, selecting `index`, `asset_ref`, and `p_mw`.
+- "Total served load" -> aggregate `p_mw` with `sum` over `result.res_load`.
 
 ## Multi-step Examples
 
 - Full workflow: `context.open` -> `analysis.powerflow.ac.run` -> `result.branches.rank` -> answer with ranked rows and `result_ref`.
+- Generic workflow: `context.open` -> `analysis.operation.describe` -> `analysis.run` -> `result.dataset.list` -> `result.dataset.describe` -> query or aggregate.
+- Revision comparison: run the same operation on parent and derived contexts -> `result.compare` with `key_fields: ["index"]` and explicit fields.
 - Critical-contingency workflow: rank top loaded branches, then pass their `branch_ref` values to `analysis.contingency.n_minus_one.run`.
 
 ## Failures and Legal Recovery
