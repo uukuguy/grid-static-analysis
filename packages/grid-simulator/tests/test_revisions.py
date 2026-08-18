@@ -100,6 +100,10 @@ def test_creator_registry_is_discoverable_and_describes_pinned_signatures(tmp_pa
     assert parameters["bus"]["required"] is True
     assert parameters["bus"]["accepts_element_ref"] is True
     assert parameters["vm_pu"]["required"] is False
+    assert described.result["local_reference"] == {
+        "syntax": {"element_ref": "<earlier_local_id>"},
+        "ordering": "The referenced element must appear earlier in the same transaction.",
+    }
 
 
 def test_creator_describe_rejects_unknown_creator_with_actionable_catalog(tmp_path: Path) -> None:

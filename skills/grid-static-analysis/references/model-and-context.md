@@ -17,8 +17,8 @@ The runtime exposes a versioned allowlist of compatible zero-required-argument f
 - `environment.describe`: inspect protocol `grid-capability`, protocol version `1.0`, simulator `grid-simulator`, pandapower version `3.4.0`, and executable capability catalog.
 - `model.list`: list all supported registered models and their exact source factories.
 - `model.creator.list`: list every pinned `pandapower.create` operation published by the runtime and its required arguments.
-- `model.creator.describe`: inspect one creator's complete signature, defaults, and which arguments accept a prior local `element_ref`.
-- `model.create`: create a new immutable model through ordered allowlisted creator operations; local `element_ref` values may reference earlier elements in the same transaction.
+- `model.creator.describe`: inspect one creator's complete signature, defaults, which arguments accept a prior local `element_ref`, and the exact reference syntax.
+- `model.create`: create a new immutable model through ordered allowlisted creator operations. For any argument marked `accepts_element_ref: true`, pass `{"element_ref":"<earlier_local_id>"}`; the referenced element must appear earlier in the same transaction.
 - `context.open`: input `model_id`; output `context_ref`, `model`, `engine`, `pandapower_version`, `source`, `semantic_sha256`, and counts.
 - `context.get`: input `context_ref`; output `model` and counts for buses, lines, and transformers.
 - `model.revision.derive`: create a child revision through typed `set`, `scale`, `in_service`, `switch_state`, `create`, and referential `drop` patches; failed patches leave the parent and workspace revision set unchanged.
@@ -37,6 +37,7 @@ Counts are integers: `buses`, `lines`, and `transformers`. `semantic_sha256` ide
 - "What simulator is available?" -> call `environment.describe`.
 - "Which models can I use?" -> call `model.list`.
 - "How do I add an asymmetric load?" -> `model.creator.list` -> `model.creator.describe` for the selected creator.
+- "Create a bus and attach an external grid" -> create the bus as local ID `source_bus`, then pass `{"element_ref":"source_bus"}` as `ext_grid.arguments.bus`.
 - "Open IEEE-39" -> call `context.open` with `model_id: "ieee39"`.
 - "Open case9" -> first confirm `case9` in `model.list`, then call `context.open` with `model_id: "case9"`.
 
@@ -58,4 +59,5 @@ Counts are integers: `buses`, `lines`, and `transformers`. `semantic_sha256` ide
 
 - Claiming support for arbitrary MATPOWER, CIM, Excel, or user-uploaded files.
 - Treating `context.get` as a way to open a model.
+- Passing a raw local ID, `$ref`, or guessed pandapower index where `{"element_ref":"<earlier_local_id>"}` is required.
 - Using old or external run refs in a new answer.

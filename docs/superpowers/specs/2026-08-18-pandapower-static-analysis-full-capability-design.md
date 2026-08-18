@@ -71,7 +71,10 @@ available through the same interface.
 `model.create` accepts a bounded network definition whose element operations are
 selected from a versioned element-creator registry. Each creator has a JSON
 schema derived and reviewed for pandapower 3.4.0. References between newly
-created elements use local symbolic IDs resolved inside one transaction.
+created elements use the explicit `{"element_ref":"<earlier_local_id>"}`
+encoding and are resolved inside one transaction. `model.creator.describe`
+publishes both the exact syntax and the ordering rule, so an agent never needs
+to guess a raw index, `$ref` convention, or guide name.
 
 This supports minimal networks, including one-bus short-circuit systems, without
 registering fixtures for individual questions.
@@ -198,4 +201,3 @@ completion only and is never reported as semantic correctness.
   different analysis family.
 - No validation rule may terminate a valid primary answer solely because a
   projection, summary, reference normalization or observer check disagrees.
-

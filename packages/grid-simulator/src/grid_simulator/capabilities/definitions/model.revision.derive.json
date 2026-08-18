@@ -80,7 +80,7 @@
         "properties": {
           "operation": {"const": "create"}, "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
           "creator": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-          "arguments": {"type": "object", "x-creator-arguments": true, "additionalProperties": {}}
+          "arguments": {"type": "object", "description": "For parameters marked accepts_element_ref, use {\"element_ref\":\"<earlier_local_id>\"}; the referenced element must be created by an earlier create patch.", "x-creator-arguments": true, "additionalProperties": {}}
         }
       },
       "drop_patch": {

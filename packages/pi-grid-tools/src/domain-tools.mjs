@@ -138,12 +138,26 @@ function runGridctl(payload, workspacePath = requiredExistingRealPath(process.en
 }
 
 function createGuideTool(guideIndexPath) {
+  const guideIndex = readJsonSync(guideIndexPath);
+  const resourceIds = Object.keys(guideIndex.resources ?? {}).sort();
+  const resourceIdSchema = {
+    type: "string",
+    description: `Published resource ids: ${resourceIds.join(", ") || "none"}.`,
+  };
+  if (resourceIds.length > 0) {
+    resourceIdSchema.enum = resourceIds;
+  } else {
+    resourceIdSchema.pattern = "a^";
+  }
   return defineTool({
     name: "grid_guide_open",
     label: "grid_guide_open",
-    description: "Open a published grid-analysis guide by resource id.",
-    parameters: Type.Object({
-      resource_id: Type.String(),
+    description: `Open a published grid-analysis guide by resource id. Published ids: ${resourceIds.join(", ") || "none"}.`,
+    parameters: Type.Unsafe({
+      type: "object",
+      additionalProperties: false,
+      required: ["resource_id"],
+      properties: { resource_id: resourceIdSchema },
     }),
     async execute(_id, params) {
       if (

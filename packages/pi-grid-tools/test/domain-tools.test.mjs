@@ -44,6 +44,11 @@ test("registers catalog tools, guide, and answer submission only", async () => {
       properties: { context_ref: { type: "string" } },
     },
   );
+  assert.equal(
+    registered.find((tool) => tool.name === "grid_guide_open")
+      .parameters.properties.resource_id.pattern,
+    "a^",
+  );
 });
 
 test("registers newly published static-analysis tools directly from the catalog", async () => {
@@ -476,6 +481,12 @@ test("guide tool rejects traversal and opens published guides", async () => {
 
   domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
   const guide = registered.find((tool) => tool.name === "grid_guide_open");
+
+  assert.deepEqual(
+    guide.parameters.properties.resource_id.enum,
+    ["escape", "topology"],
+  );
+  assert.match(guide.description, /escape, topology/);
 
   const opened = await guide.execute("guide-1", { resource_id: "topology" });
   const rejected = await guide.execute("guide-2", { resource_id: "../outside" });

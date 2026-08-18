@@ -146,6 +146,10 @@ class CreatorRegistry:
             "creator": creator,
             "function": f"{function.__module__}.{function.__name__}",
             "summary": doc.splitlines()[0].strip() if doc else "",
+            "local_reference": {
+                "syntax": {"element_ref": "<earlier_local_id>"},
+                "ordering": "The referenced element must appear earlier in the same transaction.",
+            },
             "parameters": parameters,
         }
 
