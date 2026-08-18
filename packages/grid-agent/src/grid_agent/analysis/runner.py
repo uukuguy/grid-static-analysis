@@ -123,7 +123,7 @@ class AnalysisRunner:
                     if self._capture is not None:
                         self._capture.begin_turn(handle.turn_id)
                     self._materialize_context_view(record_injection=True)
-                    self._pi.prompt_and_wait(
+                    answer_output = self._pi.prompt_and_wait(
                         self._prompt_for(instruction),
                         on_event=self._progress_callback,
                         on_semantic_event=lambda event, sequence, turn_id=handle.turn_id: self._observe_semantic_event(
@@ -131,10 +131,14 @@ class AnalysisRunner:
                             turn_id=turn_id,
                             trace_sequence=sequence,
                         ),
-                        require_answer_text=False,
+                        require_answer_text=True,
                         capture=self._capture,
                     )
-                    finalized = self._finalize_turn(handle)
+                    finalized = self._turns.submit(
+                        handle,
+                        answer_output=answer_output,
+                        duration_seconds=max(0.0, time.monotonic() - handle.started_monotonic),
+                    )
                     self._end_capture()
                 except (
                     ArtifactIntegrityError,
@@ -152,8 +156,13 @@ class AnalysisRunner:
                     return self._outcome(request, "failed", error)
 
                 self._checkpoint_after_turn(finalized)
+                if finalized.status != "success":
+                    error = finalized.error or "turn did not produce an accepted answer"
+                    self._fail_analysis(error, total_turns=len(request.instructions))
+                    return self._outcome(request, "failed", error)
 
             try:
+                self._require_all_turns_succeeded(total_turns=len(request.instructions))
                 self._verify_running_state_before_completion()
                 self._store.append(
                     ContextEventDraft(
@@ -178,9 +187,6 @@ class AnalysisRunner:
             finally:
                 if self._context_bridge is not None:
                     self._context_bridge.recorder.close()
-
-    def _finalize_turn(self, handle: ActiveTurnHandle) -> FinalizedTurn:
-        return self._turns.finalize(handle, duration_seconds=max(0.0, time.monotonic() - handle.started_monotonic))
 
     def _fail_turn_if_active(self, handle: ActiveTurnHandle, error: str) -> FinalizedTurn:
         if self._store.snapshot.current_turn is None:
@@ -260,6 +266,13 @@ class AnalysisRunner:
                 # The trace above remains the diagnostic record when the
                 # optional context store itself is unavailable.
                 pass
+
+    def _require_all_turns_succeeded(self, *, total_turns: int) -> None:
+        turns = self._store.snapshot.turns
+        if len(turns) != total_turns:
+            raise ContextStoreError("analysis cannot complete before every instruction terminates")
+        if any(turn.status != "success" or not turn.answer_path for turn in turns):
+            raise ContextStoreError("analysis cannot complete with a failed or unanswered turn")
 
     def _verify_running_state_before_completion(self) -> None:
         self._store.verify_materialized_snapshot()
@@ -397,12 +410,13 @@ class AnalysisRunner:
         context_view = self._workspace.context_view_path.read_text(encoding="utf-8")
         return (
             "你是 grid-agent 的连续静态分析执行器。"
-            "必须只使用已注册的 grid tools 获取或复用仿真结论，并在完成本条指令时调用 grid_submit_answer。"
+            "必须只使用已注册的 grid tools 获取或复用仿真结论。"
             "后续指令省略模型、场景或结果时，先使用 analysis_context_view 中的活动对象。"
             "网络与数值结论只能来自已发布 grid tools 或其中登记的可复用结果。"
             "判断正常、越限或风险时必须指出约束来源；没有约束时只报告原始值，不得猜测阈值。"
             "not_published、not_applicable、prerequisite_missing 和计算失败必须分别说明，不得统称执行限制。"
-            "grid_submit_answer 的 answer_output 面向报告读者，不得写入 context/result/evidence/asset/constraint 等内部引用 ID；"
+            "完成分析工具调用后，直接返回面向报告读者的最终回答。"
+            "最终回答不得包含 context/result/evidence/asset/constraint 等内部引用 ID。"
             "可追溯关系由运行系统单独登记。"
             "\n\n"
             "<analysis_context_view>\n"

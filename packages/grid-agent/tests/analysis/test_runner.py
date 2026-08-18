@@ -81,7 +81,7 @@ class FakePi:
         if isinstance(action, dict) and action.get("projection_error"):
             assert callable(on_semantic_event)
             on_semantic_event({"type": "fake_projection_error"}, 1)
-        if isinstance(action, dict) and action.get("write_draft", True):
+        if isinstance(action, dict) and action.get("write_draft") is True:
             handle = _read_active_turn(self.workspace)
             _write_draft(
                 self.workspace.active_answer_draft_path,
@@ -420,7 +420,8 @@ def test_runner_reuses_one_pi_process_and_injects_finalized_prior_context(runner
     assert '"model_id":"ieee39"' in runner_harness.pi.prompts[1]
     assert '"quantity":"bus.vm_pu"' in runner_harness.pi.prompts[1]
     assert "后续指令省略模型、场景或结果时" in runner_harness.pi.prompts[1]
-    assert "不得写入 context/result/evidence/asset/constraint 等内部引用 ID" in runner_harness.pi.prompts[1]
+    assert "grid_submit_answer" not in runner_harness.pi.prompts[1]
+    assert "最终回答不得包含 context/result/evidence/asset/constraint 等内部引用 ID" in runner_harness.pi.prompts[1]
     assert outcome.status == "completed"
     assert runner_harness.store.snapshot.turns[1].consumed_refs == [RESULT_REF]
 
@@ -438,24 +439,25 @@ def test_runner_records_submitted_answer_before_completing_turn(runner_harness: 
     assert outcome.status == "completed"
 
 
-def test_runner_continues_after_missing_answer_and_projection_integrity_diagnostic(
+def test_runner_stops_and_fails_when_model_returns_no_final_answer(
     runner_harness: RunnerHarness,
 ) -> None:
-    runner_harness.pi.behavior = [NO_DRAFT_AGENT_END, {"answer": "已提交答案", "projection_error": True}, {"answer": "后续答案"}]
+    runner_harness.pi.behavior = [NO_DRAFT_AGENT_END, SHOULD_NOT_RUN]
 
     outcome = runner_harness.runner.run(
-        AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二", "三"))
+        AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二"))
     )
 
-    assert len(runner_harness.pi.prompts) == 3
-    assert outcome.status == "completed"
-    assert runner_harness.store.snapshot.turns[0].status == "failed"
-    assert [turn.status for turn in runner_harness.store.snapshot.turns] == ["failed", "success", "success"]
-    assert [json.loads(line)["answer_output"] for line in runner_harness.workspace.answers_path.read_text().splitlines()] == [
-        "执行限制 / execution limitation: grid_submit_answer did not create an answer draft",
-        "已提交答案",
-        "后续答案",
+    event_types = [
+        json.loads(line)["event_type"]
+        for line in runner_harness.workspace.context_events_path.read_text().splitlines()
     ]
+    assert outcome.status == "failed"
+    assert len(runner_harness.pi.prompts) == 1
+    assert runner_harness.store.snapshot.turns[0].status == "failed"
+    assert runner_harness.store.snapshot.status == "failed"
+    assert "analysis.failed" in event_types
+    assert "analysis.completed" not in event_types
 
 
 def test_runner_keeps_normal_gridctl_error_nonterminal_and_checkpoints_report(
@@ -553,7 +555,7 @@ def test_runner_start_failure_terminalizes_artifacts_and_still_stops_process(
 def test_runner_records_active_context_store_error_as_diagnostic_and_continues(
     runner_harness: RunnerHarness,
 ) -> None:
-    runner_harness.pi.behavior = [{"store_error": True, "write_draft": False}, SHOULD_NOT_RUN]
+    runner_harness.pi.behavior = [{"answer": "已记录诊断", "store_error": True}, SHOULD_NOT_RUN]
 
     outcome = runner_harness.runner.run(
         AnalysisRequest(analysis_id="analysis-test", instructions=("一", "二"))
@@ -564,7 +566,7 @@ def test_runner_records_active_context_store_error_as_diagnostic_and_continues(
     assert runner_harness.pi.stop_calls == 1
     assert len(runner_harness.pi.prompts) == 2
     assert runner_harness.store.snapshot.current_turn is None
-    assert runner_harness.store.snapshot.turns[0].status == "failed"
+    assert runner_harness.store.snapshot.turns[0].status == "success"
     assert runner_harness.store.snapshot.turns[1].status == "success"
     assert runner_harness.store.snapshot.status == "completed"
     assert manifest["status"] == "completed"

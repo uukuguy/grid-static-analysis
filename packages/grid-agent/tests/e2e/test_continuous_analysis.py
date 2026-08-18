@@ -142,10 +142,9 @@ def test_continuous_analysis_generalizes_active_model_constraints_and_result_reu
         assert powerflow_ref in context.domain_state.calculations
         assert n1_ref in context.domain_state.calculations
         assert context.domain_state.scenarios
-        assert context.turns[3].consumed_refs == [
-            powerflow_ref,
-            *context.results[powerflow_ref].evidence_refs,
-        ]
+        assert context.results[powerflow_ref].evidence_refs
+        assert all(ref in context.evidence for ref in context.results[powerflow_ref].evidence_refs)
+        assert context.turns[3].consumed_refs == [powerflow_ref]
         assert context.turns[4].consumed_refs
         for turn, answer in zip(context.turns, answers, strict=True):
             assert turn.answer_path is not None
@@ -236,7 +235,7 @@ def test_scripted_analysis_writes_replayable_native_trajectory(
         assert {
             tool["name"]
             for tool in request["semantic_request"]["context"]["tools"]
-        } >= {"grid_context_open", "grid_submit_answer"}
+        } >= {"grid_context_open"}
         assert request["semantic_request"]["options"]["transport"] == "sse"
         assert set(request["runtime"]) == {
             "pi_coding_agent_version",
@@ -402,25 +401,6 @@ def semantic_tools():
             },
         }
     )
-    tools.append(
-        {
-            "name": "grid_submit_answer",
-            "description": "Submit the final user-facing answer.",
-            "parameters": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "answer_output": {"type": "string", "minLength": 1},
-                    "result_refs": {"type": "array", "items": {"type": "string"}},
-                    "claim_evidence_refs": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": ["answer_output"],
-            },
-        }
-    )
     return tools
 
 
@@ -560,31 +540,6 @@ def grid(capability, args, call_id):
     return result
 
 
-def submit_answer(answer_output, result_refs, claim_evidence_refs, call_id):
-    active_turn = load_json(os.environ["GRID_AGENT_ACTIVE_TURN"])
-    draft = {
-        "turn_id": active_turn["turn_id"],
-        "turn_nonce": active_turn["turn_nonce"],
-        "answer_output": answer_output,
-        "result_refs": result_refs,
-        "claim_evidence_refs": claim_evidence_refs,
-    }
-    emit({
-        "type": "tool_execution_start",
-        "toolCallId": call_id,
-        "toolName": "grid_submit_answer",
-        "args": {"answer_output": answer_output, "result_refs": result_refs, "claim_evidence_refs": claim_evidence_refs},
-    })
-    Path(os.environ["GRID_AGENT_ANSWER_DRAFT"]).write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
-    emit({
-        "type": "tool_execution_end",
-        "toolCallId": call_id,
-        "toolName": "grid_submit_answer",
-        "isError": False,
-        "result": {"answer_output": answer_output},
-    })
-
-
 def latest_reusable_calculation(kind):
     view = load_json(os.environ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW"])
     matches = [item for item in view["reusable_calculations"] if item["kind"] == kind]
@@ -601,12 +556,7 @@ def answer_first_turn():
         "call-002-endpoints",
     )
     STATE["context_ref"] = opened["context_ref"]
-    submit_answer(
-        f"第11号线路连接母线 {endpoints['from_bus']['name']} 与 {endpoints['to_bus']['name']}。",
-        [],
-        evidence_refs_for(endpoints),
-        "call-003-submit",
-    )
+    return f"第11号线路连接母线 {endpoints['from_bus']['name']} 与 {endpoints['to_bus']['name']}。"
 
 
 def answer_second_turn():
@@ -622,12 +572,7 @@ def answer_second_turn():
     voltage = next(item for item in constraints["constraints"] if item["quantity"] == "bus.vm_pu")
     if voltage["lower"] != 0.94 or voltage["upper"] != 1.06 or voltage["source"]["kind"] != "model":
         raise RuntimeError("voltage constraints were not sourced from the active model")
-    submit_answer(
-        f"该模型的母线电压上下界为 {voltage['lower']}–{voltage['upper']} {voltage['unit']}，来源为模型数据。",
-        [],
-        evidence_refs_for(constraints),
-        "call-005-submit",
-    )
+    return f"该模型的母线电压上下界为 {voltage['lower']}–{voltage['upper']} {voltage['unit']}，来源为模型数据。"
 
 
 def answer_third_turn():
@@ -640,12 +585,7 @@ def answer_third_turn():
     )
     STATE["powerflow_ref"] = powerflow["result_ref"]
     loss = powerflow["total_active_loss"]
-    submit_answer(
-        f"交流潮流已收敛，有功损耗为 {loss['value']} {loss['unit']}。",
-        [powerflow["result_ref"]],
-        evidence_refs_for(powerflow),
-        "call-007-submit",
-    )
+    return f"交流潮流已收敛，有功损耗为 {loss['value']} {loss['unit']}。"
 
 
 def answer_fourth_turn():
@@ -659,12 +599,7 @@ def answer_fourth_turn():
         "call-008-ranking",
     )
     STATE["ranking"] = ranking
-    submit_answer(
-        "已沿用前序潮流结果列出负载率最高的五条线路。",
-        [powerflow_ref],
-        list(reusable["evidence_refs"]),
-        "call-009-submit",
-    )
+    return "已沿用前序潮流结果列出负载率最高的五条线路。"
 
 
 def answer_fifth_turn():
@@ -679,12 +614,7 @@ def answer_fifth_turn():
         "call-010-n1",
     )
     scenario = n1["scenarios"][0]
-    submit_answer(
-        f"首位支路停运场景状态 {scenario['status']}，最大负载率 {scenario.get('max_loading_percent')}%，约束来源 {scenario['constraint_evaluation']['source']}。",
-        [n1["result_ref"]],
-        evidence_refs_for(n1),
-        "call-011-submit",
-    )
+    return f"首位支路停运场景状态 {scenario['status']}，最大负载率 {scenario.get('max_loading_percent')}%，约束来源 {scenario['constraint_evaluation']['source']}。"
 
 
 marker = Path(os.environ["GRID_AGENT_WORKSPACE"]) / "pi" / "process-starts.txt"
@@ -704,13 +634,14 @@ for raw in sys.stdin:
     emit({"type": "response", "command": "prompt", "success": True})
     if turn_index >= len(TURN_HANDLERS):
         raise RuntimeError("received more prompts than scripted turns")
-    TURN_HANDLERS[turn_index]()
+    answer_text = TURN_HANDLERS[turn_index]()
     turn_index += 1
+    emit({"type": "text_delta", "text": answer_text})
     emit({
         "type": "message_end",
         "message": {
             "role": "assistant",
-            "content": [{"type": "text", "text": "scripted answer submitted"}],
+            "content": [{"type": "text", "text": answer_text}],
             "usage": {"input": 1, "output": 1},
             "stopReason": "stop",
         },
