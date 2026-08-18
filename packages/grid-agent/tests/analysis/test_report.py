@@ -96,6 +96,9 @@ def test_report_redacts_nested_credential_fields_without_dropping_electrical_val
             "private-key": "must-not-leak",
             "clientSecret": "must-not-leak",
             "credentials": {"username": "operator", "apiKey": "must-not-leak"},
+            "access_token": "must-not-leak",
+            "refreshToken": "must-not-leak",
+            "id_token": "must-not-leak",
             "nested": [
                 {
                     "normal_label": "branch-11",

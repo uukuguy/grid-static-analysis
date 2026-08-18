@@ -83,6 +83,7 @@ _SECRET_FIELD_TOKENS = {
     "passwd",
     "password",
     "secret",
+    "token",
 }
 
 
