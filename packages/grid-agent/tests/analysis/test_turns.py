@@ -11,7 +11,7 @@ from grid_agent.analysis.models import ContextEventDraft
 from grid_agent.analysis.integrity import ReferenceDiagnostic
 from grid_agent.analysis.store import AnalysisContextStore
 from grid_agent.analysis import turns as turns_module
-from grid_agent.analysis.turns import StaleAnswerDraftError, TurnController
+from grid_agent.analysis.turns import ActiveTurnHandle, StaleAnswerDraftError, TurnController
 from grid_agent.analysis.workspace import AnalysisWorkspace
 from grid_agent.trajectory.artifacts import ImmutableArtifactRegistry
 from grid_agent.trajectory.context_bridge import NativeContextBridge
@@ -388,6 +388,31 @@ def test_controller_rejects_empty_model_final_text(harness: Harness) -> None:
     assert finalized.error == "model returned no final answer"
     assert harness.store.snapshot.turns[-1].status == "failed"
     assert not (harness.workspace.turn_path(1) / "answer.json").exists()
+
+
+def test_controller_rejects_submit_handle_with_wrong_nonce(
+    tmp_path: Path,
+) -> None:
+    controller, _recorder, store, _workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
+    register_answer_lineage(store, handle, result_ref, evidence_ref)
+    forged_handle = ActiveTurnHandle(
+        ordinal=handle.ordinal,
+        turn_id=handle.turn_id,
+        instruction=handle.instruction,
+        instruction_sha256=handle.instruction_sha256,
+        turn_nonce="forged-turn-nonce",
+        started_monotonic=handle.started_monotonic,
+    )
+
+    with pytest.raises(
+        StaleAnswerDraftError,
+        match="answer submission is bound to a different turn",
+    ):
+        controller.submit(
+            forged_handle,
+            answer_output="线路结果来自本题仿真。",
+            duration_seconds=1.0,
+        )
 
 
 def test_invalid_submission_metadata_is_diagnostic_without_rejecting_answer(tmp_path: Path) -> None:

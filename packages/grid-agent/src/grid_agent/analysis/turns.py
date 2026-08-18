@@ -134,6 +134,11 @@ class TurnController:
                 error="grid_submit_answer did not create an answer draft",
                 duration_seconds=duration_seconds,
             )
+        _require_active_turn_binding(
+            self._store.snapshot.current_turn,
+            handle,
+            error="grid_submit_answer draft is bound to a different turn",
+        )
 
         try:
             raw_draft = self._workspace.active_answer_draft_path.read_bytes()
@@ -166,9 +171,11 @@ class TurnController:
                 error="model returned no final answer",
                 duration_seconds=duration_seconds,
             )
-        active = self._store.snapshot.current_turn
-        if active is None or active.turn_id != handle.turn_id:
-            raise StaleAnswerDraftError("answer submission is bound to a different turn")
+        active = _require_active_turn_binding(
+            self._store.snapshot.current_turn,
+            handle,
+            error="answer submission is bound to a different turn",
+        )
         result_refs, evidence_refs = _answer_level_refs(
             (*active.consumed_refs, *active.produced_refs)
         )
@@ -469,6 +476,21 @@ def _restore_file_state(path: Path, state: _FileState) -> None:
 def _require_current_turn_binding(draft: Mapping[str, Any], handle: ActiveTurnHandle) -> None:
     if draft.get("turn_id") != handle.turn_id or draft.get("turn_nonce") != handle.turn_nonce:
         raise StaleAnswerDraftError("grid_submit_answer draft is bound to a different turn")
+
+
+def _require_active_turn_binding(
+    active_turn: Any,
+    handle: ActiveTurnHandle,
+    *,
+    error: str,
+):
+    if (
+        active_turn is None
+        or active_turn.turn_id != handle.turn_id
+        or active_turn.nonce_sha256 != _sha256_text(handle.turn_nonce)
+    ):
+        raise StaleAnswerDraftError(error)
+    return active_turn
 
 
 def _require_non_empty_string(draft: Mapping[str, Any], key: str) -> str:
