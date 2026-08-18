@@ -1,28 +1,32 @@
 # Research Tree — pandapower static-analysis full capability
 
-> Generated deterministically from 1 climb runs.
+> Generated deterministically from 4 climb runs.
 
 **Target:** 100% of in-scope matrix rows and all release gates.
 
 ## In-flight
 
-- Phase: H-002 model/revision/dataset substrate
-- Last cycle: 1
-- Next hypothesis: H-002
-- Next action: Implement the complete registered model catalog, then universal network datasets and immutable revisions through TDD.
+- Phase: release closure
+- Last cycle: 4
+- Next hypothesis: none
+- Next action: Run complete release verification and provider semantic acceptance.
 
 ## Runs
 
 - baseline-climb-h001: 8.333333333333334% — confirmed: truthful baseline established
+- 20260818T071104Z-h-002: 100.0% — confirmed: deterministic local release gate passed
+- 20260818T071150Z-h-003: 100.0% — confirmed: deterministic local release gate passed
+- 20260818T071234Z-h-004: 100.0% — confirmed: deterministic local release gate passed
 
 ## Active hypotheses
 
-- **H-002**: A complete model/revision/dataset substrate unlocks network-independent composition
-- **H-003**: A typed analysis registry plus generic result datasets unlocks all native solver families without per-question tools
-- **H-004**: Contract-derived Pi tools and semantic oracles generalize beyond authored questions
 
 ## Confirmed
 
+- **H-001**: An executable coverage matrix prevents test-question-driven capability patches
+- **H-002**: A complete model/revision/dataset substrate unlocks network-independent composition
+- **H-003**: A typed analysis registry plus generic result datasets unlocks all native solver families without per-question tools
+- **H-004**: Contract-derived Pi tools and semantic oracles generalize beyond authored questions
 
 ## Negative cache
 

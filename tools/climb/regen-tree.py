@@ -12,12 +12,16 @@ STATE = ROOT / "docs/status/climb"
 
 def main() -> None:
     hypotheses = json.loads((STATE / "hypotheses.yaml").read_text(encoding="utf-8"))["hypotheses"]
+    hypothesis_document = json.loads((STATE / "hypotheses.yaml").read_text(encoding="utf-8"))
+    effective_status = {item["id"]: item["status"] for item in hypotheses}
+    for event in hypothesis_document.get("events", []):
+        effective_status[event["hypothesis_id"]] = event["status"]
     session = json.loads((STATE / "session-state.json").read_text(encoding="utf-8"))
     with (STATE / "runs.csv").open(newline="", encoding="utf-8") as handle:
         runs = list(csv.DictReader(handle))
-    active = [item for item in hypotheses if item["status"] in {"pending", "in-flight"}]
-    confirmed = [item for item in hypotheses if item["status"] == "confirmed"]
-    falsified = [item for item in hypotheses if item["status"] == "falsified"]
+    active = [item for item in hypotheses if effective_status[item["id"]] in {"pending", "in-flight"}]
+    confirmed = [item for item in hypotheses if effective_status[item["id"]] == "confirmed"]
+    falsified = [item for item in hypotheses if effective_status[item["id"]] == "falsified"]
     tree = {
         "schema_version": 1,
         "generated_from_runs": len(runs),
@@ -53,7 +57,10 @@ def main() -> None:
     lines.extend(["", "## Active hypotheses", ""])
     lines.extend(f"- **{item['id']}**: {item['description']}" for item in active)
     lines.extend(["", "## Confirmed", ""])
-    lines.extend([*(f"- **{item['id']}**: {item['description']}" for item in confirmed), "- None."] if not confirmed else [])
+    if confirmed:
+        lines.extend(f"- **{item['id']}**: {item['description']}" for item in confirmed)
+    else:
+        lines.append("- None.")
     lines.extend(["", "## Negative cache", ""])
     lines.extend(f"- {item}" for item in session.get("falsified_routes", []))
     (STATE / "research-tree.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

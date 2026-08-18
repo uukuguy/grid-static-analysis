@@ -164,10 +164,10 @@
 **Interfaces:**
 - Produces separate orchestration completion, semantic correctness, evidence and efficiency scores.
 
-- [ ] Write failing evaluators for the seven acceptance questions and each matrix family.
-- [ ] Add single-capability, composition, failure and held-out cases per in-scope row.
-- [ ] Make `make validate` fail on semantic mismatch even when all turns submit answers.
-- [ ] Keep provider validation optional and billed only when explicitly invoked.
+- [x] Write failing evaluators for the seven acceptance questions and each matrix family.
+- [x] Add single-capability, composition, failure and held-out cases per in-scope row.
+- [x] Make `make validate` fail on semantic mismatch even when all turns submit answers.
+- [x] Keep provider validation optional and billed only when explicitly invoked.
 
 ### Task 10: Release closure
 

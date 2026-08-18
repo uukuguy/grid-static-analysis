@@ -16,7 +16,7 @@ def main() -> None:
         "decision": "PUSH" if ready else "CONTINUE",
         "reason": "100% release gate met" if ready else "matrix incomplete; advance next implementation hypothesis",
         "local_total": score["total"],
-        "action_next": "close goal" if ready else "advance hypothesis pool",
+        "action_next": "run release closure" if ready else "advance hypothesis pool",
     }, sort_keys=True))
 
 

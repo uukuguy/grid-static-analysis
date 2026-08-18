@@ -1,1 +1,1 @@
-{"active": ["H-002", "H-003", "H-004"], "confirmed": ["H-001"], "falsified": [], "generated_from_runs": 1, "schema_version": 1}
+{"active": [], "confirmed": ["H-001", "H-002", "H-003", "H-004"], "falsified": [], "generated_from_runs": 4, "schema_version": 1}
