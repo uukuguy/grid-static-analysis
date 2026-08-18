@@ -46,6 +46,34 @@ test("registers catalog tools, guide, and answer submission only", async () => {
   );
 });
 
+test("registers newly published static-analysis tools directly from the catalog", async () => {
+  const root = await makeFixtureRoot();
+  clearOptionalAnalysisEnvironment();
+  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
+  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
+  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
+  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
+  const extraTools = [
+    ["grid_model_equivalent_derive", "model.equivalent.derive"],
+    ["grid_analysis_result_violations_evaluate", "analysis.result.violations.evaluate"],
+    ["grid_analysis_result_risk_rank", "analysis.result.risk.rank"],
+  ].map(([name, capability]) => ({
+    name,
+    capability,
+    description: `Purpose: ${capability}`,
+    input_schema: { type: "object", additionalProperties: false, properties: {} },
+  }));
+  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG, extraTools);
+  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
+
+  const registered = [];
+  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
+
+  for (const [name] of extraTools.map((tool) => [tool.name])) {
+    assert.equal(registered.some((tool) => tool.name === name), true);
+  }
+});
+
 test("analysis tools expose bounded context and bind answer to active turn", async () => {
   const root = await makeFixtureRoot();
   await configureAnalysisPaths(
@@ -679,7 +707,7 @@ async function configuredNativeTools() {
   return { registered, root };
 }
 
-async function writeCatalog(path) {
+async function writeCatalog(path, extraTools = []) {
   await writeFile(
     path,
     JSON.stringify({
@@ -704,6 +732,7 @@ async function writeCatalog(path) {
             properties: { context_ref: { type: "string" } },
           },
         },
+        ...extraTools,
       ],
     }),
     "utf8",

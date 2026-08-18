@@ -1,6 +1,6 @@
 ---
 name: grid-static-analysis
-description: Analyze registered power-system networks with pandapower 3.4.0 domain tools. Use for network data, topology, AC power flow, branch ranking, N-1 contingencies, result interpretation, and evidence-backed grid conclusions.
+description: Analyze registered power-system networks with the complete published pandapower 3.4.0 static-analysis tool surface, immutable models, typed results, and evidence-backed conclusions.
 ---
 
 # Grid Static Analysis
@@ -17,7 +17,7 @@ Separate answer types:
 - Network facts come from registered model capabilities and require a current context. Topology facts that return `evidence_ref` must cite that evidence.
 - Calculation results come only from simulator analysis capabilities and must cite current-run `result_ref` and `evidence_refs`.
 
-`evidence.get` is topology/network-fact-only in WP-A. It retrieves `network_fact` documents produced by `topology.branch.endpoints.get`; AC, ranking, and N-1 results must cite returned `result_ref` and `evidence_refs` rather than asking `evidence.get` for analysis result documents.
+`evidence.get` retrieves current-run topology `network_fact` documents and persisted analysis evidence documents. It is an evidence inspector, not a replacement for querying a persisted result or citing its returned `result_ref` and `evidence_refs`.
 
 Never invent voltages, flows, losses, rankings, overloads, contingency outcomes, or evidence. Do not use raw pandas, raw pandapower objects, arbitrary Python, shell commands, or filesystem paths as model capabilities. Use only the typed grid capabilities exposed by the runtime.
 
@@ -25,11 +25,12 @@ Never invent voltages, flows, losses, rankings, overloads, contingency outcomes,
 
 - Model, creator, and runtime catalogs: [capability-map](references/capability-map.md), [model-and-context](references/model-and-context.md).
 - Network elements and datasets: call `model.dataset.list`, then use [network-elements](references/network-elements.md) for describe/query and element resolution.
-- Topology endpoints and components: [topology-analysis](references/topology-analysis.md).
+- Topology endpoints, components, shortest paths, neighborhoods, and unsupplied buses: [topology-analysis](references/topology-analysis.md).
 - Registered analysis discovery and execution: call `analysis.operation.list`, then `analysis.operation.describe` and `analysis.run`; operations include AC/DC/three-phase flow, AC/DC OPF, IEC 60909, estimation/chi-square/bad-data removal, and diagnostics. See [ac-powerflow](references/ac-powerflow.md) for the dedicated AC compatibility contract.
-- N-1 static contingency: [contingency-analysis](references/contingency-analysis.md).
+- Native AC/DC/three-phase flow, OPF, short-circuit, estimation, diagnostics, topology, and static protection: [native-static-analyses](references/native-static-analyses.md).
+- AC/DC N-1 static contingency: [contingency-analysis](references/contingency-analysis.md).
 - Model-owned voltage and loading limits: `model.constraints.describe` with the active `context_ref`; identify model, user, or named-standard sources explicitly.
-- Complete result-table access, aggregation, comparison, branch ranking, and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
+- Complete result-table access, aggregation, comparison, branch ranking, sourced violation evaluation, risk ranking, and evidence retrieval: [result-query](references/result-query.md), [evidence-and-recovery](references/evidence-and-recovery.md).
 - Runtime status and intentional non-static exclusions: [future-capabilities](references/future-capabilities.md).
 
 ## Context and Evidence Discipline
@@ -55,8 +56,9 @@ Plan from stable references:
 3. Discover tables with `model.dataset.list`, then resolve any described element or field with `model.element.get`, `model.dataset.describe`, or `model.dataset.query`.
 4. Discover an operation with `analysis.operation.list` / `analysis.operation.describe`, then call `analysis.run`; the dedicated `analysis.powerflow.ac.run` remains available for the AC-specific summary contract.
 5. Discover every persisted `res_*` table with `result.dataset.list`; describe before query, aggregate, or compare. Rank existing AC branch results with `result.branches.rank`; do not rerun power flow for result access.
-6. Run `analysis.contingency.n_minus_one.run` for requested branch outages from the same base context; interpret violations only against returned model constraints.
-7. Use `evidence.get` to inspect a current-run topology or analysis document when its persisted facts are needed. For AC, ranking, and N-1, cite the returned primary `result_ref` and relevant `evidence_refs`; scenario results linked by claimed N-1 evidence are verified automatically.
+6. Evaluate sourced limits with `analysis.result.violations.evaluate`, then rank those violations with `analysis.result.risk.rank` when requested.
+7. Run `analysis.contingency.n_minus_one.run` with `analysis_method: "ac"` or `"dc"` for requested branch outages from the same base context; interpret violations only against returned model constraints.
+8. Use `evidence.get` to inspect a current-run topology or analysis document when its persisted facts are needed. Cite the returned primary `result_ref` and relevant `evidence_refs`; scenario results linked by claimed N-1 evidence are verified automatically.
 
 ## Failure Recovery
 

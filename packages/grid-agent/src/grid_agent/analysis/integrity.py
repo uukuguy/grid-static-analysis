@@ -375,6 +375,8 @@ def _verify_evidence_document(reference: str, digest: str, path: Path, document:
         return
     allowed_analysis = {
         ("analysis_result", "analysis.run"),
+        ("analysis_result", "analysis.result.violations.evaluate"),
+        ("analysis_result", "analysis.result.risk.rank"),
         ("analysis_result", "analysis.powerflow.ac.run"),
         ("contingency_scenario", "analysis.contingency.n_minus_one.run"),
         ("powerflow_non_convergence", "analysis.powerflow.ac.run"),

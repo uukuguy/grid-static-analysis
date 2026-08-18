@@ -512,6 +512,80 @@ def test_projector_opens_context_and_promotes_topology_endpoint_facts(
     assert {"topology.branch.from_bus", "topology.branch.to_bus"} <= predicates
 
 
+def test_projector_tracks_equivalent_child_context_and_replay_idempotently(
+    context_harness: ContextHarness,
+) -> None:
+    parent = write_context(context_harness.workspace, model_id="ieee39")
+    child = write_context(context_harness.workspace, model_id="ieee39", variant="ward")
+    boundary_ref = "asset:bus:sha256:" + "1" * 64
+    internal_ref = "asset:bus:sha256:" + "2" * 64
+
+    context_harness.start_turn("analysis-test-t001", ordinal=1)
+    context_harness.projector.observe(
+        tool_start("open", "grid_context_open", {"model_id": "ieee39"}),
+        turn_id="analysis-test-t001",
+    )
+    context_harness.projector.observe(
+        tool_result(
+            "open",
+            "context.open",
+            {
+                "context_ref": parent.context_ref,
+                "revision_ref": parent.revision_ref,
+                "model": "ieee39",
+                "source": "registered",
+                "counts": {"buses": 39, "lines": 35, "transformers": 11},
+            },
+        ),
+        turn_id="analysis-test-t001",
+    )
+    equivalent_result = {
+        "context_ref": child.context_ref,
+        "revision_ref": child.revision_ref,
+        "model": "ieee39",
+        "source": "derived-equivalent",
+        "lineage_ref": "lineage:sha256:" + "3" * 64,
+        "parent_context_ref": parent.context_ref,
+        "equivalent_type": "ward",
+        "boundary_bus_refs": [boundary_ref],
+        "internal_bus_refs": [internal_ref],
+        "counts": {"buses": 12, "lines": 8, "transformers": 2},
+    }
+    arguments = {
+        "context_ref": parent.context_ref,
+        "equivalent_type": "ward",
+        "boundary_bus_refs": [boundary_ref],
+        "internal_bus_refs": [internal_ref],
+    }
+    for call_id in ("equivalent-1", "equivalent-2"):
+        context_harness.projector.observe(
+            tool_start(call_id, "grid_model_equivalent_derive", arguments),
+            turn_id="analysis-test-t001",
+        )
+        context_harness.projector.observe(
+            tool_result(call_id, "model.equivalent.derive", equivalent_result),
+            turn_id="analysis-test-t001",
+        )
+
+    observations = [
+        item
+        for item in context_harness.store.snapshot.observations.values()
+        if item.capability == "model.equivalent.derive"
+    ]
+    assert len(observations) == 2
+    assert all(item.consumed_refs == [parent.context_ref] for item in observations)
+    assert all(item.produced_refs == [child.context_ref] for item in observations)
+    assert context_harness.store.snapshot.active_context_ref == child.context_ref
+    assert context_harness.store.snapshot.domain_state.model is not None
+    assert context_harness.store.snapshot.domain_state.model.context_ref == child.context_ref
+    assert context_harness.store.snapshot.domain_state.model.source == "derived-equivalent"
+    assert context_harness.store.snapshot.domain_state.model.counts == {
+        "buses": 12,
+        "lines": 8,
+        "transformers": 2,
+    }
+
+
 def test_projector_reuses_registered_evidence_when_evidence_is_read_again(
     context_harness: ContextHarness,
 ) -> None:
@@ -893,8 +967,15 @@ def tool_result(
     return event
 
 
-def write_context(workspace: AnalysisWorkspace, *, model_id: str) -> OpenedContext:
+def write_context(
+    workspace: AnalysisWorkspace,
+    *,
+    model_id: str,
+    variant: str | None = None,
+) -> OpenedContext:
     revision = {"model_id": model_id, "pandapower_version": "3.4.0", "bus": [1, 2]}
+    if variant is not None:
+        revision["variant"] = variant
     revision_payload = canonical_json(revision)
     revision_digest = hashlib.sha256(revision_payload.encode("utf-8")).hexdigest()
     revision_ref = "revision:sha256:" + revision_digest

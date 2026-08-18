@@ -28,6 +28,9 @@ _TOOL_NAME_TO_CAPABILITY: Mapping[str, str] = {
     "grid_analysis_operation_list": "analysis.operation.list",
     "grid_analysis_operation_describe": "analysis.operation.describe",
     "grid_analysis_run": "analysis.run",
+    "grid_analysis_result_violations_evaluate": "analysis.result.violations.evaluate",
+    "grid_analysis_result_risk_rank": "analysis.result.risk.rank",
+    "grid_model_equivalent_derive": "model.equivalent.derive",
     "grid_result_branches_rank": "result.branches.rank",
     "grid_result_dataset_list": "result.dataset.list",
     "grid_result_dataset_describe": "result.dataset.describe",
@@ -176,7 +179,8 @@ class AnalysisContextProjector:
         projection_result = dict(result)
         if spec.projector == "model-context-v1" and baseline is not None:
             projection_result.setdefault("model", baseline.network.get("name"))
-            projection_result.setdefault("source", "registered")
+            origin = projection_result.get("origin")
+            projection_result.setdefault("source", origin if isinstance(origin, str) else "registered")
             projection_result.setdefault(
                 "counts",
                 {
@@ -505,9 +509,12 @@ class AnalysisContextProjector:
             and isinstance(returned_context_ref, str)
             and requested_context_ref != returned_context_ref
         ):
-            raise SimulatorIntegrityError(
-                f"{capability} returned context_ref {returned_context_ref} for requested {requested_context_ref}"
-            )
+            parent_context_ref = result.get("parent_context_ref")
+            creates_child = capability in {"model.revision.derive", "model.equivalent.derive"}
+            if not creates_child or parent_context_ref != requested_context_ref:
+                raise SimulatorIntegrityError(
+                    f"{capability} returned context_ref {returned_context_ref} for requested {requested_context_ref}"
+                )
         requested_result_ref = args.get("result_ref")
         returned_result_ref = result.get("source_result_ref")
         if (
@@ -817,7 +824,12 @@ def _produced_refs(capability: str, result: Mapping[str, Any], event: Mapping[st
         return []
     refs: list[str] = []
     context_ref = result.get("context_ref")
-    if capability == "context.open" and isinstance(context_ref, str):
+    if capability in {
+        "context.open",
+        "model.create",
+        "model.revision.derive",
+        "model.equivalent.derive",
+    } and isinstance(context_ref, str):
         refs.append(context_ref)
     result_ref = result.get("result_ref")
     if isinstance(result_ref, str):

@@ -72,6 +72,21 @@ class RevisionStore:
             operation={"patches": patches},
         )
 
+    def persist_derived_network(
+        self,
+        *,
+        parent_context: OpenedContext,
+        net: Any,
+        operation: dict[str, Any],
+    ) -> RevisionResult:
+        return self._persist(
+            net=net,
+            model_id=parent_context.model_id,
+            origin="derived",
+            parent_context=parent_context,
+            operation=operation,
+        )
+
     def _apply_patch(
         self,
         net: Any,

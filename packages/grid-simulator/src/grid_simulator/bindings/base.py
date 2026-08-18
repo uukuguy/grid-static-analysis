@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 
+class AnalysisPrerequisiteError(ValueError):
+    def __init__(self, message: str, **details: Any) -> None:
+        super().__init__(message)
+        self.details = details
+
+
 @dataclass(frozen=True)
 class AnalysisOutcome:
     operation: str

@@ -21,7 +21,7 @@ Unavailable in the current matrix:
 - Security-constrained OPF as a distinct coupled optimizer (ordinary AC/DC OPF is published).
 - Time series.
 - Arbitrary model file import or in-place mutation; declarative creation and immutable typed revisions are published.
-- Richer risk evaluation against user criteria or named external standards.
+- User-supplied or named-standard constraint catalogs beyond constraints present in the model.
 - Dynamic stability, dynamic protection relay simulation, and remedial action optimization.
 
 ## Parameters and Defaults
@@ -39,7 +39,7 @@ No result fields or units exist for unavailable capabilities. Any value would be
 
 ## Multi-step Examples
 
-- "Do short-circuit then rank risk" -> run `short_circuit.iec60909` and report its sourced current results; general cross-family risk ranking remains a matrix gap until `risk.rank` is published.
+- "Rank sourced violations" -> run a compatible analysis, call `analysis.result.violations.evaluate`, then call `analysis.result.risk.rank`; report unavailable constraint quantities instead of inventing limits.
 
 ## Failures and Legal Recovery
 

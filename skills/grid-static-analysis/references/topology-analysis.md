@@ -2,7 +2,7 @@
 
 ## Use This For
 
-Use this guide for source-model branch endpoints and connected component summaries with `topology.branch.endpoints.get` and `topology.components.get`.
+Use this guide for source-model branch endpoints, connected components, shortest paths, bounded neighborhoods, and unsupplied buses.
 
 ## Do Not Use This For
 
@@ -16,6 +16,9 @@ Topology endpoints are the source model's branch table endpoints. `from_bus` and
 
 - `topology.branch.endpoints.get`: returns a branch object, `from_bus`, `to_bus`, `context_ref`, `revision_ref`, and `evidence_ref`.
 - `topology.components.get`: returns `component_count` and up to 50 component summaries with `component_id`, `bus_count`, `branch_count`, and `bus_refs`.
+- `analysis.run` with `topology.path`: returns a queryable ordered bus path in `result.res_topology_path`.
+- `analysis.run` with `topology.neighbors`: returns buses and hop depths in `result.res_topology_neighbor`.
+- `analysis.run` with `topology.unsupplied`: returns unsupplied buses in `result.res_unsupplied_bus`.
 
 ## Parameters and Defaults
 
@@ -31,6 +34,7 @@ Endpoint outputs contain branch `asset_ref`, `kind`, `index`, `name`, and `alias
 
 - "Line 11 connects which buses?" -> `topology.branch.endpoints.get` with `kind: "line"`, `namespace: "pandapower_index"`, `identifier: "11"`, after opening context.
 - "How many islands are in this model?" -> `topology.components.get` with the current `context_ref`.
+- "Which buses are within two hops?" -> describe and run `topology.neighbors`, then query `result.res_topology_neighbor`.
 
 ## Multi-step Examples
 

@@ -2,7 +2,7 @@
 
 ## Use This For
 
-Use this guide for runtime discovery, supported model selection, declarative creator discovery, model creation, immutable revision derivation, and context lookup with `environment.describe`, `model.list`, `model.creator.list`, `model.creator.describe`, `model.create`, `context.open`, `model.revision.derive`, and `context.get`.
+Use this guide for runtime discovery, supported model selection, declarative creator discovery, model creation, immutable revision and equivalent derivation, and context lookup with `environment.describe`, `model.list`, `model.creator.list`, `model.creator.describe`, `model.create`, `context.open`, `model.revision.derive`, `model.equivalent.derive`, and `context.get`.
 
 ## Do Not Use This For
 
@@ -22,6 +22,7 @@ The runtime exposes a versioned allowlist of compatible zero-required-argument f
 - `context.open`: input `model_id`; output `context_ref`, `model`, `engine`, `pandapower_version`, `source`, `semantic_sha256`, and counts.
 - `context.get`: input `context_ref`; output `model` and counts for buses, lines, and transformers.
 - `model.revision.derive`: create a child revision through typed `set`, `scale`, `in_service`, `switch_state`, `create`, and referential `drop` patches; failed patches leave the parent and workspace revision set unchanged.
+- `model.equivalent.derive`: create a Ward, extended-Ward, or REI child context from resolved boundary and internal bus refs; the parent remains unchanged and the output carries `lineage_ref` and `parent_context_ref`.
 
 ## Parameters and Defaults
 
@@ -43,6 +44,7 @@ Counts are integers: `buses`, `lines`, and `transformers`. `semantic_sha256` ide
 
 - "Run AC flow on IEEE-39" -> `context.open` -> `analysis.powerflow.ac.run`.
 - "How many lines are in the opened model?" -> `context.open` -> `context.get` if the context is already known.
+- "Reduce the external network to a Ward equivalent" -> resolve the boundary/internal buses -> `model.equivalent.derive` -> use the returned child `context_ref`.
 
 ## Failures and Legal Recovery
 

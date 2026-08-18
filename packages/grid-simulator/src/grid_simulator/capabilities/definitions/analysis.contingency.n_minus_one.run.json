@@ -25,6 +25,7 @@
         "uniqueItems": true,
         "items": {"type": "string", "pattern": "^asset:(line|trafo|trafo3w):sha256:[0-9a-f]{64}$"}
       },
+      "analysis_method": {"type": "string", "enum": ["ac", "dc"]},
       "solver_profile": {"type": "string", "enum": ["ac-default-v1"]},
       "algorithm": {"type": "string", "enum": ["nr", "iwamoto_nr", "bfsw"]},
       "calculate_voltage_angles": {"type": "boolean"},
@@ -35,6 +36,8 @@
       "trafo_loading": {"type": "string", "enum": ["current", "power"]},
       "enforce_q_lims": {"type": "boolean"},
       "check_connectivity": {"type": "boolean"},
+      "switch_rx_ratio": {"type": "number", "exclusiveMinimum": 0},
+      "trafo3w_losses": {"type": "string", "enum": ["hv", "mv", "lv", "star"]},
       "violation_types": {
         "type": "array",
         "minItems": 1,
@@ -64,22 +67,48 @@
       },
       "status": {"type": "string", "enum": ["succeeded", "partial", "failed"]},
       "solver": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["profile", "operation", "algorithm", "calculate_voltage_angles", "init", "max_iteration", "tolerance_mva", "trafo_model", "trafo_loading", "enforce_q_lims", "check_connectivity"],
-        "properties": {
-          "profile": {"type": "string", "enum": ["ac-default-v1"]},
-          "operation": {"type": "string", "enum": ["pandapower.runpp"]},
-          "algorithm": {"type": "string", "enum": ["nr", "iwamoto_nr", "bfsw"]},
-          "calculate_voltage_angles": {"type": "boolean"},
-          "init": {"type": "string", "enum": ["auto", "flat", "dc", "results"]},
-          "max_iteration": {"type": "integer", "minimum": 1, "maximum": 100},
-          "tolerance_mva": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-          "trafo_model": {"type": "string", "enum": ["t", "pi"]},
-          "trafo_loading": {"type": "string", "enum": ["current", "power"]},
-          "enforce_q_lims": {"type": "boolean"},
-          "check_connectivity": {"type": "boolean"}
-        }
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["profile", "operation", "algorithm", "calculate_voltage_angles", "init", "max_iteration", "tolerance_mva", "trafo_model", "trafo_loading", "enforce_q_lims", "check_connectivity"],
+            "properties": {
+              "profile": {"const": "ac-default-v1"},
+              "operation": {"const": "pandapower.runpp"},
+              "algorithm": {"type": "string", "enum": ["nr", "iwamoto_nr", "bfsw"]},
+              "calculate_voltage_angles": {"type": "boolean"},
+              "init": {"type": "string", "enum": ["auto", "flat", "dc", "results"]},
+              "max_iteration": {"type": "integer", "minimum": 1, "maximum": 100},
+              "tolerance_mva": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+              "trafo_model": {"type": "string", "enum": ["t", "pi"]},
+              "trafo_loading": {"type": "string", "enum": ["current", "power"]},
+              "enforce_q_lims": {"type": "boolean"},
+              "check_connectivity": {"type": "boolean"}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["method", "profile", "operation", "options"],
+            "properties": {
+              "method": {"const": "dc"},
+              "profile": {"const": "dc-default-v1"},
+              "operation": {"const": "pandapower.rundcpp"},
+              "options": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["trafo_model", "trafo_loading", "check_connectivity", "switch_rx_ratio", "trafo3w_losses"],
+                "properties": {
+                  "trafo_model": {"type": "string", "enum": ["t", "pi"]},
+                  "trafo_loading": {"type": "string", "enum": ["current", "power"]},
+                  "check_connectivity": {"type": "boolean"},
+                  "switch_rx_ratio": {"type": "number"},
+                  "trafo3w_losses": {"type": "string", "enum": ["hv", "mv", "lv", "star"]}
+                }
+              }
+            }
+          }
+        ]
       },
       "evidence_refs": {
         "type": "array",
@@ -163,7 +192,7 @@
   "risk": "read_only_analysis",
   "pandapower": {
     "version": "3.4.0",
-    "operation": "deep copy net, set one stable branch out of service, run pandapower.runpp",
-    "limitations": ["AC steady-state only", "each scenario uses a fresh deep copy and partial aggregates keep successful scenario evidence"]
+    "operation": "deep copy net, set one stable branch out of service, run pandapower.runpp or rundcpp",
+    "limitations": ["AC and DC steady-state evaluation", "each scenario uses a fresh deep copy and partial aggregates keep successful scenario evidence"]
   }
 }

@@ -2,7 +2,7 @@
 
 ## Use This For
 
-Use this guide for complete persisted result access with `result.dataset.list`, `result.dataset.describe`, `result.dataset.query`, `result.aggregate`, `result.compare`, for AC branch ranking with `result.branches.rank`, and for deciding which returned references ground the answer.
+Use this guide for complete persisted result access with `result.dataset.list`, `result.dataset.describe`, `result.dataset.query`, `result.aggregate`, `result.compare`, AC branch ranking with `result.branches.rank`, sourced violation/risk analysis, and deciding which returned references ground the answer.
 
 ## Do Not Use This For
 
@@ -24,6 +24,8 @@ Do not use result tools to run a new analysis, fabricate missing rows, read raw 
 - `result.dataset.query`: bounded select/filter/sort/page access.
 - `result.aggregate`: count, sum, min, max, or average, optionally grouped by up to three fields.
 - `result.compare`: compare identical datasets across two results using explicit key and value fields.
+- `analysis.result.violations.evaluate`: consume a compatible `result_ref`, apply only model-sourced voltage/loading limits, and persist `result.res_violation` with deviations and constraint refs.
+- `analysis.result.risk.rank`: consume a violation result, apply explicit/default severity weights to normalized exceedance, and persist `result.res_risk`.
 - `evidence.get`: retrieve current-run topology or analysis evidence by its returned reference; do not use it to retrieve ranking rows.
 
 ## Parameters and Defaults
@@ -51,6 +53,7 @@ Outputs include `result_ref`, `context_ref`, `revision_ref`, `metric`, `metric_u
 - Generic workflow: `context.open` -> `analysis.operation.describe` -> `analysis.run` -> `result.dataset.list` -> `result.dataset.describe` -> query or aggregate.
 - Revision comparison: run the same operation on parent and derived contexts -> `result.compare` with `key_fields: ["index"]` and explicit fields.
 - Critical-contingency workflow: rank top loaded branches, then pass their `branch_ref` values to `analysis.contingency.n_minus_one.run`.
+- Constraint workflow: run analysis -> evaluate violations -> rank risk -> query `result.res_violation` or `result.res_risk`; keep the source and derived result refs distinct.
 
 ## Failures and Legal Recovery
 

@@ -72,12 +72,12 @@ def test_score_reports_truthful_in_scope_coverage() -> None:
     score = matrix_module.score_matrix(matrix)
 
     assert score.total_in_scope == 24
-    assert score.published == 18
-    assert score.partial == 3
-    assert score.missing == 3
-    assert score.coverage_percent == 75.0
-    assert score.release_ready is False
-    assert score.per_package["model-lifecycle"] == 75.0
+    assert score.published == 24
+    assert score.partial == 0
+    assert score.missing == 0
+    assert score.coverage_percent == 100.0
+    assert score.release_ready is True
+    assert score.per_package["model-lifecycle"] == 100.0
     assert score.per_package["model-data"] == 100.0
     assert score.per_package["result-analysis"] == 100.0
     assert score.per_package["power-flow"] == 100.0
@@ -85,6 +85,10 @@ def test_score_reports_truthful_in_scope_coverage() -> None:
     assert score.per_package["short-circuit"] == 100.0
     assert score.per_package["state-estimation"] == 100.0
     assert score.per_package["diagnostic"] == 100.0
+    assert score.per_package["topology"] == 100.0
+    assert score.per_package["contingency"] == 100.0
+    assert score.per_package["policy-risk"] == 100.0
+    assert score.per_package["protection"] == 100.0
 
 
 def test_score_requires_all_in_scope_rows_for_release(tmp_path: Path) -> None:

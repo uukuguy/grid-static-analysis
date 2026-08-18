@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "matrix": "pandapower-3.4.0-static-analysis.json",
+  "rows": [
+    {"id":"model.catalog","capabilities":["model.list","context.open"],"operations":[],"creators":[]},
+    {"id":"model.create","capabilities":["model.creator.list","model.creator.describe","model.create"],"operations":[],"creators":["bus","ext_grid","line_from_parameters","load"]},
+    {"id":"model.revision.derive","capabilities":["model.revision.derive"],"operations":[],"creators":[]},
+    {"id":"network.datasets","capabilities":["model.dataset.list","model.dataset.describe","model.dataset.query","model.element.get"],"operations":[],"creators":[]},
+    {"id":"topology.core","capabilities":["topology.branch.endpoints.get","topology.components.get","analysis.run"],"operations":["topology.path","topology.neighbors","topology.unsupplied"],"creators":[]},
+    {"id":"diagnostic.run","capabilities":["analysis.operation.describe","analysis.run"],"operations":["diagnostic.run"],"creators":[]},
+    {"id":"powerflow.ac","capabilities":["analysis.powerflow.ac.run","analysis.run"],"operations":["powerflow.ac"],"creators":[]},
+    {"id":"powerflow.dc","capabilities":["analysis.run"],"operations":["powerflow.dc"],"creators":[]},
+    {"id":"powerflow.three_phase","capabilities":["analysis.run"],"operations":["powerflow.three_phase"],"creators":[]},
+    {"id":"opf.ac","capabilities":["analysis.run"],"operations":["opf.ac"],"creators":[]},
+    {"id":"opf.dc","capabilities":["analysis.run"],"operations":["opf.dc"],"creators":[]},
+    {"id":"short_circuit.iec60909","capabilities":["analysis.run"],"operations":["short_circuit.iec60909"],"creators":["ext_grid"]},
+    {"id":"state_estimation.estimate","capabilities":["analysis.run"],"operations":["state_estimation.estimate"],"creators":["measurement"]},
+    {"id":"state_estimation.bad_data","capabilities":["analysis.run"],"operations":["state_estimation.chi2","state_estimation.remove_bad_data"],"creators":["measurement"]},
+    {"id":"contingency.n_minus_one","capabilities":["analysis.contingency.n_minus_one.run"],"operations":[],"creators":[]},
+    {"id":"constraints.violations","capabilities":["model.constraints.describe","analysis.result.violations.evaluate"],"operations":[],"creators":[]},
+    {"id":"risk.rank","capabilities":["analysis.result.risk.rank"],"operations":[],"creators":[]},
+    {"id":"result.datasets","capabilities":["result.dataset.list","result.dataset.describe"],"operations":[],"creators":[]},
+    {"id":"result.query","capabilities":["result.dataset.query"],"operations":[],"creators":[]},
+    {"id":"result.aggregate","capabilities":["result.aggregate"],"operations":[],"creators":[]},
+    {"id":"result.compare","capabilities":["result.compare"],"operations":[],"creators":[]},
+    {"id":"grid_equivalents","capabilities":["model.equivalent.derive"],"operations":[],"creators":[]},
+    {"id":"protection.static","capabilities":["model.create","analysis.run"],"operations":["protection.static"],"creators":["protection_fuse"]},
+    {"id":"evidence.current_run","capabilities":["evidence.get"],"operations":[],"creators":[]}
+  ]
+}

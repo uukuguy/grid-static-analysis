@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
+import pandapower as pp
 from pandapower.auxiliary import LoadflowNotConverged
 
 from grid_simulator.analysis_registry import AnalysisOutcome
@@ -166,6 +167,12 @@ def run_n_minus_one(
     solver = _solver(arguments, engine)
     violation_types = set(arguments.get("violation_types", _default_violation_types()))
     constraints = extract_model_constraints(net, context.revision_ref)
+    if solver["method"] == "dc":
+        constraints = ModelConstraints(
+            summaries=constraints.summaries,
+            bus_voltage={},
+            branch_loading=constraints.branch_loading,
+        )
     scenarios = []
     evidence_refs = []
     for scenario_index, branch in enumerate(branches):
@@ -279,7 +286,10 @@ def _run_contingency_scenario(
     constraints: ModelConstraints,
 ) -> dict[str, Any]:
     try:
-        engine.run_ac(net, solver["options"])
+        if solver["method"] == "dc":
+            pp.rundcpp(net, **solver["options"])
+        else:
+            engine.run_ac(net, solver["options"])
     except LoadflowNotConverged:
         diagnostic = persist_non_convergence_diagnostics(
             workspace=workspace,
@@ -328,7 +338,9 @@ def _run_contingency_scenario(
     evaluated_violations, constraint_evaluation = evaluate_constraints(powerflow, constraints)
     violations = _filter_violations(evaluated_violations, violation_types)
     max_loading_percent = _max_line_loading(powerflow)
-    min_vm_pu, max_vm_pu = _voltage_extrema(powerflow)
+    min_vm_pu, max_vm_pu = (
+        _voltage_extrema(powerflow) if solver["method"] == "ac" else (None, None)
+    )
     scenario_status = "succeeded"
     scenario_document = {
         "scenario_index": scenario_index,
@@ -382,6 +394,21 @@ def _run_contingency_scenario(
 
 
 def _solver(arguments: dict[str, Any], engine: Any) -> dict[str, Any]:
+    method = str(arguments.get("analysis_method", "ac"))
+    if method == "dc":
+        options = {
+            "trafo_model": str(arguments.get("trafo_model", "t")),
+            "trafo_loading": str(arguments.get("trafo_loading", "current")),
+            "check_connectivity": bool(arguments.get("check_connectivity", True)),
+            "switch_rx_ratio": float(arguments.get("switch_rx_ratio", 2.0)),
+            "trafo3w_losses": str(arguments.get("trafo3w_losses", "hv")),
+        }
+        return {
+            "method": "dc",
+            "profile": "dc-default-v1",
+            "operation": "pandapower.rundcpp",
+            "options": options,
+        }
     profile = str(arguments.get("solver_profile", AC_SOLVER_PROFILE))
     options = dict(engine.ac_options)
     for key in (
@@ -397,7 +424,12 @@ def _solver(arguments: dict[str, Any], engine: Any) -> dict[str, Any]:
     ):
         if key in arguments:
             options[key] = arguments[key]
-    return {"profile": profile, "operation": "pandapower.runpp", "options": options}
+    return {
+        "method": "ac",
+        "profile": profile,
+        "operation": "pandapower.runpp",
+        "options": options,
+    }
 
 
 def _rank_key(row: dict[str, Any], metric: str, direction: str) -> tuple[bool, float]:
@@ -417,6 +449,13 @@ def _filter_violations(violations: list[dict[str, Any]], allowed: set[str]) -> l
 
 
 def _solver_summary(solver: dict[str, Any]) -> dict[str, Any]:
+    if solver["method"] == "dc":
+        return {
+            "method": "dc",
+            "profile": solver["profile"],
+            "operation": solver["operation"],
+            "options": dict(solver["options"]),
+        }
     return {
         "profile": solver["profile"],
         "operation": solver["operation"],

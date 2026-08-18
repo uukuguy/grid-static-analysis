@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 import pandapower.create as pp_create
+from pandapower.protection.protection_devices.fuse import Fuse
 
 
 class UnknownCreatorError(ValueError):
@@ -36,7 +37,33 @@ def _creator_bindings() -> dict[str, Any]:
             parameters = list(inspect.signature(function).parameters.values())
             if parameters and parameters[0].name == "net":
                 bindings[name.removeprefix("create_")] = function
+    bindings["protection_fuse"] = _create_protection_fuse
     return bindings
+
+
+def _create_protection_fuse(
+    net: Any,
+    switch_index: int,
+    fuse_type: str = "none",
+    rated_i_a: float = 0,
+    characteristic_index: int | None = None,
+    in_service: bool = True,
+    curve_select: int = 0,
+    z_ohm: float = 0.0001,
+    name: str | None = None,
+) -> int:
+    device = Fuse(
+        net,
+        switch_index=switch_index,
+        fuse_type=fuse_type,
+        rated_i_a=rated_i_a,
+        characteristic_index=characteristic_index,
+        in_service=in_service,
+        curve_select=curve_select,
+        z_ohm=z_ohm,
+        name=name,
+    )
+    return int(device.index)
 
 
 _CREATORS = _creator_bindings()
@@ -57,6 +84,7 @@ _REFERENCE_ARGUMENTS = frozenset(
         "trafo",
         "trafos",
         "switch",
+        "switch_index",
         "switches",
     }
 )

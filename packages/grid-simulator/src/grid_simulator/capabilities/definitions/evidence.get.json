@@ -38,7 +38,7 @@
         ],
         "properties": {
           "evidence_type": {"type": "string", "enum": ["network_fact", "analysis_result", "contingency_scenario", "powerflow_non_convergence"]},
-          "capability_id": {"type": "string", "enum": ["topology.branch.endpoints.get", "model.constraints.describe", "analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run", "analysis.run"]},
+          "capability_id": {"type": "string", "enum": ["topology.branch.endpoints.get", "model.constraints.describe", "analysis.powerflow.ac.run", "analysis.contingency.n_minus_one.run", "analysis.run", "analysis.result.violations.evaluate", "analysis.result.risk.rank"]},
           "operation": {"type": "string"},
           "context_ref": {"type": "string", "pattern": "^context:sha256:[0-9a-f]{64}$"},
           "revision_ref": {"type": "string", "pattern": "^revision:sha256:[0-9a-f]{64}$"},

@@ -30,10 +30,16 @@ from grid_simulator.analysis_registry import (
     AnalysisRegistry,
     UnknownAnalysisOperationError,
 )
+from grid_simulator.bindings.base import AnalysisPrerequisiteError
 from grid_simulator.capabilities import CapabilityRegistry
 from grid_simulator.capabilities.families import CAPABILITY_FAMILIES
 from grid_simulator.capabilities.schema import CapabilityContract
 from grid_simulator.constraints import describe_model_constraints
+from grid_simulator.derived_results import (
+    DerivedResultError,
+    evaluate_result_violations,
+    rank_result_risk,
+)
 from grid_simulator.creators import (
     CreatorArgumentsError,
     CreatorRegistry,
@@ -41,6 +47,7 @@ from grid_simulator.creators import (
     UnknownElementReferenceError,
 )
 from grid_simulator.engine import Pandapower340Engine
+from grid_simulator.equivalents import EquivalentDerivationError, derive_equivalent
 from grid_simulator.evidence import canonical_json, fingerprint, write_json
 from grid_simulator.models import (
     ContextIntegrityError,
@@ -87,11 +94,14 @@ EXECUTABLE_CAPABILITIES = frozenset(
         "analysis.operation.list",
         "analysis.operation.describe",
         "analysis.run",
+        "analysis.result.violations.evaluate",
+        "analysis.result.risk.rank",
         "model.list",
         "model.creator.list",
         "model.creator.describe",
         "model.create",
         "model.revision.derive",
+        "model.equivalent.derive",
         "context.open",
         "context.get",
         "model.constraints.describe",
@@ -149,6 +159,10 @@ def _dispatch(
         return _analysis_operation_describe(request.arguments)
     if request.capability == "analysis.run":
         return _analysis_run(workspace, services.engine, request.arguments)
+    if request.capability == "analysis.result.violations.evaluate":
+        return _analysis_result_violations_evaluate(workspace, services.engine, request.arguments)
+    if request.capability == "analysis.result.risk.rank":
+        return _analysis_result_risk_rank(workspace, services.engine, request.arguments)
     if request.capability == "model.list":
         return _model_list(services.engine)
     if request.capability == "model.creator.list":
@@ -159,6 +173,8 @@ def _dispatch(
         return _model_create(workspace, services.engine, request.arguments)
     if request.capability == "model.revision.derive":
         return _model_revision_derive(workspace, services.engine, request.arguments)
+    if request.capability == "model.equivalent.derive":
+        return _model_equivalent_derive(workspace, services.engine, request.arguments)
     if request.capability == "context.open":
         return _context_open(workspace, services.engine, request.arguments)
     if request.capability == "context.get":
@@ -254,6 +270,7 @@ def _analysis_run(
     operation = str(arguments["operation"])
     options = dict(arguments["options"])
     context, net = _load_context_and_network(workspace, engine, str(arguments["context_ref"]))
+    net["_grid_agent_revision_ref"] = context.revision_ref
     try:
         outcome = AnalysisRegistry().execute(operation, engine, net, options)
     except UnknownAnalysisOperationError as exc:
@@ -271,6 +288,14 @@ def _analysis_run(
             phase="validate",
             allowed_recovery_actions=("describe_analysis_operation",),
             details={"operation": operation},
+        ) from exc
+    except AnalysisPrerequisiteError as exc:
+        raise _failure(
+            "analysis_prerequisite_missing",
+            str(exc),
+            phase="resolve",
+            allowed_recovery_actions=("inspect_operation_prerequisites", "derive_compatible_model"),
+            details={"operation": operation, **exc.details},
         ) from exc
     except LoadflowNotConverged as exc:
         diagnostic = persist_non_convergence_diagnostics(
@@ -323,6 +348,55 @@ def _analysis_run(
     }
 
 
+def _analysis_result_violations_evaluate(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        return evaluate_result_violations(workspace, engine, str(arguments["result_ref"]))
+    except UnknownStoredResultError as exc:
+        raise _failure(
+            "unknown_result",
+            str(exc),
+            phase="resolve",
+            allowed_recovery_actions=("run_source_analysis",),
+        ) from exc
+    except (ContextNotFoundError, ContextIntegrityError, InvalidContextRef) as exc:
+        raise _failure("unknown_context", str(exc), phase="resolve") from exc
+    except (DerivedResultError, StoredResultIntegrityError, ValueError) as exc:
+        raise _failure(
+            "derived_result_failed",
+            f"Result violation evaluation failed: {exc}",
+            phase="execute",
+            details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+        ) from exc
+    except OSError as exc:
+        raise _failure("persist_failed", "Violation result could not be persisted", phase="persist") from exc
+
+
+def _analysis_result_risk_rank(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        return rank_result_risk(
+            workspace,
+            engine,
+            str(arguments["result_ref"]),
+            {key: float(value) for key, value in dict(arguments.get("severity_weights", {})).items()},
+            int(arguments.get("limit", 20)),
+        )
+    except UnknownStoredResultError as exc:
+        raise _failure("unknown_result", str(exc), phase="resolve") from exc
+    except (DerivedResultError, StoredResultIntegrityError, ValueError) as exc:
+        raise _failure(
+            "derived_result_failed",
+            f"Risk ranking failed: {exc}",
+            phase="execute",
+            details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+        ) from exc
+    except OSError as exc:
+        raise _failure("persist_failed", "Risk result could not be persisted", phase="persist") from exc
+
+
 def _model_list(engine: Pandapower340Engine) -> dict[str, Any]:
     return {
         "models": [
@@ -330,6 +404,31 @@ def _model_list(engine: Pandapower340Engine) -> dict[str, Any]:
             for model in ModelRegistry(engine).list()
         ]
     }
+
+
+def _model_equivalent_derive(
+    workspace: SimulatorWorkspace, engine: Pandapower340Engine, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        return derive_equivalent(workspace, engine, arguments)
+    except (InvalidContextRef, ContextNotFoundError, ContextIntegrityError) as exc:
+        raise _failure("unknown_context", str(exc), phase="resolve") from exc
+    except EquivalentDerivationError as exc:
+        code = "unknown_bus" if "unknown bus refs" in str(exc) else "equivalent_derivation_failed"
+        raise _failure(
+            code,
+            str(exc),
+            phase="resolve" if code == "unknown_bus" else "execute",
+            allowed_recovery_actions=("resolve_boundary_partition",),
+            details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+        ) from exc
+    except Exception as exc:
+        raise _failure(
+            "equivalent_derivation_failed",
+            f"Pandapower grid-equivalent derivation failed: {exc}",
+            phase="execute",
+            details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+        ) from exc
 
 
 def _model_creator_list(engine: Pandapower340Engine) -> dict[str, Any]:

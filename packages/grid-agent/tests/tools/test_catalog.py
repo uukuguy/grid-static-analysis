@@ -85,6 +85,36 @@ def test_catalog_publishes_bounded_decision_as_agent_intent(
     assert decision.input_schema["properties"]["refs"]["maxItems"] == 20
 
 
+def test_catalog_materializes_every_published_simulator_capability(
+    capability_documents: tuple[dict[str, object], ...],
+) -> None:
+    published = [
+        {
+            "id": document["id"],
+            "availability": document["availability"],
+            "context_effect": document["context_effect"],
+        }
+        for document in capability_documents
+        if document.get("availability") == "published"
+    ]
+
+    catalog = ToolCatalog.from_environment(
+        capability_documents,
+        {"executable_capabilities": published},
+    )
+
+    assert {tool.capability for tool in catalog.tools} == {
+        *(str(document["id"]) for document in capability_documents),
+        "grid_record_decision",
+    }
+    assert catalog.require("grid_model_equivalent_derive").capability == "model.equivalent.derive"
+    assert (
+        catalog.require("grid_analysis_result_violations_evaluate").capability
+        == "analysis.result.violations.evaluate"
+    )
+    assert catalog.require("grid_analysis_result_risk_rank").capability == "analysis.result.risk.rank"
+
+
 def test_catalog_rejects_schema_drift() -> None:
     with pytest.raises(ToolCatalogError, match="input_schema"):
         ToolCatalog.from_documents(

@@ -14,6 +14,10 @@ EXPECTED_OPERATIONS = {
     "state_estimation.chi2",
     "state_estimation.remove_bad_data",
     "diagnostic.run",
+    "topology.path",
+    "topology.neighbors",
+    "topology.unsupplied",
+    "protection.static",
 }
 
 
@@ -48,6 +52,10 @@ def test_registry_publishes_every_native_static_analysis_with_closed_options(gri
         "state_estimation.chi2": {"init", "chi2_prob_false"},
         "state_estimation.remove_bad_data": {"init", "rn_max_threshold"},
         "diagnostic.run": {"warnings_only", "overload_scaling_factor", "nom_voltage_tolerance"},
+        "topology.path": {"source_bus", "target_bus", "respect_switches"},
+        "topology.neighbors": {"source_bus", "max_depth", "respect_switches"},
+        "topology.unsupplied": {"respect_switches", "include_lines", "include_trafos"},
+        "protection.static": {"scenario", "fault", "case"},
     }
     for operation, required in expected_options.items():
         described = grid.call("analysis.operation.describe", {"operation": operation})
