@@ -1,5 +1,12 @@
 # Architectural Decisions
 
+## 2026-08-18 — Model-facing contracts must publish exact composition syntax
+
+- **Decision:** dynamic creator contracts publish the exact `{"element_ref":"<earlier_local_id>"}` encoding and transaction ordering rule; guide tools enumerate only the resource IDs present in the generated guide index.
+- **Reason:** a boolean “accepts reference” marker and unconstrained guide string forced the LLM to guess encodings and resource names even though the execution capability already existed.
+- **Boundary:** this is contract discovery, not a question-specific shortcut; creator execution remains allowlisted and all network construction remains inside `gridctl`.
+- **Validation:** the standard seven-question provider analysis passes, and a focused provider regression performs first-attempt local-reference model creation without audit findings.
+
 ## 2026-08-18 — Full pandapower static-analysis capability is current scope
 
 - **Decision:** all pandapower 3.4.0 capabilities relevant to static power-system analysis are current release scope, not future WP-B work. Test questions probe the capability surface and never define it.

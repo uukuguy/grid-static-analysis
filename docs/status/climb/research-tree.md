@@ -6,10 +6,10 @@
 
 ## In-flight
 
-- Phase: release closure
+- Phase: complete
 - Last cycle: 4
 - Next hypothesis: none
-- Next action: Run complete release verification and provider semantic acceptance.
+- Next action: none — full release gates and provider semantic acceptance completed
 
 ## Runs
 

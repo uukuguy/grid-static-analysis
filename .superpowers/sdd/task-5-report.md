@@ -35,6 +35,20 @@
 ## Regression Gate Fix
 
 - Status: resolved with a documentation-only wording change in the trajectory capture plan; the plan remains operative.
-- Commit: `5b35ea4` (`docs: fix task 5 boundary verification wording`).
+- Commit: `e41874b` (`docs: fix task 5 boundary verification wording`).
 - Tests: `uv run --project packages/grid-agent pytest packages/grid-agent/tests/contract/test_repository_boundaries.py -q` — 6 passed; `git diff --check` — passed.
 - Concerns: none known; the pre-existing `docs/status/JOURNAL.md` modification was left untouched.
+
+## Completion
+
+- Delivered `grid-agent trajectory serve` and `make trajectory PORT=8765` with
+  loopback-only binding, stderr-only startup failures, and no answer envelope.
+- Closed the API review gaps: request-validation responses are typed and carry
+  every browser security header; artifact bytes are read through a
+  descriptor-relative `O_NOFOLLOW` chain, `fstat`-verified, and hashed from the
+  same descriptor.
+- Focused verification: trajectory API 48 passed, CLI 21 passed, `make doctor`
+  passed, ruff passed, and task-scoped pyright reported 0 errors.
+- Broad `pyright packages/grid-agent/src` remains red only for 29 pre-existing
+  errors outside this task's files (`config/catalog.py`, `knowledge/offline.py`,
+  `reporting.py`, and `validation/oracles.py`).

@@ -4,10 +4,10 @@
 
 - Project: grid-static-analysis
 - Current branch: main
-- Theme-level focus: full pandapower 3.4.0 static-analysis capability delivery
+- Theme-level focus: full pandapower 3.4.0 static-analysis capability maintenance
 - Project route: direct
 - Canonical worklist: `docs/superpowers/plans/2026-08-18-pandapower-static-analysis-full-capability.md`
-- Active work package: H-001 executable coverage baseline, followed by model/data and analysis/result substrate
+- Active work package: none; the 24-row full-capability release is closed
 
 ## Current Architecture
 
@@ -24,9 +24,9 @@
 
 ## Open Problems (theme-level)
 
-- Current executable capability surface is the narrow WP-A slice, not the required full static-analysis product.
-- Model catalog, immutable derivation, complete datasets/results, DC/OPF/short-circuit/state-estimation and semantic validation are incomplete.
-- Provider latency remains externally variable; capability expansion must preserve non-blocking trajectory observation.
+- No release-blocking capability gaps are known in the declared static-analysis scope.
+- Pandapower/pandas emit upstream deprecation warnings in state-estimation and legacy network construction paths; these do not change current results.
+- Provider latency remains externally variable; future changes must preserve non-blocking trajectory observation.
 
 ## Key Files
 
@@ -62,5 +62,5 @@
 1. Read this file, then `RESUME-NEXT-SESSION.md` and the tail of `JOURNAL.md`.
 2. Run `git status --short`, `git log --oneline -5`, and `make doctor`.
 3. Use `make test`, `make test-e2e`, and `make validate` before changing a verified boundary.
-4. Use `runs/analysis-20260817T192329Z/` as the latest clean provider-backed trajectory baseline.
+4. Use `runs/analysis-20260818T072653Z/` as the full 7/7 provider-backed semantic baseline and `runs/analysis-20260818T073514Z/` as the model-construction contract regression.
 5. Preserve the invariant that observation and validation may diagnose primary execution but may not introduce provider backpressure or reject a valid answer.

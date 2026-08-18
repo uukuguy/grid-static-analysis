@@ -10,7 +10,7 @@
 | `INDEX.md` | This discovery index. |
 | `DECISIONS.md` | Active architectural decision ledger. |
 | `climb/research-tree.md` | Generated full-capability hypothesis and scoring summary; resume-load. |
-| `climb/session-state.json` | Active climb cycle and next action. |
+| `climb/session-state.json` | Completed Climb session state and terminal next action. |
 
 ## Climb storage and configuration
 

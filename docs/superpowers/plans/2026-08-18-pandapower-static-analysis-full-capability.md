@@ -176,8 +176,8 @@
 - Update active architecture/status/decision documentation
 - Remove obsolete WP-A limitation guidance and tests
 
-- [ ] Run focused family suites after every task.
-- [ ] Run `make doctor`, `make test`, `make test-e2e`, `make validate` and the matrix checker.
-- [ ] Run provider-backed `make analysis INSTRUCTIONS=validation/questions/test.md.txt` using the configured `.env` credentials.
-- [ ] Inspect report, current-run evidence and semantic oracle; require all gates green.
-- [ ] Commit coherent changes, regenerate climb state, refresh the active-session checkpoint, and verify no worktree or branch is left half-integrated.
+- [x] Run focused family suites after every task.
+- [x] Run `make doctor`, `make test`, `make test-e2e`, `make validate` and the matrix checker.
+- [x] Run provider-backed `make analysis INSTRUCTIONS=validation/questions/test.md.txt` using the configured `.env` credentials.
+- [x] Inspect report, current-run evidence and semantic oracle; require all gates green.
+- [x] Commit coherent changes, regenerate climb state, refresh the active-session checkpoint, and verify no worktree or branch is left half-integrated.

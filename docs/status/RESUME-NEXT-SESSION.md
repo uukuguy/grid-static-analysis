@@ -1,33 +1,34 @@
-# Live Session Checkpoint
+# Completed Session Checkpoint
 
-> Updated: 2026-08-18 14:52 CST. **Session remains active — not a final handoff.**
+> Updated: 2026-08-18 15:48 CST. The full-capability Climb session is complete.
 
 ## TL;DR
 
 - The full pandapower 3.4.0 static-analysis architecture is implemented without question-specific branches.
-- Commit `571f016` publishes all 24/24 in-scope matrix rows and contract-derived Agent/Pi/Skill materialization.
-- The remaining release boundary is semantic validation against the authored answer corpus and provider-backed acceptance.
+- All 24/24 in-scope matrix rows are published, materialized across Simulator/Agent/Pi/Skill, and verified by four evidence lanes.
+- The authored seven-question corpus and a focused model-construction regression both pass against the configured DeepSeek provider.
 
 ## Durable baseline
 
 - Branch: `main`
-- Latest climb commit: `571f016 feat: complete static analysis capability surface`
-- Verified gates: agent 566 passed, simulator 163 passed, Pi tools 34 passed.
+- Latest capability fix: `3c2dcf7 fix: make model construction contracts self-describing`
+- Verified gates: agent 572 passed, simulator 164 passed, Pi tools 34 passed, E2E 17 passed.
 - Capability matrix: 24/24 published (100%), 0 partial, 0 missing, release-ready.
 - Capability source of truth: `configs/capabilities/pandapower-3.4.0-static-analysis.json`
 - Cross-layer materialization: `configs/capabilities/pandapower-3.4.0-materialization.json`
 - Architecture: `docs/superpowers/specs/2026-08-18-pandapower-static-analysis-full-capability-design.md`
 - Plan: `docs/superpowers/plans/2026-08-18-pandapower-static-analysis-full-capability.md`
 
-## In-flight work
+## Completed work
 
-- Tasks 1–8 are complete and committed.
-- Task 9 is active: semantic oracle, held-out family validation, and `make validate` semantic failure behavior.
-- Task 10 follows immediately with doctor, full tests, E2E, validation, provider-backed `make analysis`, artifact inspection, and clean-worktree closure.
+- Tasks 1–10 are complete.
+- Deterministic validation passes 7/7 offline, 10/10 static core, and 8/8 full semantic cases.
+- Provider run `analysis-20260818T072653Z` completed 7/7 with the expected topology, power-flow, OPF, short-circuit and scaled-load results.
+- Provider regression `analysis-20260818T073514Z` used the published local-reference syntax on its first `model.create` attempt and completed 1/1 without audit findings.
 
 ## Immediate next action
 
-Inspect `docs/test_script/测试题目答案.jsonl` and the current validation harness; implement answer-corpus oracle tests before changing evaluator behavior.
+None for this release. Start a new scoped plan for any subsequent product change.
 
 ## Ruled-out paths
 

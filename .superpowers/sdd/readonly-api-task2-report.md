@@ -53,3 +53,35 @@ The factory keeps its approved `cursor_codec` parameter but does not invoke it
 until the signed cursor/paging task exists. No paging, context, or artifact
 route is registered now, so unavailable capabilities return the framework 404
 rather than exposing an unsound fallback.
+
+## Review follow-up: safe unexpected errors
+
+Resolved the high-severity review finding for unexpected catalog and response
+serialization failures. Both now return the fixed typed envelope:
+
+```json
+{"code":"internal_error","message":"an unexpected error occurred"}
+```
+
+The error response applies the fixed security headers itself. This is required
+because FastAPI's top-level exception handling can render an exception response
+outside the application middleware path. The existing middleware continues to
+apply the same headers to successful and framework-generated responses. The
+specific `RunNotFoundError` mapping remains a typed 404.
+
+Follow-up TDD evidence:
+
+```text
+RED: unexpected catalog exception produced FastAPI's plain-text 500 body;
+     after adding the generic handler, it still lacked x-content-type-options,
+     proving the middleware ordering gap.
+GREEN: uv run --project packages/grid-agent pytest
+       packages/grid-agent/tests/trajectory/api/test_app.py -q
+       7 passed
+
+uv run --project packages/grid-agent ruff check [review follow-up files]
+All checks passed!
+
+uv run --project packages/grid-agent pyright [review follow-up files]
+0 errors, 0 warnings, 0 informations
+```
