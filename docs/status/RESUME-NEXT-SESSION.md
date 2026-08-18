@@ -1,46 +1,47 @@
 # Live Session Checkpoint
 
-> Updated: 2026-08-18 14:18 CST. **Session remains active — not a final handoff.**
+> Updated: 2026-08-18 14:52 CST. **Session remains active — not a final handoff.**
 
 ## TL;DR
 
-- Product scope is now the complete pandapower 3.4.0 static-analysis surface, not the prior WP-A slice.
-- H-001 is confirmed and committed as `3a2d7bf`.
-- H-004 implementation is gate-green: DC and three-phase flow, AC/DC OPF, IEC 60909, state estimation/bad-data analysis, and normalized diagnostics raise matrix coverage to 18/24 (75%).
+- The full pandapower 3.4.0 static-analysis architecture is implemented without question-specific branches.
+- Commit `571f016` publishes all 24/24 in-scope matrix rows and contract-derived Agent/Pi/Skill materialization.
+- The remaining release boundary is semantic validation against the authored answer corpus and provider-backed acceptance.
 
 ## Durable baseline
 
 - Branch: `main`
-- Latest climb commit: `016b071 feat: publish unified analysis result substrate`
-- Current full regression gate: agent 565 passed, simulator 152 passed, Pi tools 33 passed.
-- Capability matrix: 18/24 published (75%); model-data, result-analysis, power-flow, OPF, short-circuit, state-estimation, diagnostic, and evidence packages are 100%.
+- Latest climb commit: `571f016 feat: complete static analysis capability surface`
+- Verified gates: agent 566 passed, simulator 163 passed, Pi tools 34 passed.
+- Capability matrix: 24/24 published (100%), 0 partial, 0 missing, release-ready.
 - Capability source of truth: `configs/capabilities/pandapower-3.4.0-static-analysis.json`
+- Cross-layer materialization: `configs/capabilities/pandapower-3.4.0-materialization.json`
 - Architecture: `docs/superpowers/specs/2026-08-18-pandapower-static-analysis-full-capability-design.md`
 - Plan: `docs/superpowers/plans/2026-08-18-pandapower-static-analysis-full-capability.md`
-- Climb state: `docs/status/climb/research-tree.md`
 
 ## In-flight work
 
-- H-004 is ready to commit; every native operation has a closed schema, stable summary, complete result capture, evidence, and safe failure diagnostics.
-- H-005 is next: finish topology, contingency, sourced violation/risk, grid-equivalent, and static protection packages.
+- Tasks 1–8 are complete and committed.
+- Task 9 is active: semantic oracle, held-out family validation, and `make validate` semantic failure behavior.
+- Task 10 follows immediately with doctor, full tests, E2E, validation, provider-backed `make analysis`, artifact inspection, and clean-worktree closure.
 
 ## Immediate next action
 
-Commit H-004, then start Task 7 RED tests for the six remaining partial/missing matrix rows.
+Inspect `docs/test_script/测试题目答案.jsonl` and the current validation harness; implement answer-corpus oracle tests before changing evaluator behavior.
 
 ## Ruled-out paths
 
 - Do not add one tool per validation question.
-- Do not register only case9 or a one-bus fixture.
-- Do not count `completed N/N` as semantic correctness.
-- Do not leave complete solver results trapped in artifacts without typed result-dataset access.
-- Do not expose arbitrary Python, callable names, filesystem paths, DataFrames or pandapowerNet objects.
+- Do not use orchestration completion as semantic correctness.
+- Do not expose arbitrary Python, callable names, filesystem paths, DataFrames, or pandapowerNet objects.
+- Do not make observer or advisory validation failures block primary analysis execution.
+- Do not treat model formatting differences as semantic mismatches.
 
 ## Ready-to-paste commands
 
 ```sh
-python3 tools/capability_matrix.py --json
+python3 tools/capability_matrix.py --check --json
 tools/climb/eval-local.sh
-uv run --project packages/grid-simulator pytest packages/grid-simulator/tests/test_capability_matrix.py -q
+make validate
 git status --short --branch
 ```

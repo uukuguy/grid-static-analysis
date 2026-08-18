@@ -130,11 +130,11 @@
 **Interfaces:**
 - Produces semantic topology paths/neighbors/unsupplied results, general contingency cases, constraint violations, ranked risk, derived equivalent revisions and static protection outcomes.
 
-- [ ] Test and implement source-aware reachability and unsupplied bus detection.
-- [ ] Generalize contingency selection across supported branch kinds and AC/DC evaluation.
-- [ ] Implement typed violation evaluation and risk ranking from sourced constraints.
-- [ ] Implement grid-equivalent derivation as a new revision with lineage.
-- [ ] Implement supported static protection evaluation and typed prerequisites.
+- [x] Test and implement source-aware reachability and unsupplied bus detection.
+- [x] Generalize contingency selection across supported branch kinds and AC/DC evaluation.
+- [x] Implement typed violation evaluation and risk ranking from sourced constraints.
+- [x] Implement grid-equivalent derivation as a new revision with lineage.
+- [x] Implement supported static protection evaluation and typed prerequisites.
 
 ### Task 8: Contract-derived Pi surface, context and Skill
 
@@ -148,10 +148,10 @@
 **Interfaces:**
 - Consumes only published capability contracts; no hand-maintained duplicate tool schemas.
 
-- [ ] Write failing materialization tests for every published matrix row.
-- [ ] Project model/revision/result lineage idempotently into bounded context.
-- [ ] Generate package guidance and verify every operation/result dataset is discoverable.
-- [ ] Prove no prohibited generic capability is exposed.
+- [x] Write failing materialization tests for every published matrix row.
+- [x] Project model/revision/result lineage idempotently into bounded context.
+- [x] Generate package guidance and verify every operation/result dataset is discoverable.
+- [x] Prove no prohibited generic capability is exposed.
 
 ### Task 9: Semantic oracle and held-out validation
 
