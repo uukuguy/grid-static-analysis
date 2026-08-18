@@ -81,7 +81,7 @@ def test_pi_launch_passes_domain_tool_paths_in_environment(tmp_path: Path) -> No
     assert launch.environment["GRID_AGENT_TOOL_CATALOG"] == str(paths.tool_catalog_path)
     assert launch.environment["GRID_AGENT_GUIDE_INDEX"] == str(paths.guide_index_path)
     assert launch.environment["GRID_AGENT_WORKSPACE"] == str(paths.workspace)
-    assert launch.environment["GRID_AGENT_ANSWER_DRAFT"] == str(paths.answer_draft_path)
+    assert "GRID_AGENT_ANSWER_DRAFT" not in launch.environment
     assert launch.environment["OPENAI_API_KEY"] == "super-secret"
 
 
@@ -225,6 +225,5 @@ def _runtime_paths(tmp_path: Path) -> RuntimePaths:
         extension_path=tmp_path / "packages/pi-grid-tools/src/domain-tools.mjs",
         tool_catalog_path=tmp_path / "run/tool-catalog.json",
         guide_index_path=tmp_path / "run/guide-index.json",
-        answer_draft_path=tmp_path / "run/answer-draft.json",
         system_policy_path=tmp_path / "configs/runtime/grid-agent-system-policy.md",
     )

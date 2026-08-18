@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,24 +10,26 @@ import domainToolsExtension, {
   sanitizeEnvironment,
 } from "../src/domain-tools.mjs";
 
-test("registers catalog tools, guide, and answer submission only", async () => {
+test("registers catalog tools and guide without model-owned answer submission", async () => {
   const root = await makeFixtureRoot();
   process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
   process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
   process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
   await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
   await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
 
   const registered = [];
   domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
 
+  assert.equal(
+    registered.some((tool) => tool.name === "grid_submit_answer"),
+    false,
+  );
   assert.deepEqual(
     registered.map((tool) => tool.name).sort(),
     [
       "grid_environment_describe",
       "grid_guide_open",
-      "grid_submit_answer",
       "grid_topology_branch_endpoints",
     ],
   );
@@ -57,7 +59,6 @@ test("registers newly published static-analysis tools directly from the catalog"
   process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
   process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
   process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
   const extraTools = [
     ["grid_model_equivalent_derive", "model.equivalent.derive"],
     ["grid_analysis_result_violations_evaluate", "analysis.result.violations.evaluate"],
@@ -79,7 +80,7 @@ test("registers newly published static-analysis tools directly from the catalog"
   }
 });
 
-test("analysis tools expose bounded context and bind answer to active turn", async () => {
+test("analysis tools expose bounded context without model-owned answer submission", async () => {
   const root = await makeFixtureRoot();
   await configureAnalysisPaths(
     root,
@@ -94,31 +95,11 @@ test("analysis tools expose bounded context and bind answer to active turn", asy
   domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
 
   assert.equal(registered.some((tool) => tool.name === "grid_analysis_context_get"), true);
+  assert.equal(registered.some((tool) => tool.name === "grid_submit_answer"), false);
   const context = await registered.find((tool) => tool.name === "grid_analysis_context_get").execute("context-1", {});
-  const submitted = await registered.find((tool) => tool.name === "grid_submit_answer").execute("submit-1", {
-    answer_output: "答案",
-    result_refs: [],
-    claim_evidence_refs: [],
-    claims: [],
-    submission_diagnostics: [],
-  });
 
   assert.equal(context.isError, undefined);
   assert.equal(context.details.result.revision, 9);
-  const draft = JSON.parse(await readFile(process.env.GRID_AGENT_ANSWER_DRAFT, "utf8"));
-  assert.match(draft.submission_id, /^[0-9a-f-]{36}$/);
-  delete draft.submission_id;
-  assert.deepEqual(draft, {
-    turn_id: "analysis-test-t002",
-    turn_nonce: "nonce-2",
-    answer_output: "答案",
-    result_refs: [],
-    claim_evidence_refs: [],
-    claims: [],
-    submission_diagnostics: [],
-  });
-  assert.equal(submitted.details.result.turn_id, "analysis-test-t002");
-  assert.equal(submitted.details.result.turn_nonce, "nonce-2");
 });
 
 test("analysis context tool is optional for legacy single-run launches", async () => {
@@ -126,7 +107,6 @@ test("analysis context tool is optional for legacy single-run launches", async (
   process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
   process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
   process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
   delete process.env.GRID_AGENT_ACTIVE_TURN;
   delete process.env.GRID_AGENT_ANALYSIS_CONTEXT_VIEW;
   await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
@@ -136,23 +116,7 @@ test("analysis context tool is optional for legacy single-run launches", async (
   domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
 
   assert.equal(registered.some((tool) => tool.name === "grid_analysis_context_get"), false);
-  const submit = registered.find((tool) => tool.name === "grid_submit_answer");
-  await submit.execute("submit-legacy", {
-    answer_output: "legacy",
-    result_refs: [],
-    claim_evidence_refs: [],
-    claims: [],
-  });
-  const draft = JSON.parse(await readFile(process.env.GRID_AGENT_ANSWER_DRAFT, "utf8"));
-  assert.match(draft.submission_id, /^[0-9a-f-]{36}$/);
-  delete draft.submission_id;
-  assert.deepEqual(draft, {
-    answer_output: "legacy",
-    result_refs: [],
-    claim_evidence_refs: [],
-    claims: [],
-    submission_diagnostics: [],
-  });
+  assert.equal(registered.some((tool) => tool.name === "grid_submit_answer"), false);
 });
 
 test("records bounded decisions only against controller-known refs", async () => {
@@ -191,87 +155,6 @@ test("records bounded decisions only against controller-known refs", async () =>
   assert.equal(rejected.details.error.code, "unknown_decision_ref");
   assert.equal(outOfBounds.isError, true);
   assert.equal(outOfBounds.details.error.code, "invalid_decision");
-});
-
-test("answer submission omits an unknown reference and records a diagnostic", async () => {
-  const { registered, root } = await configuredNativeTools();
-  const evidence = "evidence:sha256:" + "a".repeat(64);
-  await writeFile(
-    join(root, "run/context/trajectory-allowed-refs.json"),
-    JSON.stringify({ refs: [evidence] }),
-    "utf8",
-  );
-
-  const result = await registered.find((tool) => tool.name === "grid_submit_answer").execute("submit-typo", {
-    answer_output: "答案",
-    result_refs: [],
-    claim_evidence_refs: [`evidence:sha256:${"b".repeat(64)}`],
-    claims: [],
-  });
-
-  assert.equal(result.isError, undefined);
-  const draft = JSON.parse(await readFile(join(root, "run/answer-draft.json"), "utf8"));
-  assert.deepEqual(draft.claim_evidence_refs, []);
-  assert.equal(draft.submission_diagnostics[0].category, "unknown_answer_reference");
-});
-
-test("answer submission normalizes misclassified references and records a diagnostic", async () => {
-  const { registered, root } = await configuredNativeTools();
-  const evidence = "evidence:sha256:" + "a".repeat(64);
-  await writeFile(
-    join(root, "run/context/trajectory-allowed-refs.json"),
-    JSON.stringify({ refs: [evidence] }),
-    "utf8",
-  );
-
-  const result = await registered.find((tool) => tool.name === "grid_submit_answer").execute("submit-wrong-kind", {
-    answer_output: "答案",
-    result_refs: [evidence],
-    claim_evidence_refs: [evidence],
-    claims: [{
-      statement: "拓扑结论",
-      category: "topology",
-      result_refs: [evidence],
-      evidence_refs: [evidence],
-    }],
-  });
-
-  assert.equal(result.isError, undefined);
-  const draft = JSON.parse(await readFile(join(root, "run/answer-draft.json"), "utf8"));
-  assert.deepEqual(draft.result_refs, []);
-  assert.deepEqual(draft.claim_evidence_refs, [evidence]);
-  assert.deepEqual(draft.claims[0].result_refs, []);
-  assert.deepEqual(draft.claims[0].evidence_refs, [evidence]);
-  assert.equal(
-    draft.submission_diagnostics.filter((item) => item.category === "misclassified_answer_reference").length,
-    2,
-  );
-});
-
-test("answer submission accepts text when the allowed-reference ledger is invalid", async () => {
-  const { registered, root } = await configuredNativeTools();
-  await writeFile(
-    join(root, "run/context/trajectory-allowed-refs.json"),
-    "{not-json",
-    "utf8",
-  );
-  const evidence = "evidence:sha256:" + "a".repeat(64);
-
-  const result = await registered.find((tool) => tool.name === "grid_submit_answer").execute(
-    "submit-ledger-invalid",
-    {
-      answer_output: "答案正文仍然有效",
-      result_refs: [],
-      claim_evidence_refs: [evidence],
-      claims: [],
-    },
-  );
-
-  assert.equal(result.isError, undefined);
-  const draft = JSON.parse(await readFile(join(root, "run/answer-draft.json"), "utf8"));
-  assert.equal(draft.answer_output, "答案正文仍然有效");
-  assert.deepEqual(draft.claim_evidence_refs, []);
-  assert.equal(draft.submission_diagnostics[0].category, "answer_reference_state_unavailable");
 });
 
 test("native request capture subscribes to before_model_request only", async () => {
@@ -316,42 +199,6 @@ test("native request capture subscribes to before_model_request only", async () 
 
   assert.equal(handlers.has("before_model_request"), true);
   assert.equal(handlers.has("before_provider_request"), false);
-});
-
-test("answer submission declares bounded structured claims without parsing prose", async () => {
-  const root = await makeFixtureRoot();
-  await configureAnalysisPaths(
-    root,
-    { turn_id: "analysis-test-t002", turn_nonce: "nonce-2" },
-    { schema_version: "analysis-context-view/1.0", revision: 9, state_hash: "sha256:test" },
-  );
-  const registered = [];
-  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
-  const submit = registered.find((tool) => tool.name === "grid_submit_answer");
-  const resultRef = "result:sha256:" + "a".repeat(64);
-  const evidenceRef = "evidence:sha256:" + "b".repeat(64);
-  const claims = [{
-    statement: "Line 11 reaches 132.51 percent loading",
-    category: "numerical_result",
-    result_refs: [resultRef],
-    evidence_refs: [evidenceRef],
-  }];
-
-  const result = await submit.execute("submit-claims", {
-    answer_output: "Public prose remains opaque.",
-    result_refs: [resultRef],
-    claim_evidence_refs: [evidenceRef],
-    claims,
-  });
-  const draft = JSON.parse(await readFile(process.env.GRID_AGENT_ANSWER_DRAFT, "utf8"));
-
-  assert.equal(result.isError, undefined);
-  assert.match(draft.submission_id, /^[0-9a-f-]{36}$/);
-  assert.deepEqual(draft.claims, claims);
-  assert.equal(submit.parameters.properties.claims.maxItems, 50);
-  assert.equal(submit.parameters.properties.claims.items.properties.statement.maxLength, 1000);
-  assert.equal(JSON.stringify(draft).includes("reasoning"), false);
-  clearOptionalAnalysisEnvironment();
 });
 
 test("removes provider credentials from gridctl child environment", () => {
@@ -466,12 +313,12 @@ test("rejects mismatched gridctl response correlation", async () => {
 
 test("guide tool rejects traversal and opens published guides", async () => {
   const root = await makeFixtureRoot();
+  clearOptionalAnalysisEnvironment();
   const guidePath = join(root, "guides/topology.md");
   const registered = [];
   process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
   process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
   process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
   await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
   await writeFile(guidePath, "# Topology\n\nUse endpoint capability.\n", "utf8");
   await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root, {
@@ -500,6 +347,7 @@ test("guide tool rejects traversal and opens published guides", async () => {
 
 test("guide tool rejects lexically allowed symlinks outside the published root", async () => {
   const root = await makeFixtureRoot();
+  clearOptionalAnalysisEnvironment();
   const outside = await mkdtemp(join(tmpdir(), "grid-domain-tools-outside-"));
   const outsideGuidePath = join(outside, "secret.md");
   const guideSymlinkPath = join(root, "guides/escape.md");
@@ -507,7 +355,6 @@ test("guide tool rejects lexically allowed symlinks outside the published root",
   process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
   process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
   process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
   await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
   await writeFile(outsideGuidePath, "outside guide secret", "utf8");
   await symlink(outsideGuidePath, guideSymlinkPath);
@@ -539,12 +386,6 @@ test("startup rejects configured symlink paths that escape the workspace", async
       outside: "guide-index.json",
       writeOutside: async (path, root) => writeGuideIndex(path, root),
     },
-    {
-      name: "GRID_AGENT_ANSWER_DRAFT",
-      link: "answer-draft.json",
-      outside: "answer-draft.json",
-      writeOutside: async (path) => writeFile(path, "{}", "utf8"),
-    },
   ];
 
   for (const testCase of cases) {
@@ -558,7 +399,6 @@ test("startup rejects configured symlink paths that escape the workspace", async
     process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
     process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
     process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-    process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
     await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
     await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
     process.env[testCase.name] = linkPath;
@@ -569,73 +409,6 @@ test("startup rejects configured symlink paths that escape the workspace", async
     );
     assert.deepEqual(registered, []);
   }
-});
-
-test("answer submission atomically writes the configured draft path", async () => {
-  const root = await makeFixtureRoot();
-  const draftPath = join(root, "run/answer-draft.json");
-  const registered = [];
-  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
-  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
-  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = draftPath;
-  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
-  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
-
-  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
-  const submit = registered.find((tool) => tool.name === "grid_submit_answer");
-  const result = await submit.execute("submit-1", {
-    answer_output: "线路11连接母线6与母线11。",
-    result_refs: [],
-    claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
-    claims: [],
-  });
-
-  assert.equal(result.isError, undefined);
-  const draft = JSON.parse(await readFile(draftPath, "utf8"));
-  assert.match(draft.submission_id, /^[0-9a-f-]{36}$/);
-  delete draft.submission_id;
-  assert.deepEqual(draft, {
-    answer_output: "线路11连接母线6与母线11。",
-    result_refs: [],
-    claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
-    claims: [],
-    submission_diagnostics: [],
-  });
-});
-
-test("answer submission atomically writes declared result refs", async () => {
-  const root = await makeFixtureRoot();
-  const draftPath = join(root, "run/answer-draft.json");
-  const registered = [];
-  process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
-  process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
-  process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = draftPath;
-  await writeCatalog(process.env.GRID_AGENT_TOOL_CATALOG);
-  await writeGuideIndex(process.env.GRID_AGENT_GUIDE_INDEX, root);
-
-  domainToolsExtension({ registerTool: (tool) => registered.push(tool) });
-  const submit = registered.find((tool) => tool.name === "grid_submit_answer");
-  const resultRef = "result:sha256:" + "b".repeat(64);
-  const result = await submit.execute("submit-result-refs", {
-    answer_output: "交流潮流已收敛。",
-    result_refs: [resultRef],
-    claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
-    claims: [],
-  });
-
-  assert.equal(result.isError, undefined);
-  const draft = JSON.parse(await readFile(draftPath, "utf8"));
-  assert.match(draft.submission_id, /^[0-9a-f-]{36}$/);
-  delete draft.submission_id;
-  assert.deepEqual(draft, {
-    answer_output: "交流潮流已收敛。",
-    result_refs: [resultRef],
-    claim_evidence_refs: ["evidence:sha256:" + "a".repeat(64)],
-    claims: [],
-    submission_diagnostics: [],
-  });
 });
 
 async function makeFixtureRoot() {
@@ -650,7 +423,6 @@ async function configureAnalysisPaths(root, activeTurn, contextView) {
   process.env.GRID_AGENT_TOOL_CATALOG = join(root, "run/tool-catalog.json");
   process.env.GRID_AGENT_GUIDE_INDEX = join(root, "run/guide-index.json");
   process.env.GRID_AGENT_WORKSPACE = join(root, "run");
-  process.env.GRID_AGENT_ANSWER_DRAFT = join(root, "run/answer-draft.json");
   process.env.GRID_AGENT_ACTIVE_TURN = join(root, "run/active-turn.json");
   process.env.GRID_AGENT_ANALYSIS_CONTEXT_VIEW = join(root, "run/context/analysis-context-view.json");
   await mkdir(join(root, "run/context"), { recursive: true });

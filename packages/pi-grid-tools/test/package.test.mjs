@@ -26,7 +26,6 @@ test("package surface admits canonical request hook without expanding grid tools
     const guideRoot = join(workspace, "guides");
     const guidePath = join(guideRoot, "topology.md");
     const guideIndexPath = join(workspace, "guide-index.json");
-    const answerDraftPath = join(workspace, "answer-draft.json");
 
     await mkdir(cwd, { recursive: true });
     await mkdir(agentDir, { recursive: true });
@@ -76,7 +75,6 @@ test("package surface admits canonical request hook without expanding grid tools
       GRID_AGENT_WORKSPACE: workspace,
       GRID_AGENT_TOOL_CATALOG: catalogPath,
       GRID_AGENT_GUIDE_INDEX: guideIndexPath,
-      GRID_AGENT_ANSWER_DRAFT: answerDraftPath,
     });
     const registeredTools = [];
     domainToolsExtension({
@@ -90,7 +88,6 @@ test("package surface admits canonical request hook without expanding grid tools
       "grid_model_list",
       "topology_branch_endpoints_get",
       "grid_guide_open",
-      "grid_submit_answer",
     ]);
     const legacyQuery = "grid" + "_query";
     assert(!registeredTools.some((name) => ["read", "bash", "shell", legacyQuery].includes(name)));

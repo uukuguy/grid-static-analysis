@@ -2,9 +2,9 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
-import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 
 import { configureModelRequestCapture } from "./model-request-capture.mjs";
 
@@ -102,11 +102,6 @@ export default function domainToolsExtension(pi) {
   if (paths.trajectoryAllowedRefsPath !== undefined && paths.activeTurnPath !== undefined) {
     pi.registerTool(createRecordDecisionTool(paths.trajectoryAllowedRefsPath, paths.activeTurnPath));
   }
-  pi.registerTool(createSubmitAnswerTool(
-    paths.answerDraftPath,
-    paths.activeTurnPath,
-    paths.trajectoryAllowedRefsPath,
-  ));
 }
 
 function runGridctl(payload, workspacePath = requiredExistingRealPath(process.env, "GRID_AGENT_WORKSPACE")) {
@@ -302,163 +297,6 @@ function createRecordDecisionTool(allowedRefsPath, activeTurnPath) {
   });
 }
 
-function createSubmitAnswerTool(answerDraftPath, activeTurnPath = undefined, allowedRefsPath = undefined) {
-  return defineTool({
-    name: "grid_submit_answer",
-    label: "grid_submit_answer",
-    description: "Submit the final answer draft and claimed evidence references.",
-    parameters: Type.Object({
-      answer_output: Type.String(),
-      result_refs: Type.Array(Type.String()),
-      claim_evidence_refs: Type.Array(Type.String()),
-      claims: Type.Array(
-        Type.Object(
-          {
-            statement: Type.String({ minLength: 1, maxLength: 1000 }),
-            category: Type.Union([
-              Type.Literal("topology"),
-              Type.Literal("constraint"),
-              Type.Literal("numerical_result"),
-              Type.Literal("risk_judgment"),
-              Type.Literal("offline_information"),
-            ]),
-            result_refs: Type.Array(Type.String(), { maxItems: 20 }),
-            evidence_refs: Type.Array(Type.String(), { maxItems: 20 }),
-          },
-          { additionalProperties: false },
-        ),
-        { maxItems: 50 },
-      ),
-    }),
-    async execute(_id, params) {
-      let known;
-      const referenceStateDiagnostics = [];
-      if (allowedRefsPath !== undefined) {
-        try {
-          known = await readAllowedRefs(allowedRefsPath);
-        } catch (error) {
-          known = new Set();
-          referenceStateDiagnostics.push({
-            category: "answer_reference_state_unavailable",
-            severity: "warning",
-            message: `answer reference state was unavailable; structured references were omitted: ${error instanceof Error ? error.message : String(error)}`,
-          });
-        }
-      }
-      const normalized = normalizeAnswerSubmission(params, known, referenceStateDiagnostics);
-      const activeTurn = activeTurnPath === undefined ? {} : await readActiveTurn(activeTurnPath);
-      const payload = {
-        ...activeTurn,
-        submission_id: randomUUID(),
-        answer_output: params.answer_output,
-        result_refs: normalized.resultRefs,
-        claim_evidence_refs: normalized.evidenceRefs,
-        claims: normalized.claims,
-        submission_diagnostics: normalized.diagnostics,
-      };
-      await writeJsonAtomic(answerDraftPath, payload);
-      return {
-        content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
-        details: {
-          event: "tool_result",
-          capability: "grid_submit_answer",
-          ok: true,
-          result: payload,
-          evidence_refs: normalized.evidenceRefs,
-        },
-      };
-    },
-  });
-}
-
-function normalizeAnswerSubmission(params, known, initialDiagnostics = []) {
-  const diagnostics = [...initialDiagnostics];
-  const resultRefs = new Set();
-  const evidenceRefs = new Set();
-
-  const admit = (reference, requestedField) => {
-    const kind = referenceKind(reference);
-    if (kind === undefined) {
-      diagnostics.push({
-        category: "invalid_answer_reference",
-        severity: "warning",
-        message: `${requestedField} contained an unsupported reference; it was omitted`,
-      });
-      return undefined;
-    }
-    if (known !== undefined && !known.has(reference)) {
-      diagnostics.push({
-        category: "unknown_answer_reference",
-        severity: "warning",
-        message: `${requestedField} contained a reference not observed in the current run; it was omitted`,
-      });
-      return undefined;
-    }
-    if ((requestedField.includes("result") && kind !== "result") ||
-        (requestedField.includes("evidence") && kind !== "evidence")) {
-      diagnostics.push({
-        category: "misclassified_answer_reference",
-        severity: "warning",
-        message: `${requestedField} contained a ${kind} reference; it was moved to the matching field`,
-      });
-    }
-    (kind === "result" ? resultRefs : evidenceRefs).add(reference);
-    return { kind, reference };
-  };
-
-  for (const reference of params.result_refs) admit(reference, "result_refs");
-  for (const reference of params.claim_evidence_refs) admit(reference, "claim_evidence_refs");
-  const claims = [];
-  for (const claim of params.claims) {
-    const claimResults = new Set();
-    const claimEvidence = new Set();
-    for (const reference of claim.result_refs) {
-      const admitted = admit(reference, "claims[].result_refs");
-      if (admitted?.kind === "result") claimResults.add(admitted.reference);
-      if (admitted?.kind === "evidence") claimEvidence.add(admitted.reference);
-    }
-    for (const reference of claim.evidence_refs) {
-      const admitted = admit(reference, "claims[].evidence_refs");
-      if (admitted?.kind === "result") claimResults.add(admitted.reference);
-      if (admitted?.kind === "evidence") claimEvidence.add(admitted.reference);
-    }
-    if (claim.category === "offline_information") {
-      if (claimResults.size > 0 || claimEvidence.size > 0) {
-        diagnostics.push({
-          category: "offline_claim_lineage_removed",
-          severity: "warning",
-          message: "offline_information claim references were omitted",
-        });
-      }
-      claims.push({ ...claim, result_refs: [], evidence_refs: [] });
-    } else if (claimResults.size === 0 && claimEvidence.size === 0) {
-      diagnostics.push({
-        category: "unsupported_structured_claim",
-        severity: "warning",
-        message: "a simulator-backed structured claim had no usable current-run reference and was omitted",
-      });
-    } else {
-      claims.push({
-        ...claim,
-        result_refs: [...claimResults],
-        evidence_refs: [...claimEvidence],
-      });
-    }
-  }
-  return {
-    resultRefs: [...resultRefs],
-    evidenceRefs: [...evidenceRefs],
-    claims,
-    diagnostics,
-  };
-}
-
-function referenceKind(reference) {
-  if (/^result:sha256:[0-9a-f]{64}$/.test(reference)) return "result";
-  if (/^evidence:sha256:[0-9a-f]{64}$/.test(reference)) return "evidence";
-  return undefined;
-}
-
 function decisionValidationError(params) {
   for (const name of ["intent", "decision", "next_action"]) {
     if (
@@ -495,7 +333,6 @@ function runtimePaths(env) {
   const workspacePath = requiredExistingRealPath(env, "GRID_AGENT_WORKSPACE");
   const toolCatalogPath = requiredExistingRealPath(env, "GRID_AGENT_TOOL_CATALOG");
   const guideIndexPath = requiredExistingRealPath(env, "GRID_AGENT_GUIDE_INDEX");
-  const answerDraftPath = requiredWritableRealPath(env, "GRID_AGENT_ANSWER_DRAFT");
   const activeTurnPath = optionalWritableRealPath(env, "GRID_AGENT_ACTIVE_TURN");
   const analysisContextViewPath = optionalExistingRealPath(env, "GRID_AGENT_ANALYSIS_CONTEXT_VIEW");
   const trajectoryRequestsPath = optionalExistingRealPath(env, "GRID_AGENT_TRAJECTORY_REQUESTS");
@@ -524,7 +361,6 @@ function runtimePaths(env) {
   for (const [name, candidate] of [
     ["GRID_AGENT_TOOL_CATALOG", toolCatalogPath],
     ["GRID_AGENT_GUIDE_INDEX", guideIndexPath],
-    ["GRID_AGENT_ANSWER_DRAFT", answerDraftPath],
     ["GRID_AGENT_ACTIVE_TURN", activeTurnPath],
     ["GRID_AGENT_ANALYSIS_CONTEXT_VIEW", analysisContextViewPath],
     ["GRID_AGENT_TRAJECTORY_REQUESTS", trajectoryRequestsPath],
@@ -539,7 +375,6 @@ function runtimePaths(env) {
     workspacePath,
     toolCatalogPath,
     guideIndexPath,
-    answerDraftPath,
     activeTurnPath,
     analysisContextViewPath,
     trajectoryRequestsPath,
@@ -592,23 +427,6 @@ function requiredExistingRealPath(env, name) {
   }
 }
 
-function requiredWritableRealPath(env, name) {
-  const path = requiredAbsolutePath(env, name);
-  try {
-    return realpathSync(path);
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw new Error(`${name} must resolve to a writable path: ${error.message}`);
-    }
-    const parent = dirname(path);
-    try {
-      return resolve(realpathSync(parent), basename(path));
-    } catch (parentError) {
-      throw new Error(`${name} parent must resolve to an existing path: ${parentError.message}`);
-    }
-  }
-}
-
 function optionalExistingRealPath(env, name) {
   if (env[name] === undefined || env[name] === "") {
     return undefined;
@@ -620,7 +438,7 @@ function optionalWritableRealPath(env, name) {
   if (env[name] === undefined || env[name] === "") {
     return undefined;
   }
-  return requiredWritableRealPath(env, name);
+  return requiredExistingRealPath(env, name);
 }
 
 function isInside(candidate, root) {
@@ -728,11 +546,4 @@ async function readActiveTurn(path) {
     turn_id: activeTurn.turn_id,
     turn_nonce: activeTurn.turn_nonce,
   };
-}
-
-async function writeJsonAtomic(path, payload) {
-  await mkdir(dirname(path), { recursive: true });
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temp, JSON.stringify(payload, null, 2) + "\n", "utf8");
-  await rename(temp, path);
 }

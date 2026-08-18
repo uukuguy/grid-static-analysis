@@ -49,23 +49,12 @@ def harness(tmp_path: Path) -> Harness:
     return Harness(workspace=workspace, store=store, turns=turns)
 
 
-def test_turn_controller_rejects_stale_draft_and_archives_current_submission(harness: Harness) -> None:
+def test_turn_controller_archives_controller_owned_submissions(harness: Harness) -> None:
     first = harness.turns.start(1, "第一条")
-    write_draft(harness.workspace.active_answer_draft_path, first, answer="第一答")
-    harness.turns.finalize(first, duration_seconds=1.0)
+    harness.turns.submit(first, answer_output="第一答", duration_seconds=1.0)
     second = harness.turns.start(2, "第二条")
-    write_raw_draft(
-        harness.workspace.active_answer_draft_path,
-        turn_id=first.turn_id,
-        turn_nonce=first.turn_nonce,
-        answer="旧答",
-    )
+    completed = harness.turns.submit(second, answer_output="第二答", duration_seconds=1.2)
 
-    with pytest.raises(StaleAnswerDraftError):
-        harness.turns.finalize(second, duration_seconds=1.0)
-
-    write_draft(harness.workspace.active_answer_draft_path, second, answer="第二答")
-    completed = harness.turns.finalize(second, duration_seconds=1.2)
     assert completed.answer_output == "第二答"
     assert json.loads((harness.workspace.turn_path(2) / "answer.json").read_text(encoding="utf-8"))[
         "answer_output"
@@ -87,14 +76,12 @@ def test_turn_controller_archives_audit_diagnostics_without_mutating_answer(harn
     )
     turns = TurnController(harness.workspace, harness.store, audit_callback=lambda _claimed, _results: (diagnostic,))
     turn = turns.start(1, "引用证据")
-    write_draft(
-        harness.workspace.active_answer_draft_path,
-        turn,
-        answer="保持原文 result:sha256:" + "a" * 64,
-        claim_evidence_refs=[diagnostic.reference],
-    )
 
-    completed = turns.finalize(turn, duration_seconds=0.5)
+    completed = turns.submit(
+        turn,
+        answer_output="保持原文 result:sha256:" + "a" * 64,
+        duration_seconds=0.5,
+    )
 
     assert completed.answer_output == "保持原文 result:sha256:" + "a" * 64
     assert diagnostic in completed.audit_diagnostics
@@ -106,117 +93,6 @@ def test_turn_controller_archives_audit_diagnostics_without_mutating_answer(harn
     assert any(item["message"] == diagnostic.message for item in audit["diagnostics"])
     assert harness.store.snapshot.diagnostics[-1].event_type == "audit.diagnostic.recorded"
     assert harness.store.snapshot.turns[-1].status == "success"
-
-
-def test_turn_controller_projects_submission_normalization_diagnostics(
-    harness: Harness,
-) -> None:
-    turn = harness.turns.start(1, "引用归类")
-    write_draft(
-        harness.workspace.active_answer_draft_path,
-        turn,
-        answer="答案正文照常接受",
-    )
-    draft = json.loads(
-        harness.workspace.active_answer_draft_path.read_text(encoding="utf-8")
-    )
-    draft["submission_diagnostics"] = [
-        {
-            "category": "misclassified_answer_reference",
-            "severity": "warning",
-            "message": "result_refs contained an evidence reference; it was moved",
-        }
-    ]
-    write_payload(harness.workspace.active_answer_draft_path, draft)
-
-    completed = harness.turns.finalize(turn, duration_seconds=0.5)
-
-    assert completed.status == "success"
-    assert completed.answer_output == "答案正文照常接受"
-    assert completed.audit_diagnostics[0].category == "misclassified_answer_reference"
-    assert harness.store.snapshot.diagnostics[-1].message.endswith("it was moved")
-
-
-def test_turn_controller_missing_draft_fails_turn_records_limitation_and_incremental_answer(harness: Harness) -> None:
-    turn = harness.turns.start(1, "没有提交")
-    assert not harness.workspace.active_answer_draft_path.exists()
-
-    finalized = harness.turns.finalize(turn, duration_seconds=2.0)
-
-    assert finalized.status == "failed"
-    assert finalized.answer_path is None
-    assert "execution limitation" in finalized.answer_output
-    assert harness.store.snapshot.current_turn is None
-    assert harness.store.snapshot.turns[-1].status == "failed"
-    assert harness.store.snapshot.unresolved_limitations[-1].turn_id == turn.turn_id
-    assert json.loads(harness.workspace.answers_path.read_text(encoding="utf-8"))["answer_output"] == finalized.answer_output
-    assert not (harness.workspace.turn_path(1) / "answer.json").exists()
-
-
-@pytest.mark.parametrize(
-    ("draft_writer", "expected_error"),
-    [
-        (lambda path, turn: path.write_text("{not-json", encoding="utf-8"), "not valid JSON"),
-        (lambda path, turn: path.write_text(json.dumps(["not", "object"]), encoding="utf-8"), "must be a JSON object"),
-        (
-            lambda path, turn: write_payload(
-                path,
-                {
-                    "turn_id": turn.turn_id,
-                    "turn_nonce": turn.turn_nonce,
-                    "claim_evidence_refs": [],
-                    "result_refs": [],
-                },
-            ),
-            "must include answer_output",
-        ),
-        (
-            lambda path, turn: write_payload(
-                path,
-                {
-                    "turn_id": turn.turn_id,
-                    "turn_nonce": turn.turn_nonce,
-                    "answer_output": "答案",
-                    "claim_evidence_refs": "not-a-list",
-                    "result_refs": [],
-                },
-            ),
-            "must include claim_evidence_refs",
-        ),
-        (
-            lambda path, turn: write_payload(
-                path,
-                {
-                    "turn_id": turn.turn_id,
-                    "turn_nonce": turn.turn_nonce,
-                    "answer_output": "答案",
-                    "claim_evidence_refs": [],
-                    "result_refs": [123],
-                },
-            ),
-            "must include result_refs",
-        ),
-    ],
-)
-def test_turn_controller_malformed_current_draft_fails_turn_with_limitation_and_jsonl(
-    harness: Harness,
-    draft_writer,
-    expected_error: str,
-) -> None:
-    turn = harness.turns.start(1, "提交坏草稿")
-    draft_writer(harness.workspace.active_answer_draft_path, turn)
-
-    finalized = harness.turns.finalize(turn, duration_seconds=0.75)
-
-    assert finalized.status == "failed"
-    assert finalized.answer_path is None
-    assert expected_error in (finalized.error or "")
-    assert expected_error in finalized.answer_output
-    assert harness.store.snapshot.current_turn is None
-    assert harness.store.snapshot.turns[-1].status == "failed"
-    assert harness.store.snapshot.unresolved_limitations[-1].message == finalized.error
-    assert json.loads(harness.workspace.answers_path.read_text(encoding="utf-8"))["answer_output"] == finalized.answer_output
-    assert not (harness.workspace.turn_path(1) / "answer.json").exists()
 
 
 def test_turn_start_atomically_replaces_active_turn_and_clears_active_draft(harness: Harness) -> None:
@@ -308,33 +184,6 @@ def test_turn_context_hashes_nonce_without_recording_raw_nonce(harness: Harness)
     assert harness.store.snapshot.current_turn.nonce_sha256 == sha256(turn.turn_nonce.encode("utf-8")).hexdigest()
 
 
-def test_turn_finalization_emits_claims_only_for_accepted_submission(tmp_path: Path) -> None:
-    controller, recorder, _store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
-    write_bound_draft(
-        workspace.active_answer_draft_path,
-        handle,
-        claims=[
-            {
-                "statement": "Line 11 reaches 132.51 percent loading",
-                "category": "numerical_result",
-                "result_refs": [result_ref],
-                "evidence_refs": [evidence_ref],
-            }
-        ],
-        result_refs=[result_ref],
-        claim_evidence_refs=[evidence_ref],
-    )
-
-    controller.finalize(handle, duration_seconds=1.0)
-
-    events = RunEventReader(recorder.events_path).read_prefix().events
-    claim = next(event for event in events if event.event_type == "business.claim.declared")
-    answer = next(event for event in events if event.event_type == "answer.submitted")
-    assert claim.payload["submission_id"] == answer.payload["submission_id"]
-    assert events.index(answer) < events.index(claim)
-    assert claim.causation.parent_sequence == answer.sequence
-
-
 def test_controller_submits_model_text_with_projected_turn_refs(tmp_path: Path) -> None:
     controller, recorder, store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
     register_answer_lineage(store, handle, result_ref, evidence_ref)
@@ -415,78 +264,11 @@ def test_controller_rejects_submit_handle_with_wrong_nonce(
         )
 
 
-def test_invalid_submission_metadata_is_diagnostic_without_rejecting_answer(tmp_path: Path) -> None:
-    controller, recorder, store, workspace, handle, _result_ref, _evidence_ref = answer_fixture(tmp_path)
-    write_bound_draft(
-        workspace.active_answer_draft_path,
-        handle,
-        claims=[
-            {
-                "statement": "unsupported",
-                "category": "numerical_result",
-                "result_refs": [],
-                "evidence_refs": [],
-            }
-        ],
-    )
-
-    completed = controller.finalize(handle, duration_seconds=1.0)
-
-    events = RunEventReader(recorder.events_path).read_prefix().events
-    assert completed.status == "success"
-    assert not any(event.event_type == "business.claim.declared" for event in events)
-    assert any(event.event_type == "answer.submitted" for event in events)
-    assert not any(event.event_type == "answer.rejected" for event in events)
-    assert store.snapshot.diagnostics[-1].message.startswith(
-        "answer metadata was not admitted"
-    )
-
-
-def test_invalid_submission_metadata_does_not_publish_raw_reference_lineage(
+def test_answer_commit_failure_emits_no_accepted_answer(
     tmp_path: Path,
 ) -> None:
-    controller, recorder, _store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
-    write_bound_draft(
-        workspace.active_answer_draft_path,
-        handle,
-        claims=[
-            {
-                "statement": "unsupported",
-                "category": "numerical_result",
-                "result_refs": [],
-                "evidence_refs": [],
-            }
-        ],
-        result_refs=[result_ref],
-        claim_evidence_refs=[evidence_ref],
-    )
-
-    controller.finalize(handle, duration_seconds=1.0)
-
-    events = RunEventReader(recorder.events_path).read_prefix().events
-    answer = next(event for event in events if event.event_type == "answer.submitted")
-    assert answer.payload["result_refs"] == []
-    assert answer.payload.get("claim_evidence_refs", []) == []
-
-
-def test_answer_commit_failure_emits_no_accepted_claims(
-    tmp_path: Path,
-) -> None:
-    controller, recorder, store, workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
-    write_bound_draft(
-        workspace.active_answer_draft_path,
-        handle,
-        claims=[
-            {
-                "statement": "Line 11 reaches 132.51 percent loading",
-                "category": "numerical_result",
-                "result_refs": [result_ref],
-                "evidence_refs": [evidence_ref],
-            }
-        ],
-        result_refs=[result_ref],
-        claim_evidence_refs=[evidence_ref],
-    )
+    controller, recorder, store, _workspace, handle, result_ref, evidence_ref = answer_fixture(tmp_path)
+    register_answer_lineage(store, handle, result_ref, evidence_ref)
     original_append = store.append
 
     def fail_answer_commit(draft, **kwargs):
@@ -497,7 +279,11 @@ def test_answer_commit_failure_emits_no_accepted_claims(
     store.append = fail_answer_commit
 
     with pytest.raises(RuntimeError, match="answer commit failed"):
-        controller.finalize(handle, duration_seconds=1.0)
+        controller.submit(
+            handle,
+            answer_output="线路结果来自本题仿真。",
+            duration_seconds=1.0,
+        )
 
     events = RunEventReader(recorder.events_path).read_prefix().events
     assert not any(event.event_type == "business.claim.declared" for event in events)
@@ -612,28 +398,6 @@ def register_answer_lineage(
                 },
             },
         )
-    )
-
-
-def write_bound_draft(
-    path: Path,
-    turn,
-    *,
-    claims: list[dict[str, object]],
-    result_refs: list[str] | None = None,
-    claim_evidence_refs: list[str] | None = None,
-) -> None:
-    write_payload(
-        path,
-        {
-            "turn_id": turn.turn_id,
-            "turn_nonce": turn.turn_nonce,
-            "submission_id": "submission-1",
-            "answer_output": "Bound answer",
-            "claim_evidence_refs": claim_evidence_refs or [],
-            "result_refs": result_refs or [],
-            "claims": claims,
-        },
     )
 
 

@@ -50,7 +50,6 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         "def semantic_tools(catalog):\n"
         " tools=[{'name':tool['name'],'description':tool['description'],'parameters':tool['input_schema']} for tool in catalog['tools']]\n"
         " tools.append({'name':'grid_guide_open','description':'Open a packaged grid analysis guide.','parameters':{'type':'object','additionalProperties':False,'properties':{'resource_id':{'type':'string','minLength':1}},'required':['resource_id']}})\n"
-        " tools.append({'name':'grid_submit_answer','description':'Submit the final user-facing answer.','parameters':{'type':'object','additionalProperties':False,'properties':{'answer_output':{'type':'string','minLength':1},'result_refs':{'type':'array','items':{'type':'string'}},'claim_evidence_refs':{'type':'array','items':{'type':'string'}}},'required':['answer_output']}})\n"
         " return tools\n"
         "def runtime_identity():\n"
         " return {'pi_coding_agent_version':os.environ.get('GRID_AGENT_PI_CODING_AGENT_VERSION','scripted-test'),'pi_ai_version':os.environ.get('GRID_AGENT_PI_AI_VERSION','scripted-test'),'pi_source_commit':os.environ.get('GRID_AGENT_PI_SOURCE_COMMIT','1'*40),'pi_patch_set_sha256':os.environ.get('GRID_AGENT_PI_PATCH_SET_SHA256','2'*64)}\n"
@@ -111,15 +110,8 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         "opened=grid('context.open',{'model_id':'ieee39'})\n"
         "result=grid('topology.branch.endpoints.get',{'context_ref':opened['context_ref'],'kind':'line','namespace':'pandapower_index','identifier':'11'})\n"
         "ref=result['evidence_ref']\n"
-        "draft={'answer_output':'线路11连接母线6与11。','result_refs':[opened['context_ref'],'asset:line:sha256:'+'a'*64],'claim_evidence_refs':[ref]}\n"
-        "active_turn=os.environ.get('GRID_AGENT_ACTIVE_TURN')\n"
-        "if active_turn:\n"
-        " active=json.load(open(active_turn,encoding='utf-8'))\n"
-        " draft.update({'turn_id':active['turn_id'],'turn_nonce':active['turn_nonce']})\n"
-        "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft,ensure_ascii=False))\n"
-        "emit({'type':'tool_execution_start','toolCallId':'submit-1','toolName':'grid_submit_answer','args':{'answer_output':draft['answer_output']}})\n"
-        "emit({'type':'tool_execution_end','toolCallId':'submit-1','toolName':'grid_submit_answer','isError':False,'result':{'answer_output':draft['answer_output']}})\n"
-        "emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'scripted answer submitted'}],'usage':{'input':1,'output':1},'stopReason':'stop'}})\n"
+        "emit({'type':'text_delta','text':'线路11连接母线6与11。'})\n"
+        "emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'线路11连接母线6与11。'}],'usage':{'input':1,'output':1},'stopReason':'stop'}})\n"
         "emit({'type':'agent_end'})\n",
         encoding="utf-8",
     )
@@ -156,15 +148,15 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         assert completed.returncode == 0, completed.stderr
         envelope = AnswerEnvelope.model_validate_json(completed.stdout)
         assert envelope.answer_output == "线路11连接母线6与11。"
-        audit = json.loads((runs_path / "answer-audit.json").read_text(encoding="utf-8"))
-        assert len(audit["diagnostics"]) == 2
-        assert all(diagnostic["severity"] == "warning" for diagnostic in audit["diagnostics"])
+        assert not (runs_path / "answer-audit.json").exists()
+        assert not (runs_path / "answer-draft.json").exists()
         events = [
             json.loads(line)["payload"]
             for line in (runs_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
         ]
         legacy_query = "grid" + "_query"
         assert not any(event.get("toolName") in {"read", "bash", "shell", legacy_query} for event in events)
+        assert not any(event.get("toolName") == "grid_submit_answer" for event in events)
         assert not any(event.get("capability") == "analysis.powerflow.ac.run" for event in events)
         topology_results = [
             event
@@ -178,9 +170,6 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
         assert topology["result"]["to_bus"]["name"] == "11"
         assert topology["evidence_refs"]
         evidence_ref = topology["evidence_refs"][0]
-        assert evidence_ref in json.loads((runs_path / "answer-draft.json").read_text(encoding="utf-8"))[
-            "claim_evidence_refs"
-        ]
         digest = evidence_ref.removeprefix("evidence:sha256:")
         assert (runs_path / "evidence/network-facts" / f"network-fact-{digest}.json").is_file()
         order_path = runs_path / "scripted-canonical-order.jsonl"
@@ -207,6 +196,7 @@ def test_scripted_pi_non_blocking_audit_keeps_topology_answer_in_run_and_batch_o
                 }
             ]
             assert request["semantic_request"]["context"]["tools"]
+            assert not any(tool["name"] == "grid_submit_answer" for tool in request["semantic_request"]["context"]["tools"])
             assert request["semantic_request"]["options"]["transport"] == "sse"
             assert set(request["runtime"]) == {
                 "pi_coding_agent_version",

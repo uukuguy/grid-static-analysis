@@ -4,7 +4,6 @@ import json
 import os
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any
 from pathlib import Path
 
@@ -12,7 +11,7 @@ import typer
 from dotenv import dotenv_values
 
 from grid_agent.analysis.capabilities import CapabilityContextCatalog
-from grid_agent.analysis.integrity import ContentReferenceVerifier, ReferenceDiagnostic
+from grid_agent.analysis.integrity import ContentReferenceVerifier
 from grid_agent.analysis.projector import AnalysisContextProjector
 from grid_agent.analysis.runner import AnalysisOutcome, AnalysisRequest, AnalysisRunner
 from grid_agent.analysis.store import AnalysisContextStore
@@ -44,19 +43,13 @@ from grid_agent.trajectory.context_bridge import NativeContextBridge
 from grid_agent.trajectory.events import RunEvent
 from grid_agent.trajectory.recorder import RunEventRecorder
 from grid_agent.trajectory.api.server import serve_trajectory
-from grid_agent.reporting import AuditDiagnostic, humanize_answer, load_questions
+from grid_agent.reporting import load_questions
 
 
 app = typer.Typer(add_completion=False)
 trajectory_app = typer.Typer(help="Inspect read-only agent and business trajectories.")
 app.add_typer(trajectory_app, name="trajectory")
-_NON_SIMULATOR_CAPABILITIES = {"grid_submit_answer", "grid_guide_open"}
-
-
-@dataclass(frozen=True, slots=True)
-class SubmittedAnswer:
-    answer_output: str
-    diagnostics: tuple[AuditDiagnostic, ...]
+_NON_SIMULATOR_CAPABILITIES = {"grid_guide_open"}
 
 
 @trajectory_app.command("serve")
@@ -276,120 +269,6 @@ def _tool_result_details(event: Mapping[str, Any]) -> object:
     return None
 
 
-def _load_verified_answer_draft(workspace: RunWorkspace) -> str:
-    draft_path = workspace.root_path / "answer-draft.json"
-    if not draft_path.is_file():
-        raise RuntimeError("grid_submit_answer did not create an answer draft")
-    try:
-        draft = json.loads(draft_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("grid_submit_answer draft is not valid JSON") from exc
-    if not isinstance(draft, dict):
-        raise RuntimeError("grid_submit_answer draft must be a JSON object")
-    answer = draft.get("answer_output")
-    claimed = draft.get("claim_evidence_refs")
-    result_refs = draft.get("result_refs")
-    if not isinstance(answer, str) or not answer.strip():
-        raise RuntimeError("grid_submit_answer draft must include answer_output")
-    if not isinstance(claimed, list) or not all(isinstance(item, str) for item in claimed):
-        raise RuntimeError("grid_submit_answer draft must include claim_evidence_refs")
-    if not isinstance(result_refs, list) or not all(isinstance(item, str) for item in result_refs):
-        raise RuntimeError("grid_submit_answer draft must include result_refs")
-    evidence_documents = _verify_evidence_refs(workspace, tuple(claimed))
-    result_documents = _verify_result_refs(workspace, tuple(result_refs))
-    _verify_result_evidence_links(workspace, tuple(result_refs), result_documents, tuple(claimed), evidence_documents)
-    return humanize_answer(answer)
-
-
-def _load_submitted_answer(workspace: RunWorkspace) -> SubmittedAnswer:
-    draft_path = workspace.root_path / "answer-draft.json"
-    if not draft_path.is_file():
-        raise RuntimeError("grid_submit_answer did not create an answer draft")
-    try:
-        draft = json.loads(draft_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("grid_submit_answer draft is not valid JSON") from exc
-    if not isinstance(draft, dict):
-        raise RuntimeError("grid_submit_answer draft must be a JSON object")
-    answer = draft.get("answer_output")
-    claimed = draft.get("claim_evidence_refs")
-    result_refs = draft.get("result_refs")
-    if not isinstance(answer, str) or not answer.strip():
-        raise RuntimeError("grid_submit_answer draft must include answer_output")
-    if not isinstance(claimed, list) or not all(isinstance(item, str) for item in claimed):
-        raise RuntimeError("grid_submit_answer draft must include claim_evidence_refs")
-    if not isinstance(result_refs, list) or not all(isinstance(item, str) for item in result_refs):
-        raise RuntimeError("grid_submit_answer draft must include result_refs")
-
-    diagnostics = _audit_answer_draft(workspace, tuple(claimed), tuple(result_refs))
-    _write_answer_audit(workspace, diagnostics)
-    return SubmittedAnswer(answer_output=answer, diagnostics=diagnostics)
-
-
-def _audit_answer_draft(
-    workspace: RunWorkspace,
-    claimed_evidence_refs: tuple[str, ...],
-    result_refs: tuple[str, ...],
-) -> tuple[AuditDiagnostic, ...]:
-    diagnostics = ContentReferenceVerifier(workspace.root_path).audit_answer_references(
-        claimed_evidence_refs,
-        result_refs,
-    )
-    return tuple(_audit_diagnostic(diagnostic) for diagnostic in diagnostics)
-
-
-def _audit_diagnostic(diagnostic: ReferenceDiagnostic) -> AuditDiagnostic:
-    return AuditDiagnostic(
-        severity=diagnostic.severity,
-        finding=diagnostic.message,
-        impact=diagnostic.impact,
-        remediation=diagnostic.remediation,
-    )
-
-
-def _write_answer_audit(workspace: RunWorkspace, diagnostics: tuple[AuditDiagnostic, ...]) -> None:
-    audit_path = workspace.root_path / "answer-audit.json"
-    temporary = audit_path.with_name(f".{audit_path.name}.tmp")
-    payload = {
-        "diagnostics": [
-            {
-                "severity": diagnostic.severity,
-                "finding": diagnostic.finding,
-                "impact": diagnostic.impact,
-                "remediation": diagnostic.remediation,
-            }
-            for diagnostic in diagnostics
-        ]
-    }
-    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    temporary.replace(audit_path)
-
-
-def _verify_evidence_refs(workspace: RunWorkspace, evidence_refs: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
-    verifier = ContentReferenceVerifier(workspace.root_path)
-    return tuple(dict(verifier.verify_evidence(evidence_ref).document) for evidence_ref in evidence_refs)
-
-
-def _verify_result_refs(workspace: RunWorkspace, result_refs: tuple[str, ...]) -> dict[str, dict[str, Any]]:
-    verifier = ContentReferenceVerifier(workspace.root_path)
-    return {result_ref: dict(verifier.verify_result(result_ref).document) for result_ref in result_refs}
-
-
-def _verify_result_evidence_links(
-    workspace: RunWorkspace,
-    result_refs: tuple[str, ...],
-    result_documents: Mapping[str, Mapping[str, Any]],
-    claimed_evidence_refs: tuple[str, ...],
-    evidence_documents: tuple[Mapping[str, Any], ...],
-) -> None:
-    ContentReferenceVerifier(workspace.root_path)._verify_result_evidence_links(
-        result_refs,
-        result_documents,
-        claimed_evidence_refs,
-        evidence_documents,
-    )
-
-
 def _resolve_artifact_root(project_root: Path, artifact_root: Path | None) -> Path:
     root = artifact_root or project_root / "runs"
     resolved = (project_root / root if not root.is_absolute() else root).resolve()
@@ -530,7 +409,6 @@ def _execute_analysis(
                 extension_path=_repo_root() / "packages/pi-grid-tools/src/domain-tools.mjs",
                 tool_catalog_path=tool_catalog_path,
                 guide_index_path=guide_index_path,
-                answer_draft_path=workspace.active_answer_draft_path,
                 system_policy_path=_repo_root() / "configs/agent/system-policy.md",
                 active_turn_path=workspace.active_turn_path,
                 analysis_context_view_path=workspace.context_view_path,
@@ -715,7 +593,6 @@ def run(
                     extension_path=_repo_root() / "packages/pi-grid-tools/src/domain-tools.mjs",
                     tool_catalog_path=tool_catalog_path,
                     guide_index_path=guide_index_path,
-                    answer_draft_path=workspace.root_path / "answer-draft.json",
                     system_policy_path=_repo_root() / "configs/agent/system-policy.md",
                 ),
                 base_environment=runtime_environment,
@@ -727,16 +604,14 @@ def run(
                     _admit_successful_tool_references(workspace, event)
                     progress.on_event(event)
 
-                rpc.prompt_and_wait(
+                answer = rpc.prompt_and_wait(
                     request.question,
                     on_event=on_pi_event,
                     on_heartbeat=progress.heartbeat,
-                    require_answer_text=False,
+                    require_answer_text=True,
                 )
-                submitted = _load_submitted_answer(workspace)
             finally:
                 rpc.stop()
-            answer = submitted.answer_output
             progress.completed(answer)
             envelope = AnswerEnvelope(question_id=request.question_id, answer_output=answer)
             typer.echo(json.dumps(envelope.model_dump(), ensure_ascii=False))

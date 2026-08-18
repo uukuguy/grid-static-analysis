@@ -27,7 +27,6 @@ def test_provider_launch_keeps_secret_out_of_argv(tmp_path: Path) -> None:
         extension_path=tmp_path / "domain-tools.mjs",
         tool_catalog_path=tmp_path / "run/tool-catalog.json",
         guide_index_path=tmp_path / "run/guide-index.json",
-        answer_draft_path=tmp_path / "run/answer-draft.json",
         system_policy_path=tmp_path / "system-policy.md",
     )
 

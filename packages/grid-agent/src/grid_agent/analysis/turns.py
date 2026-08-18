@@ -127,37 +127,6 @@ class TurnController:
             raise
         return handle
 
-    def finalize(self, handle: ActiveTurnHandle, *, duration_seconds: float) -> FinalizedTurn:
-        if not self._workspace.active_answer_draft_path.is_file():
-            return self.fail(
-                handle,
-                error="grid_submit_answer did not create an answer draft",
-                duration_seconds=duration_seconds,
-            )
-        _require_active_turn_binding(
-            self._store.snapshot.current_turn,
-            handle,
-            error="grid_submit_answer draft is bound to a different turn",
-        )
-
-        try:
-            raw_draft = self._workspace.active_answer_draft_path.read_bytes()
-            draft = _load_answer_draft(raw_draft)
-            _require_current_turn_binding(draft, handle)
-            _require_non_empty_string(draft, "answer_output")
-            _require_string_list(draft, "claim_evidence_refs")
-            _require_string_list(draft, "result_refs")
-        except StaleAnswerDraftError:
-            raise
-        except AnswerDraftError as exc:
-            return self.fail(handle, error=str(exc), duration_seconds=duration_seconds)
-        return self._accept_draft(
-            handle,
-            draft=draft,
-            raw_draft=raw_draft,
-            duration_seconds=duration_seconds,
-        )
-
     def submit(
         self,
         handle: ActiveTurnHandle,
@@ -444,16 +413,6 @@ class TurnController:
             return
 
 
-def _load_answer_draft(raw_draft: bytes) -> Mapping[str, Any]:
-    try:
-        draft = json.loads(raw_draft.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise AnswerDraftError("grid_submit_answer draft is not valid JSON") from exc
-    if not isinstance(draft, Mapping):
-        raise AnswerDraftError("grid_submit_answer draft must be a JSON object")
-    return draft
-
-
 def _read_file_state(path: Path) -> _FileState:
     try:
         return _FileState(exists=True, content=path.read_bytes())
@@ -471,11 +430,6 @@ def _restore_file_state(path: Path, state: _FileState) -> None:
     if state.content is None:
         raise RuntimeError(f"file snapshot for {path} is missing content")
     _write_bytes_atomic(path, state.content)
-
-
-def _require_current_turn_binding(draft: Mapping[str, Any], handle: ActiveTurnHandle) -> None:
-    if draft.get("turn_id") != handle.turn_id or draft.get("turn_nonce") != handle.turn_nonce:
-        raise StaleAnswerDraftError("grid_submit_answer draft is bound to a different turn")
 
 
 def _require_active_turn_binding(
@@ -496,7 +450,7 @@ def _require_active_turn_binding(
 def _require_non_empty_string(draft: Mapping[str, Any], key: str) -> str:
     value = draft.get(key)
     if not isinstance(value, str) or not value.strip():
-        raise AnswerDraftError(f"grid_submit_answer draft must include {key}")
+        raise AnswerDraftError(f"controller answer draft must include {key}")
     return value
 
 
@@ -507,7 +461,7 @@ def _require_string_list(draft: Mapping[str, Any], key: str) -> tuple[str, ...]:
         or isinstance(value, (str, bytes))
         or not all(isinstance(item, str) for item in value)
     ):
-        raise AnswerDraftError(f"grid_submit_answer draft must include {key}")
+        raise AnswerDraftError(f"controller answer draft must include {key}")
     return tuple(value)
 
 

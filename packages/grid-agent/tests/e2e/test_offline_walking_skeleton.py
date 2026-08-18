@@ -213,9 +213,8 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
         f"gridctl={str(gridctl)!r}\n"
         "def call(capability,args):\n r=subprocess.run([gridctl,'request','--workspace',os.environ['GRID_AGENT_WORKSPACE']],input=json.dumps({'protocol':'grid-capability','protocol_version':'1.0','request_id':capability,'capability':capability,'arguments':args})+'\\n',text=True,capture_output=True,check=True); return json.loads(r.stdout)['result']\n"
         "opened=call('context.open',{'model_id':'ieee39'})\nresult=call('topology.branch.endpoints.get',{'context_ref':opened['context_ref'],'kind':'line','namespace':'pandapower_index','identifier':'11'})\n"
-        "draft={'answer_output':result['from_bus']['name']+'-'+result['to_bus']['name']+' '+result['evidence_ref'],'result_refs':[],'claim_evidence_refs':[result['evidence_ref']]}\n"
-        "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft))\n"
-        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':'ignored free text'}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
+        "answer=result['from_bus']['name']+'-'+result['to_bus']['name']+' '+result['evidence_ref']\n"
+        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\nprint(json.dumps({'type':'text_delta','text':answer}),flush=True)\nprint(json.dumps({'type':'agent_end'}),flush=True)\n",
         encoding="utf-8",
     )
     pi.chmod(0o755)
@@ -238,18 +237,23 @@ def test_scripted_pi_traverses_real_gridctl(tmp_path: Path) -> None:
     assert "已完成" in completed.stderr
 
 
-def test_online_path_requires_grid_submit_answer_draft(tmp_path: Path) -> None:
-    pi = tmp_path / "scripted-pi-no-draft"
+def run_scripted_pi(tmp_path: Path, *, final_text: str | None) -> subprocess.CompletedProcess[str]:
+    pi = tmp_path / "scripted-pi"
+    lines = [
+        "#!/usr/bin/env python3",
+        "import json",
+        "json.loads(input())",
+        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)",
+    ]
+    if final_text is not None:
+        lines.append(f"print(json.dumps({{'type':'text_delta','text':{final_text!r}}}),flush=True)")
+    lines.append("print(json.dumps({'type':'agent_end'}),flush=True)")
     pi.write_text(
-        "#!/usr/bin/env python3\nimport json\njson.loads(input())\n"
-        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\n"
-        "print(json.dumps({'type':'text_delta','text':'free-form answer'}),flush=True)\n"
-        "print(json.dumps({'type':'agent_end'}),flush=True)\n",
+        "\n".join(lines) + "\n",
         encoding="utf-8",
     )
     pi.chmod(0o755)
-
-    completed = subprocess.run(
+    return subprocess.run(
         ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "line 11 endpoints"],
         cwd=ROOT,
         env={
@@ -263,38 +267,14 @@ def test_online_path_requires_grid_submit_answer_draft(tmp_path: Path) -> None:
         timeout=60,
     )
 
-    assert completed.returncode == 1
-    envelope = json.loads(completed.stdout)
-    assert set(envelope) == {"question_id", "answer_output"}
-    assert envelope["answer_output"] == "执行限制 / execution limitation: RuntimeError"
-    assert "grid_submit_answer did not create an answer draft" in completed.stderr
 
-
-def test_online_path_accepts_submit_answer_without_free_text(tmp_path: Path) -> None:
-    pi = tmp_path / "scripted-pi-draft-only"
-    pi.write_text(
-        "#!/usr/bin/env python3\nimport json, os\njson.loads(input())\n"
-        "draft={'answer_output':'执行限制 / execution limitation: scripted draft','result_refs':[],'claim_evidence_refs':[]}\n"
-        "open(os.environ['GRID_AGENT_ANSWER_DRAFT'],'w',encoding='utf-8').write(json.dumps(draft))\n"
-        "print(json.dumps({'type':'response','command':'prompt','success':True}),flush=True)\n"
-        "print(json.dumps({'type':'agent_end'}),flush=True)\n",
-        encoding="utf-8",
-    )
-    pi.chmod(0o755)
-
-    completed = subprocess.run(
-        ["uv", "run", "--project", "packages/grid-agent", "grid-agent", "run", "unsupported scripted request"],
-        cwd=ROOT,
-        env={
-            **os.environ,
-            "GRID_AGENT_PI_COMMAND": str(pi),
-            "GRID_AGENT_LLM_PROVIDER": "openai",
-            "OPENAI_API_KEY": "test-only-secret",
-        },
-        text=True,
-        capture_output=True,
-        timeout=60,
-    )
-
+def test_online_path_uses_model_final_text_without_answer_tool(tmp_path: Path) -> None:
+    completed = run_scripted_pi(tmp_path, final_text="free-form answer")
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout)["answer_output"] == "执行限制 / execution limitation: scripted draft"
+    assert json.loads(completed.stdout)["answer_output"] == "free-form answer"
+
+
+def test_online_path_rejects_empty_model_final_text(tmp_path: Path) -> None:
+    completed = run_scripted_pi(tmp_path, final_text=None)
+    assert completed.returncode == 1
+    assert "Pi agent ended without answer text" in completed.stderr
