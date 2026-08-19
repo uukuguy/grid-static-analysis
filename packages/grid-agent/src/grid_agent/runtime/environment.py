@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from grid_agent.config.models import ResolvedLLM
 from grid_agent.runtime.lock import PiCommand
@@ -47,6 +49,7 @@ def build_pi_launch(resolved: ResolvedLLM, paths: RuntimePaths, *, base_environm
 def build_pi_environment(resolved: ResolvedLLM, paths: RuntimePaths, *, base_environment: dict[str, str] | None = None) -> dict[str, str]:
     source = base_environment or dict(os.environ)
     allowed = {key: value for key, value in source.items() if key in {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"}}
+    _merge_loopback_no_proxy(allowed, resolved.config.base_url)
     allowed["PATH"] = str(paths.gridctl_dir) + os.pathsep + allowed.get("PATH", "")
     allowed["PI_CODING_AGENT_DIR"] = str(paths.project_pi_dir)
     allowed["PI_CODING_AGENT_SESSION_DIR"] = str(paths.session_dir)
@@ -87,6 +90,26 @@ def build_pi_environment(resolved: ResolvedLLM, paths: RuntimePaths, *, base_env
         allowed[resolved.config.credential_reference] = resolved.secret.value
         allowed["GRID_AGENT_SECRET_ENV_NAMES"] = resolved.config.credential_reference
     return allowed
+
+
+def _merge_loopback_no_proxy(environment: dict[str, str], base_url: str) -> None:
+    hostname = urlparse(base_url).hostname
+    if hostname is None or not _is_loopback_host(hostname):
+        return
+
+    entries = [entry.strip() for entry in environment.get("NO_PROXY", "").split(",") if entry.strip()]
+    if hostname.lower() not in {entry.lower() for entry in entries}:
+        entries.append(hostname)
+    environment["NO_PROXY"] = ",".join(entries)
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _prepare_owner_only_directory(path: Path | None) -> None:
