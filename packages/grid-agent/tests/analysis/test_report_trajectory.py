@@ -222,3 +222,70 @@ def test_row_summary_preserves_zero_line_and_bus_ids() -> None:
     assert "线路 17" not in "\n".join(line_lines)
     assert "母线 0：1.01 p.u." in "\n".join(bus_lines)
     assert "母线 18" not in "\n".join(bus_lines)
+
+
+def test_reader_visible_scalars_neutralize_markdown_and_html_injection() -> None:
+    lines = render_analysis_trajectory(
+        (
+            step(
+                "analysis.future.`\n### injected",
+                args={
+                    "subject": (
+                        "线路 17 电压正常 1.02 p.u.\n"
+                        "### injected\n"
+                        "```json\n{\"leak\": true}\n```\n"
+                        "<script>alert(1)</script> [bad](javascript:alert(1))"
+                    ),
+                    "mode": "screen",
+                },
+                result={
+                    "label": "母线 0 电压 1.01 p.u.\n<a href='https://bad.example'>bad</a>",
+                    "novel_metric": 12.75,
+                },
+            ),
+        ),
+        decisions=(
+            TraceDecision(
+                turn_id="analysis-test-t001",
+                tool_call_id="call-1",
+                intent="compare\n### injected",
+                decision="保留线路 17 电压结论\n```json\n{}",
+                next_action="<b>不要生成 HTML</b>",
+            ),
+        ),
+    )
+    text = "\n".join(lines)
+    assert "线路 17 电压正常 1.02 p.u." in text
+    assert "母线 0 电压 1.01 p.u." in text
+    assert "12.75" in text
+    assert "\n### injected" not in text
+    assert "```" not in text
+    assert "```json" not in text
+    assert "<script" not in text
+    assert "</script>" not in text
+    assert "<a href" not in text
+    assert "</a>" not in text
+    assert "<b>" not in text
+    assert "[bad](javascript:alert(1))" not in text
+
+
+def test_inline_code_values_neutralize_backticks_and_markdown_structure() -> None:
+    lines = render_analysis_trajectory(
+        (
+            step(
+                "model.dataset.query",
+                args={
+                    "dataset": "result.res_line`\n```json\n### injected",
+                    "order_by": [{"field": "loading_percent`\n### injected", "direction": "desc"}],
+                    "limit": 5,
+                },
+                result={"rows": [{"line": 17, "loading_percent": 132.51}]},
+            ),
+        )
+    )
+    text = "\n".join(lines)
+    assert "result.res_line" in text
+    assert "loading_percent" in text
+    assert "线路 17：132.51%" in text
+    assert "```" not in text
+    assert "\n### injected" not in text

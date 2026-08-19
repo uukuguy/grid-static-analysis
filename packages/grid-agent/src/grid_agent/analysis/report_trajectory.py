@@ -92,14 +92,14 @@ def render_analysis_trajectory(
     if not steps and not reuse_notes:
         return ["未观察到与本题关联的领域工具调用。"]
     milestones = build_milestones(steps, decisions=decisions)
-    lines = [f"- 复用：{note}" for note in reuse_notes if note.strip()]
+    lines = [f"- 复用：{_clean_text(note)}" for note in reuse_notes if note.strip()]
     for ordinal, milestone in enumerate(milestones, start=1):
         duration = (
             f"，{milestone.duration_seconds:.2f} 秒"
             if milestone.duration_seconds is not None
             else ""
         )
-        capabilities = "、".join(f"`{value}`" for value in milestone.capabilities)
+        capabilities = "、".join(_inline_code(value) for value in milestone.capabilities)
         lines.append(
             f"{ordinal}. {milestone.title}（{capabilities}，{milestone.status}{duration}）"
         )
@@ -271,7 +271,7 @@ def _describe_powerflow(step: TraceStep) -> tuple[str, str, bool]:
 
 def _describe_dataset_query(step: TraceStep) -> tuple[str, str, bool]:
     dataset = _safe_scalar(step.args.get("dataset")) or _safe_scalar(step.result.get("dataset"))
-    title = f"查询 `{dataset}`" if dataset else "查询网络模型数据"
+    title = f"查询 {_inline_code(dataset)}" if dataset else "查询网络模型数据"
     parts: list[str] = []
     order = _order_by_summary(step.args.get("order_by"))
     if order:
@@ -368,7 +368,7 @@ def _scalar_items(
         formatted = _format_value(values[key])
         if formatted is None:
             continue
-        items.append(f"{key}={formatted}")
+        items.append(f"{_clean_label(key)}={formatted}")
         if len(items) >= limit:
             break
     return items
@@ -454,7 +454,34 @@ def _clean_text(value: str) -> str:
     cleaned = _INTERNAL_REF_RE.sub("", value)
     for pattern in _SENSITIVE_VALUE_PATTERNS:
         cleaned = pattern.sub("[已遮蔽敏感值]", cleaned)
+    cleaned = _normalize_visible_whitespace(cleaned)
+    cleaned = _neutralize_markdown_html(cleaned)
     return cleaned.strip()
+
+
+def _clean_label(value: str) -> str:
+    return _clean_text(value)
+
+
+def _inline_code(value: str) -> str:
+    return f"`{_clean_text(value)}`"
+
+
+def _normalize_visible_whitespace(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _neutralize_markdown_html(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("`", "｀")
+        .replace("[", r"\[")
+        .replace("]", r"\]")
+        .replace("(", r"\(")
+        .replace(")", r"\)")
+    )
 
 
 def _branch_label(kind: str | None, branch_id: str | None) -> str:
