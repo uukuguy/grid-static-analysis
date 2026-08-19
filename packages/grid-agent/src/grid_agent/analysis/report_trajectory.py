@@ -101,9 +101,14 @@ def render_analysis_trajectory(
     decisions: Sequence[TraceDecision] = (),
     reuse_notes: Sequence[str] = (),
 ) -> list[str]:
-    if not steps and not reuse_notes:
+    visible_steps = tuple(
+        step for step in steps if not _is_decision_tool_capability(step.capability)
+    )
+    if not visible_steps and not reuse_notes:
+        if steps:
+            return ["未观察到可附着决策的领域仿真工具调用；决策记录详见本题详细执行轨迹。"]
         return ["未观察到与本题关联的领域工具调用。"]
-    milestones = build_milestones(steps, decisions=decisions)
+    milestones = build_milestones(visible_steps, decisions=decisions)
     lines = [f"- 复用：{_clean_text(note)}" for note in reuse_notes if note.strip()]
     for ordinal, milestone in enumerate(milestones, start=1):
         duration = (

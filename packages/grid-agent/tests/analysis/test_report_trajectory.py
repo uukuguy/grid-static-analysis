@@ -442,6 +442,25 @@ def test_trajectory_targets_support_ref_before_native_decision_tool_scope() -> N
     decision_at = text.index("决策：潮流结果支持后续排序")
     assert text.rindex("运行交流潮流计算", 0, decision_at) >= 0
     assert "grid_record_decision" not in text[:decision_at]
+    assert "grid_record_decision" not in text
+    assert text.count("潮流结果支持后续排序") == 1
+
+
+def test_trajectory_hides_decision_recording_steps_without_support_milestones() -> None:
+    decision_tool = step(
+        "grid_record_decision",
+        args={"intent": "记录判断"},
+        result={
+            "intent": "记录判断",
+            "decision": "只有决策记录",
+            "next_action": "继续",
+        },
+        sequence=1,
+    )
+
+    lines = render_analysis_trajectory((decision_tool,))
+
+    assert lines == ["未观察到可附着决策的领域仿真工具调用；决策记录详见本题详细执行轨迹。"]
 
 
 def test_trajectory_keeps_multiple_decisions_for_same_support_in_event_order() -> None:

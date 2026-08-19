@@ -297,6 +297,71 @@ def test_report_does_not_attach_later_turn_decision_to_prior_turn_support(
     assert "后续回合决策不得显示在第一题" not in first_turn
 
 
+def test_report_folds_decision_recording_call_into_supporting_milestone_and_keeps_trace(
+    report_fixture: ReportFixture,
+) -> None:
+    supported_ref = "result:sha256:" + "9" * 64
+    _append_trace_call(
+        report_fixture.workspace,
+        sequence=42,
+        call_id="supported-powerflow-call",
+        capability="analysis.powerflow.ac.run",
+        args={"operation": "powerflow.ac"},
+        result={"converged": True, "result_ref": supported_ref},
+        turn_id=f"{report_fixture.workspace.analysis_id}-t001",
+    )
+    _append_trace_call(
+        report_fixture.workspace,
+        sequence=44,
+        call_id="grid-record-decision-call",
+        capability="grid_record_decision",
+        args={"intent": "判断潮流结果"},
+        result={
+            "intent": "判断潮流结果",
+            "decision": "潮流结果支持继续分析",
+            "next_action": "查询支路负载率",
+            "refs": {"consumed": [supported_ref]},
+        },
+        turn_id=f"{report_fixture.workspace.analysis_id}-t001",
+    )
+    with report_fixture.workspace.events_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "event_type": "business.decision.declared",
+                    "scope": {
+                        "turn_id": f"{report_fixture.workspace.analysis_id}-t001",
+                        "tool_call_id": "grid-record-decision-call",
+                    },
+                    "refs": {"consumed": [supported_ref]},
+                    "payload": {
+                        "intent": "判断潮流结果",
+                        "decision": "潮流结果支持继续分析",
+                        "next_action": "查询支路负载率",
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+
+    first_turn = report.split("## 1.", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+    trajectory = first_turn.split("### 智能体分析轨迹", maxsplit=1)[1].split("### 执行状态与证据", maxsplit=1)[0]
+    detail = (report_fixture.workspace.turn_path(1) / "trace.md").read_text(encoding="utf-8")
+
+    assert "grid_record_decision" not in trajectory
+    assert trajectory.count("潮流结果支持继续分析") == 1
+    assert "决策：潮流结果支持继续分析；下一步：查询支路负载率" in trajectory
+    assert "grid_record_decision" in detail
+    assert "潮流结果支持继续分析" in detail
+
+
 def test_read_trace_decisions_tolerates_malformed_and_incomplete_events(
     tmp_path: Path,
 ) -> None:
