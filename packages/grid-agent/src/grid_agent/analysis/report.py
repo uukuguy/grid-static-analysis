@@ -33,6 +33,7 @@ _TRACE_SECRET_TOKENS = {
     "authorization",
     "credential",
     "credentials",
+    "key",
     "passwd",
     "password",
     "secret",

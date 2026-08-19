@@ -449,12 +449,26 @@ def test_report_writes_detailed_trace_page_with_refs_redacted_credentials_and_ra
         args={
             "result_ref": RESULT_REF,
             "message": "Authorization: Bearer input-token-must-not-leak",
+            "metadata": {
+                "key": "input-field-key-must-not-leak",
+                "monkey": "input-monkey-kept",
+                "passwordless_enabled": True,
+                "tokens": 2,
+            },
         },
         result={
             "result_ref": RESULT_REF,
-            "message": "api_key=output-key-must-not-leak; password=output-password-must-not-leak",
+            "message": (
+                "key=inline-key-must-not-leak; "
+                "api_key=output-key-must-not-leak; "
+                "password=output-password-must-not-leak"
+            ),
             "nested": {
                 "context_ref": BASELINE_REF,
+                "key": "output-field-key-must-not-leak",
+                "monkey": "output-monkey-kept",
+                "passwordless_enabled": True,
+                "tokens": 3,
                 "token": "field-token-must-not-leak",
             },
         },
@@ -477,15 +491,25 @@ def test_report_writes_detailed_trace_page_with_refs_redacted_credentials_and_ra
     assert "### 输出摘要" in detail
     assert RESULT_REF in detail
     assert BASELINE_REF in detail
+    assert "input-field-key-must-not-leak" not in detail
+    assert "output-field-key-must-not-leak" not in detail
+    assert "inline-key-must-not-leak" not in detail
     assert "input-token-must-not-leak" not in detail
     assert "output-key-must-not-leak" not in detail
     assert "output-password-must-not-leak" not in detail
     assert "field-token-must-not-leak" not in detail
+    assert "input-monkey-kept" in detail
+    assert "output-monkey-kept" in detail
+    assert '"passwordless_enabled": true' in detail
+    assert '"tokens": 3' in detail
     assert "analysis.future.operation" in detail
     assert "tool-results/analysis-report-t001/compatibility/rank-call.json" in detail
     first_turn = report.split("## 1.", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
     assert RESULT_REF not in first_turn
     assert BASELINE_REF not in first_turn
+    assert "input-field-key-must-not-leak" not in report
+    assert "output-field-key-must-not-leak" not in report
+    assert "inline-key-must-not-leak" not in report
     assert "input-token-must-not-leak" not in report
     assert "output-key-must-not-leak" not in report
 

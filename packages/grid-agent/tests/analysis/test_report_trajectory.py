@@ -135,6 +135,36 @@ def test_unknown_capability_uses_bounded_scalar_summary_and_redacts_internals() 
     assert len(text.splitlines()) <= 3
 
 
+def test_unknown_capability_redacts_exact_key_fields_and_key_value_patterns() -> None:
+    lines = render_analysis_trajectory(
+        (
+            step(
+                "analysis.future.operation",
+                args={
+                    "subject": "line-17",
+                    "mode": "screen",
+                    "key": "arg-field-key-must-not-leak",
+                },
+                result={
+                    "key": "result-field-key-must-not-leak",
+                    "message": "provider returned key=inline-key-must-not-leak",
+                    "monkey": "monkey-kept",
+                    "passwordless_enabled": True,
+                    "tokens": 2,
+                },
+            ),
+        )
+    )
+    text = "\n".join(lines)
+    assert "analysis.future.operation" in text
+    assert "arg-field-key-must-not-leak" not in text
+    assert "result-field-key-must-not-leak" not in text
+    assert "inline-key-must-not-leak" not in text
+    assert "monkey=monkey-kept" in text
+    assert "passwordless_enabled=True" in text
+    assert "tokens=2" in text
+
+
 def test_task2_does_not_hide_late_nonconverged_or_failed_milestones() -> None:
     lines = render_analysis_trajectory(
         tuple(

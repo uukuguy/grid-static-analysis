@@ -73,6 +73,7 @@ _SECRET_TOKENS = {
     "authorization",
     "credential",
     "credentials",
+    "key",
     "passwd",
     "password",
     "secret",
@@ -85,11 +86,11 @@ _SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"\bAuthorization\s*:\s*Bearer\s+[^\s,;，；。)）]+", re.IGNORECASE),
     re.compile(r"\bBearer\s+[^\s,;，；。)）]+", re.IGNORECASE),
     re.compile(
-        r"\b(?:access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|api[_ -]?key|private[_ -]?key|secret|password)\s*[:=]\s*[^\s,;，；。)）]+",
+        r"\b(?:access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|api[_ -]?key|private[_ -]?key|secret|password|key)\s*[:=]\s*[^\s,;，；。)）]+",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:private[_ -]?key|api[_ -]?key|secret|password)\s+[^\s,;，；。)）]+",
+        r"\b(?:private[_ -]?key|api[_ -]?key|secret|password|key)\s+[^\s,;，；。)）]+",
         re.IGNORECASE,
     ),
 )
