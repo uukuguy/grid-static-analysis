@@ -51,17 +51,18 @@ def test_report_uses_per_question_narrative_and_real_trace_steps(report_fixture:
     assert report.startswith("# 系统仿真分析报告")
     assert "## 本批次运行环境" in report
     assert "## 1. 运行潮流并复用前序结果" in report
-    assert report.index("### 仿真与工具结果") < report.index("### 模型结论") < report.index("### 执行状态与证据")
+    assert report.index("### 回答") < report.index("### 仿真环境上下文")
+    assert report.index("### 仿真环境上下文") < report.index("### 智能体分析轨迹")
+    assert report.index("### 智能体分析轨迹") < report.index("### 执行状态与证据")
     assert "按支路运行指标筛选和排序（`result.branches.rank`，完成，1.50 秒）" in report
     assert "### 执行状态与证据" in report
-    assert '"from_bus": 6' in report
-    assert '"value": 43.6275' in report
+    assert "```json" not in report.split("### 执行状态与证据", maxsplit=1)[0]
     assert "result:sha256:" not in report
     assert "evidence:sha256:" not in report
     assert "结果依赖关系" not in report
 
 
-def test_report_renders_recorded_tool_results_before_model_conclusion(
+def test_report_puts_answer_first_and_restores_simulation_context(
     report_fixture: ReportFixture,
 ) -> None:
     report = render_analysis_report(
@@ -69,20 +70,26 @@ def test_report_renders_recorded_tool_results_before_model_conclusion(
         workspace=report_fixture.workspace,
         environment=report_fixture.environment,
     )
-    first_turn = report.split("## 2.", maxsplit=1)[0]
-    assert first_turn.index("### 仿真与工具结果") < first_turn.index("### 模型结论")
-    assert '"from_bus": 6' in first_turn
-    assert '"to_bus": 11' in first_turn
-    assert '"value": 43.6275' in first_turn
-    assert '"loading_percent": 132.51' in first_turn
-    assert '"scenario_count": 35' in first_turn
+    first_turn = report.split("## 1. 运行潮流并复用前序结果", maxsplit=1)[1].split(
+        "## 2.", maxsplit=1
+    )[0]
+    answer_at = first_turn.index("### 回答")
+    context_at = first_turn.index("### 仿真环境上下文")
+    trajectory_at = first_turn.index("### 智能体分析轨迹")
+    evidence_at = first_turn.index("### 执行状态与证据")
+
+    assert answer_at < context_at < trajectory_at < evidence_at
+    assert report_fixture.answer_text in first_turn[answer_at:context_at]
+    assert "活动模型：IEEE-39" in first_turn[context_at:trajectory_at]
+    assert "母线电压约束：0.94–1.06 p.u.（模型数据）" in first_turn[context_at:trajectory_at]
+    assert "```json" not in first_turn[trajectory_at:evidence_at]
     assert "result:sha256:" not in first_turn
     assert "api_key" not in first_turn
     assert "authorization" not in first_turn
     assert "turns/001/trace.md" in first_turn
 
 
-def test_report_redacts_nested_credential_fields_without_dropping_electrical_values(
+def test_report_keeps_main_report_compact_when_tool_results_include_nested_credentials(
     report_fixture: ReportFixture,
 ) -> None:
     report = render_report_with_tool_result(
@@ -109,17 +116,20 @@ def test_report_redacts_nested_credential_fields_without_dropping_electrical_val
         },
     )
 
-    assert '"vm_pu": 1.03' in report
-    assert '"p_mw": 24.5' in report
-    assert '"normal_label": "branch-11"' in report
-    assert '"passwordless_enabled": true' in report
+    first_turn = report.split("## 1. 运行潮流并复用前序结果", maxsplit=1)[1].split(
+        "## 2.", maxsplit=1
+    )[0]
+    trajectory = first_turn.split("### 智能体分析轨迹", maxsplit=1)[1].split("### 执行状态与证据", maxsplit=1)[0]
+
+    assert "analysis.future.operation" in trajectory
+    assert "```json" not in trajectory
     assert "must-not-leak" not in report
     assert "clientSecret" not in report
     assert "private-key" not in report
     assert "credentials" not in report
 
 
-def test_failed_turn_keeps_successful_tool_result_in_main_report(
+def test_failed_turn_keeps_answer_first_context_and_successful_trajectory(
     failed_report_fixture: ReportFixture,
 ) -> None:
     report = render_analysis_report(
@@ -128,12 +138,17 @@ def test_failed_turn_keeps_successful_tool_result_in_main_report(
         environment={},
     )
     failed_turn = report.split("## 2. 失败回合", maxsplit=1)[1]
+    assert failed_turn.index("模型未返回可接受的最终回答。") < failed_turn.index(
+        "### 仿真环境上下文"
+    )
+    assert failed_turn.index("### 仿真环境上下文") < failed_turn.index(
+        "### 智能体分析轨迹"
+    )
+    assert "核查支路两端母线" in failed_turn
     assert "状态：未完成" in failed_turn
-    assert '"from_bus": 6' in failed_turn
-    assert "模型未返回可接受的最终回答" in failed_turn
 
 
-def test_unknown_capability_uses_structured_result_fallback(
+def test_unknown_capability_remains_readable_without_expanded_json(
     report_fixture: ReportFixture,
 ) -> None:
     report = render_report_with_tool_result(
@@ -142,8 +157,9 @@ def test_unknown_capability_uses_structured_result_fallback(
         result={"novel_metric": 12.75, "unit": "kV"},
     )
     assert "analysis.future.operation" in report
-    assert '"novel_metric": 12.75' in report
-    assert '"unit": "kV"' in report
+    first_turn = report.split("## 2.", maxsplit=1)[0]
+    trajectory = first_turn.split("### 智能体分析轨迹", maxsplit=1)[1].split("### 执行状态与证据", maxsplit=1)[0]
+    assert "```json" not in trajectory
 
 
 def test_report_keeps_historical_submit_events_readable(
@@ -154,8 +170,7 @@ def test_report_keeps_historical_submit_events_readable(
         capability="grid_submit_answer",
         result={"ok": True},
     )
-    assert "grid_submit_answer" in report
-    assert '"ok": true' in report
+    assert "提交本题回答（`grid_submit_answer`，完成，0.25 秒）" in report
 
 
 def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: ReportFixture) -> None:
@@ -458,7 +473,7 @@ class _EventfulContext:
 def _build_report_fixture(tmp_path: Path, *, include_second_baseline: bool = False) -> ReportFixture:
     workspace = AnalysisWorkspace.create(tmp_path / "runs", "analysis-report")
     environment = {"provider": "test-provider", "model": "test-model", "pandapower": "3.4.0"}
-    answer_text = "接受答案保持原文 result:sha256:" + "a" * 64
+    answer_text = "接受答案保持原文"
 
     answer_path = workspace.turn_path(1) / "answer.json"
     answer_path.write_text(
