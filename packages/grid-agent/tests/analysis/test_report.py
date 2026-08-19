@@ -263,6 +263,40 @@ def test_report_omits_unmatched_decision_tool_event_with_diagnostic(
     assert "显式决策缺少可验证支持，已从紧凑轨迹省略" in report
 
 
+def test_report_does_not_attach_later_turn_decision_to_prior_turn_support(
+    report_fixture: ReportFixture,
+) -> None:
+    with report_fixture.workspace.events_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "event_type": "business.decision.declared",
+                    "scope": {
+                        "turn_id": f"{report_fixture.workspace.analysis_id}-t002",
+                        "tool_call_id": "grid-record-decision-call",
+                    },
+                    "refs": {"consumed": [RESULT_REF]},
+                    "payload": {
+                        "intent": "复用前序潮流",
+                        "decision": "后续回合决策不得显示在第一题",
+                        "next_action": "继续",
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+
+    first_turn = report.split("## 1.", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+    assert "后续回合决策不得显示在第一题" not in first_turn
+
+
 def test_read_trace_decisions_tolerates_malformed_and_incomplete_events(
     tmp_path: Path,
 ) -> None:

@@ -407,6 +407,43 @@ def test_trajectory_attaches_decision_by_explicit_support_ref() -> None:
     assert "决策：潮流结果可作为后续排序依据；下一步：查询支路负载率" in text
 
 
+def test_trajectory_targets_support_ref_before_native_decision_tool_scope() -> None:
+    supported_ref = "result:sha256:" + "a" * 64
+    powerflow = step(
+        "analysis.powerflow.ac.run",
+        args={"operation": "powerflow.ac"},
+        result={"converged": True, "result_ref": supported_ref},
+        sequence=1,
+    )
+    decision_tool = step(
+        "grid_record_decision",
+        args={"intent": "判断潮流结果"},
+        result={
+            "intent": "判断潮流结果",
+            "decision": "潮流结果支持后续排序",
+            "next_action": "查询支路负载率",
+            "refs": {"consumed": [supported_ref]},
+        },
+        sequence=2,
+    )
+    decision = TraceDecision(
+        turn_id=powerflow.turn_id,
+        tool_call_id=decision_tool.tool_call_id,
+        intent="判断潮流结果",
+        decision="潮流结果支持后续排序",
+        next_action="查询支路负载率",
+        support_refs=(supported_ref,),
+    )
+
+    lines = render_analysis_trajectory((powerflow, decision_tool), decisions=(decision,))
+    text = "\n".join(lines)
+
+    assert "决策：潮流结果支持后续排序；下一步：查询支路负载率" in text
+    decision_at = text.index("决策：潮流结果支持后续排序")
+    assert text.rindex("运行交流潮流计算", 0, decision_at) >= 0
+    assert "grid_record_decision" not in text[:decision_at]
+
+
 def test_trajectory_keeps_multiple_decisions_for_same_support_in_event_order() -> None:
     ranked = step(
         "result.branches.rank",
@@ -460,6 +497,30 @@ def test_trajectory_keeps_semantically_different_queries_separate_and_visible() 
     assert text.count("查询 `network.branches`") == 2
     assert "filters=line=1" in text
     assert "filters=line=2" in text
+
+
+def test_trajectory_keeps_identical_queries_with_different_key_results_separate() -> None:
+    steps = (
+        step(
+            "model.dataset.query",
+            args={"dataset": "result.res_line", "fields": ["line", "loading_percent"], "limit": 1},
+            result={"rows": [{"line": 17, "loading_percent": 132.51}], "row_count": 1},
+            sequence=1,
+        ),
+        step(
+            "model.dataset.query",
+            args={"dataset": "result.res_line", "fields": ["line", "loading_percent"], "limit": 1},
+            result={"rows": [{"line": 22, "loading_percent": 91.25}], "row_count": 1},
+            sequence=2,
+        ),
+    )
+
+    text = "\n".join(render_analysis_trajectory(steps))
+
+    assert "等价调用" not in text
+    assert text.count("查询 `result.res_line`") == 2
+    assert "线路 17：132.51%" in text
+    assert "线路 22：91.25%" in text
 
 
 def test_trajectory_renders_reuse_without_repeating_original_calculation() -> None:

@@ -276,19 +276,44 @@ def _decisions_for_turn(
     diagnostics: list[str] | None = None,
 ) -> tuple[TraceDecision, ...]:
     tool_call_ids = {step.tool_call_id for step in steps if step.tool_call_id is not None}
-    step_support_refs = set().union(*(_step_result_refs(step) for step in steps)) if steps else set()
+    supporting_steps = [step for step in steps if not _is_decision_tool_capability(step.capability)]
+    step_support_refs = (
+        set().union(*(_step_result_refs(step) for step in supporting_steps))
+        if supporting_steps
+        else set()
+    )
     accepted: list[TraceDecision] = []
     for decision in decisions:
-        direct_match = decision.tool_call_id is not None and decision.tool_call_id in tool_call_ids
-        support_match = bool(decision.support_refs and step_support_refs.intersection(decision.support_refs))
-        in_turn = decision.turn_id == turn.turn_id
-        if direct_match or support_match:
-            if in_turn or support_match:
-                accepted.append(decision)
+        in_turn = decision.turn_id is None or decision.turn_id == turn.turn_id
+        if not in_turn:
             continue
-        if in_turn and diagnostics is not None:
+        direct_match = (
+            not decision.support_refs
+            and decision.tool_call_id is not None
+            and decision.tool_call_id in tool_call_ids
+            and not _tool_call_is_decision_tool(decision.tool_call_id, steps)
+        )
+        support_match = bool(decision.support_refs and step_support_refs.intersection(decision.support_refs))
+        if direct_match or support_match:
+            accepted.append(decision)
+            continue
+        if decision.turn_id == turn.turn_id and diagnostics is not None:
             diagnostics.append(f"回合 {turn.ordinal} 显式决策缺少可验证支持，已从紧凑轨迹省略")
     return tuple(accepted)
+
+
+def _tool_call_is_decision_tool(
+    tool_call_id: str,
+    steps: Sequence[TraceStep],
+) -> bool:
+    return any(
+        step.tool_call_id == tool_call_id and _is_decision_tool_capability(step.capability)
+        for step in steps
+    )
+
+
+def _is_decision_tool_capability(capability: str) -> bool:
+    return capability in {"grid_record_decision", "business.decision.declared"}
 
 
 def _step_result_refs(step: TraceStep) -> set[str]:

@@ -361,16 +361,31 @@ def _decision_target(
     milestones: Sequence[TrajectoryMilestone],
     decision: TraceDecision,
 ) -> int | None:
-    if decision.tool_call_id is not None:
-        for index, milestone in enumerate(milestones):
-            if decision.tool_call_id in milestone.step_tool_call_ids:
-                return index
     if decision.support_refs:
         support_refs = set(decision.support_refs)
         for index, milestone in enumerate(milestones):
-            if support_refs.intersection(milestone.support_refs):
+            if (
+                not _is_decision_tool_milestone(milestone)
+                and support_refs.intersection(milestone.support_refs)
+            ):
+                return index
+        return None
+    if decision.tool_call_id is not None:
+        for index, milestone in enumerate(milestones):
+            if (
+                not _is_decision_tool_milestone(milestone)
+                and decision.tool_call_id in milestone.step_tool_call_ids
+            ):
                 return index
     return None
+
+
+def _is_decision_tool_milestone(milestone: TrajectoryMilestone) -> bool:
+    return any(_is_decision_tool_capability(capability) for capability in milestone.capabilities)
+
+
+def _is_decision_tool_capability(capability: str) -> bool:
+    return capability in {"grid_record_decision", "business.decision.declared"}
 
 
 def _attach_decision(
@@ -683,7 +698,7 @@ def _semantic_signature(step: TraceStep) -> str:
     }
     rows = step.result.get("rows")
     if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes, bytearray)):
-        result_shape["rows"] = f"{len(rows)} rows"
+        result_shape["rows"] = _signature_value(tuple(rows[:2]))
     return f"{step.capability}|ok={step.ok}|args={args}|result={result_shape}"
 
 
