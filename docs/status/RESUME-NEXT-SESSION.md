@@ -6,7 +6,7 @@
 
 - `main` contains the complete `grid-static-analysis` v1.0.1 implementation and release documentation.
 - The release includes loopback proxy bypass for local OpenAI-compatible services, normalized Responses tool-call identities, and compact answer-first analysis reports.
-- Previously operator-local reports, test scripts, the user manual, and validation questions are being placed under Git control for the formal release.
+- Previously operator-local reports, test scripts, the user manual, and validation questions are now under Git control in commit `1643315`.
 
 ## Durable verification baseline
 
@@ -24,9 +24,8 @@
 
 ## Immediate next actions
 
-1. Commit the verified release assets on `main`.
-2. Recreate the unpushed annotated `v1.0.1` tag on the resulting commit.
-3. Push `main` and `v1.0.1` to `origin`, then confirm the remote refs.
+1. Recreate the unpushed annotated `v1.0.1` tag on the final release-state commit.
+2. Push `main` and `v1.0.1` to `origin`, then confirm the remote refs.
 
 ## Boundaries
 

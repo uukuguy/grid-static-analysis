@@ -414,3 +414,4 @@ The following append-only entries were recovered before closing the fully merged
 - 20:11 统一发布版本至 1.0.1，为补丁 tag 固化版本身份 [541c229]
 - 20:20 经用户确认，将报告、用户手册、测试脚本与验证问题纳入 v1.0.1 正式发布管控
 - 20:35 发布交付门禁通过：Agent 588、Simulator 164、Pi tools 29、Workbench 120，零失败
+- 20:36 纳入正式报告、手册、测试脚本与验证题，确保 v1.0.1 交付完整 [1643315]
