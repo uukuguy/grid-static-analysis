@@ -129,7 +129,7 @@ Pi 只能访问项目发布的 grid domain tools 和 `grid_guide_open`。工具�
 
 在线运行不要求模型使用答案持久化工具。单题 `run` 中，模型返回普通最终文本后直接形成 stdout envelope；连续 `analysis` 中，控制器再写入 `answer_output`、`result_refs` 和 `claim_evidence_refs`，并验证这些引用确实来自当前分析目录和当前回合 lineage。验证器不从 `answer_output` 文本中解析引用。`result_refs` 用来声明直接支撑最终结论的主结果，分析证据中已经关联的结果也会被自动定位、校验其当前运行归属和上下文一致性。拓扑事实可使用空 `result_refs`；AC、排序和 N-1 等结果型结论必须有当前运行的主结果或与其相连的分析证据。
 
-连续分析的 stderr 应显示分析工具调用和一次正常模型完成；trace 不应包含模型发起的 `grid_submit_answer` 调用。若任一必需回合失败，运行状态为 `failed`、CLI 退出码为 `1`，且 `report.md` 必须保留该回合已经成功返回的工具结果。
+连续分析的 stderr 应显示分析工具调用和一次正常模型完成；trace 不应包含模型发起的 `grid_submit_answer` 调用。若任一必需回合失败，运行状态为 `failed`、CLI 退出码为 `1`，且 `report.md` 必须在回答占位符之后保留该回合已经成功返回的可观察轨迹与工具结果摘要。
 
 最终答案只能引用当前运行中实际存在的 `evidence:sha256:*` 或 `result:sha256:*`。迁移和清理不会删除用户主工作树中的既有 `var/` 数据；本分支只使用新的 ignored `runs/` 和 `.grid-agent/` 布局。
 

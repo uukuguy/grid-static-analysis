@@ -234,26 +234,22 @@ are not offered as applicable inputs to the next instruction.
 ## Report Projection
 
 `report.md` is a projection from the finalized context and workspace files.
-It is organized for an operator reading one instruction at a time: **question
-→ simulator and tool results → model conclusion → execution status and
-evidence → integrity diagnostics**. Tool steps are reconstructed from the
-recorded start/result trace and are presented with semantic descriptions,
-durations, and bounded structured result values before model prose. Evidence
-is associated with a turn by its produced and consumed references, because an
-evidence artifact can be registered globally while still supporting one
-specific answer. The main report links each turn to `turns/<ordinal>/trace.md`;
-that page records redacted tool inputs, structured outputs, timing, and links
-to the corresponding raw tool-result artifact.
-Internal content-addressed references are excluded from reader-facing prose so
-that conclusions are not buried under hashes; the accepted original answer
-remains linked as an artifact. Tool execution is derived only from recorded
-observations and shows the tool purpose, relevant human-readable input, and
-compact verified outcome; it does not reproduce hidden model reasoning.
-Runtime metadata, baseline, diagnostics, forensic artifact links, and the full
-result/evidence/observation reference index appear only in integrity
-diagnostic sections or linked artifacts. Report diagnostics may explain missing
-or malformed artifacts, but the report must not infer simulator facts absent
-from the context.
+It is organized per instruction as **answer → simulation environment context →
+observable agent analysis trajectory → execution status and evidence**. The
+trajectory deterministically projects recorded tool intent, semantic inputs,
+simulator results, lineage, failures, recovery, and optional declared decisions
+into compact milestones. Complete inputs and outputs remain in
+`turns/<ordinal>/trace.md`; the main report never expands raw result JSON or
+invents private model reasoning. Evidence is associated with a turn by its
+produced and consumed references, because an evidence artifact can be
+registered globally while still supporting one specific answer. Internal
+content-addressed references are excluded from reader-facing prose so that
+conclusions are not buried under hashes; the accepted original answer remains
+linked as an artifact. Runtime metadata, baseline, diagnostics, forensic
+artifact links, and the full result/evidence/observation reference index appear
+only in integrity diagnostic sections or linked artifacts. Report diagnostics
+may explain missing or malformed artifacts, but the report must not infer
+simulator facts absent from the context.
 
 ## Schema Evolution Rules
 

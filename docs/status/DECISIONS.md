@@ -4,9 +4,19 @@
 
 - **Decision:** Pi/LLM may use only project-defined grid tools and `grid_guide_open`; after tool use it returns ordinary reader-facing final text. `grid-agent` deterministically commits that text and binds the current turn's consumed and produced result/evidence lineage.
 - **Rationale:** provider and model tool-call behavior must not decide whether a valid analysis answer is persisted. Moving submission into the controller makes online `run` and continuous `analysis` provider-independent while preserving the simulator boundary.
-- **Report consequence:** reports are evidence-first projections: recorded simulator/tool results appear before model prose, failed turns retain successful tool values, and integrity diagnostics may report broken artifacts or references without semantically re-evaluating simulator facts.
+- **Superseded report consequence:** reports were initially documented as evidence-first projections with recorded simulator/tool results before model prose. The 2026-08-19 readable trajectory decision below supersedes only that presentation order; failed-turn evidence preservation and diagnostic boundaries remain.
 - **Specification:** `docs/superpowers/specs/2026-08-18-controller-owned-answer-submission-and-evidence-first-report-design.md`
 - **Plan:** `docs/superpowers/plans/2026-08-19-controller-owned-answer-submission-and-evidence-first-report.md`
+
+## 2026-08-19 — Reports are answer-first with a bounded observable trajectory
+
+- **Decision:** Each question renders answer, simulation context, compact observable agent trajectory, then execution status/evidence. Simulator results appear inside the step that produced them; raw JSON remains in the linked detailed trace.
+- **Rationale:** A result-first JSON dump obscured answers, removed useful context, and weakened causal diagnosis. Generic capability labels were too repetitive to explain inputs, results, recovery, or reuse.
+- **Boundary:** The renderer uses recorded actions, arguments, results, lineage, failures, and optional declared decisions. It does not expose or invent private chain-of-thought and does not require a model narration tool.
+- **Density:** Target six milestones and 20–25 trajectory lines per question; failures and distinct safety-relevant findings are never dropped to meet the target.
+- **Supersedes:** The report-order consequence in the 2026-08-19 controller-owned submission decision; controller-owned submission itself is unchanged.
+- **Specification:** `docs/superpowers/specs/2026-08-19-readable-agent-analysis-trajectory-report-design.md`
+- **Plan:** `docs/superpowers/plans/2026-08-19-readable-agent-analysis-trajectory-report.md`
 
 ## 2026-08-18 — Model-facing contracts must publish exact composition syntax
 

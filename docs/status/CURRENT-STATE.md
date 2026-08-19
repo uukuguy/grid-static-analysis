@@ -18,7 +18,7 @@
 - Observation: polling skips already-seen request artifacts before parsing; projection, validation, and integrity diagnostics are deterministic consumers of recorded execution and cannot semantically replace simulator truth.
 - Simulator: `gridctl` exclusively owns registered network access and deterministic pandapower 3.4.0 calculations through `grid-capability` protocol 1.0.
 - Analysis context: bounded model-facing views retain active model, sourced constraints, reusable calculations, scenarios, facts, lineage, and explicit omission metadata.
-- Reporting: reports render recorded simulator/tool results before model prose, preserve successful tool values in failed turns, and link persisted current-run result/evidence artifacts.
+- Reporting: per-question reports render answer first, restore simulation environment context, summarize the observable agent trajectory with compact simulator results, and link persisted detailed trace/current-run evidence artifacts.
 - Workbench: the loopback read-only trajectory API and Business/Agent/Context/Evidence workbench consume deterministic projections without mutating runs.
 - Verification: unit, E2E, offline/scripted validation, and provider-backed continuous Analysis cover the stdout contract, capability boundary, trajectory replay, evidence, and reports.
 
