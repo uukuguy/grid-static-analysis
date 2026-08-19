@@ -28,6 +28,30 @@ from grid_agent.analysis.report_trajectory import (
 from grid_agent.analysis.workspace import AnalysisWorkspace
 
 
+_TRACE_REDACTED = "[已遮蔽敏感值]"
+_TRACE_SECRET_TOKENS = {
+    "authorization",
+    "credential",
+    "credentials",
+    "passwd",
+    "password",
+    "secret",
+    "token",
+}
+_TRACE_SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"\bAuthorization\s*:\s*Bearer\s+[^\s,;，；。)）]+", re.IGNORECASE),
+    re.compile(r"\bBearer\s+[^\s,;，；。)）]+", re.IGNORECASE),
+    re.compile(
+        r"\b(?:access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|api[_ -]?key|private[_ -]?key|secret|password|key)\s*[:=]\s*[^\s,;，；。)）]+",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:private[_ -]?key|api[_ -]?key|secret|password|key)\s+[^\s,;，；。)）]+",
+        re.IGNORECASE,
+    ),
+)
+
+
 def render_analysis_report(
     *,
     context: AnalysisContext,
@@ -446,6 +470,12 @@ def _render_turn_trace_page(
     if not steps:
         lines.append("未观察到与本题关联的领域工具调用。")
         return "\n".join(lines) + "\n"
+    lines.extend(
+        [
+            "凭据、令牌、密钥和密码值会在本页遮蔽；内部结果/证据/上下文引用保留，用于追溯本题输入输出。",
+            "",
+        ]
+    )
     for ordinal, step in enumerate(steps, start=1):
         state = "完成" if step.ok else "返回受限/错误"
         lines.extend(
@@ -478,7 +508,53 @@ def _render_turn_trace_page(
 
 
 def _trace_json(value: Mapping[str, Any]) -> str:
-    return _redact_internal_refs(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+    safe_value = _trace_safe_json_value(value, field_name=None)
+    return json.dumps(safe_value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _trace_safe_json_value(value: Any, *, field_name: str | None) -> Any:
+    if field_name is not None and _trace_is_secret_field(field_name):
+        return _TRACE_REDACTED
+    if isinstance(value, Mapping):
+        return {
+            str(key): _trace_safe_json_value(nested, field_name=str(key))
+            for key, nested in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [
+            _trace_safe_json_value(item, field_name=field_name)
+            for item in value
+        ]
+    if isinstance(value, str):
+        return _trace_redact_sensitive_string(value)
+    return value
+
+
+def _trace_redact_sensitive_string(value: str) -> str:
+    cleaned = value
+    for pattern in _TRACE_SENSITIVE_VALUE_PATTERNS:
+        cleaned = pattern.sub(_TRACE_REDACTED, cleaned)
+    return cleaned
+
+
+def _trace_is_secret_field(field_name: str) -> bool:
+    tokens = _trace_field_name_tokens(field_name)
+    if any(token in _TRACE_SECRET_TOKENS for token in tokens):
+        return True
+    pairs = set(zip(tokens, tokens[1:], strict=False))
+    if ("api", "key") in pairs or ("private", "key") in pairs:
+        return True
+    compact = "".join(tokens)
+    return compact.endswith("apikey") or compact.endswith("privatekey")
+
+
+def _trace_field_name_tokens(field_name: str) -> tuple[str, ...]:
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", field_name)
+    return tuple(
+        token
+        for token in re.split(r"[^A-Za-z0-9]+", separated.lower())
+        if token
+    )
 
 
 def _turn_trace_tool_result_link(

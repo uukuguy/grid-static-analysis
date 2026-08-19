@@ -437,10 +437,29 @@ def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: Rep
     assert "evidence/analysis/powerflow-evidence.json" in evidence_section
 
 
-def test_report_writes_detailed_trace_page_with_safe_input_output_and_raw_link(report_fixture: ReportFixture) -> None:
+def test_report_writes_detailed_trace_page_with_refs_redacted_credentials_and_raw_link(report_fixture: ReportFixture) -> None:
     tool_result = report_fixture.workspace.tool_results_path / f"{report_fixture.workspace.analysis_id}-t001" / "compatibility" / "rank-call.json"
     tool_result.parent.mkdir(parents=True, exist_ok=True)
     tool_result.write_text(json.dumps({"result_ref": RESULT_REF, "branches": []}), encoding="utf-8")
+    _append_trace_call(
+        report_fixture.workspace,
+        sequence=50,
+        call_id="sensitive-message-call",
+        capability="analysis.future.operation",
+        args={
+            "result_ref": RESULT_REF,
+            "message": "Authorization: Bearer input-token-must-not-leak",
+        },
+        result={
+            "result_ref": RESULT_REF,
+            "message": "api_key=output-key-must-not-leak; password=output-password-must-not-leak",
+            "nested": {
+                "context_ref": BASELINE_REF,
+                "token": "field-token-must-not-leak",
+            },
+        },
+        turn_id=f"{report_fixture.workspace.analysis_id}-t001",
+    )
 
     report = render_analysis_report(
         context=report_fixture.context,
@@ -456,8 +475,19 @@ def test_report_writes_detailed_trace_page_with_safe_input_output_and_raw_link(r
     assert "### 输入" in detail
     assert "loading_percent" in detail
     assert "### 输出摘要" in detail
+    assert RESULT_REF in detail
+    assert BASELINE_REF in detail
+    assert "input-token-must-not-leak" not in detail
+    assert "output-key-must-not-leak" not in detail
+    assert "output-password-must-not-leak" not in detail
+    assert "field-token-must-not-leak" not in detail
+    assert "analysis.future.operation" in detail
     assert "tool-results/analysis-report-t001/compatibility/rank-call.json" in detail
-    assert RESULT_REF not in detail
+    first_turn = report.split("## 1.", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+    assert RESULT_REF not in first_turn
+    assert BASELINE_REF not in first_turn
+    assert "input-token-must-not-leak" not in report
+    assert "output-key-must-not-leak" not in report
 
 
 def test_report_uses_native_turn_scope_for_tools_without_context_observations(
