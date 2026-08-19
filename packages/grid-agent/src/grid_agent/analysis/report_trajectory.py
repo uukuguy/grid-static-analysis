@@ -67,9 +67,20 @@ _SECRET_TOKENS = {
     "token",
 }
 _INTERNAL_REF_RE = re.compile(
-    r"\b(?:result|evidence|context|revision|observation|asset):[A-Za-z0-9_-]+:[0-9a-fA-F]{32,}\b"
+    r"\b(?:(?:result|evidence|context|revision|observation):[A-Za-z0-9_-]+|asset:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+):[0-9a-fA-F]{32,}\b"
 )
-_MAX_MILESTONES = 6
+_SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"\bAuthorization\s*:\s*Bearer\s+[^\s,;，；。)）]+", re.IGNORECASE),
+    re.compile(r"\bBearer\s+[^\s,;，；。)）]+", re.IGNORECASE),
+    re.compile(
+        r"\b(?:access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|api[_ -]?key|private[_ -]?key|secret|password)\s*[:=]\s*[^\s,;，；。)）]+",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:private[_ -]?key|api[_ -]?key|secret|password)\s+[^\s,;，；。)）]+",
+        re.IGNORECASE,
+    ),
+)
 
 
 def render_analysis_trajectory(
@@ -117,7 +128,7 @@ def build_milestones(
         _attach_decision(_milestone_for_step(step), _decision_for_step(step, decision_by_call, decision_by_turn))
         for step in sorted(steps, key=lambda item: item.sequence)
     )
-    return _bound_milestones(milestones)
+    return milestones
 
 
 def _decision_for_step(
@@ -155,33 +166,6 @@ def _attach_decision(
         text,
         True,
     )
-
-
-def _bound_milestones(
-    milestones: Sequence[TrajectoryMilestone],
-) -> tuple[TrajectoryMilestone, ...]:
-    if len(milestones) <= _MAX_MILESTONES:
-        return tuple(milestones)
-
-    selected: list[TrajectoryMilestone] = []
-    omitted = 0
-    for milestone in milestones:
-        if milestone.important or len(selected) < _MAX_MILESTONES - 1:
-            selected.append(milestone)
-        else:
-            omitted += 1
-
-    if omitted:
-        selected.append(
-            TrajectoryMilestone(
-                title="压缩重复或低信息密度工具调用",
-                capabilities=("多项领域能力",),
-                status="已压缩",
-                duration_seconds=None,
-                detail=f"另有 {omitted} 次调用保留在详细执行轨迹中，正文仅展示关键诊断里程碑。",
-            )
-        )
-    return tuple(selected[:_MAX_MILESTONES])
 
 
 def _milestone_for_step(step: TraceStep) -> TrajectoryMilestone:
@@ -428,11 +412,11 @@ def _row_summary(value: object) -> str | None:
     first = value[0]
     if not isinstance(first, Mapping):
         return None
-    branch = _safe_scalar(first.get("line") or first.get("branch") or first.get("branch_id"))
+    branch = _first_present_scalar(first, ("line", "branch", "branch_id"))
     loading = _safe_scalar(first.get("loading_percent"))
     if branch is not None and loading is not None:
         return f"线路 {branch}：{loading}%"
-    bus = _safe_scalar(first.get("bus") or first.get("bus_id"))
+    bus = _first_present_scalar(first, ("bus", "bus_id"))
     vm = _safe_scalar(first.get("vm_pu"))
     if bus is not None and vm is not None:
         return f"母线 {bus}：{vm} p.u."
@@ -447,6 +431,15 @@ def _first_scalar(values: Mapping[str, Any], keys: Sequence[str]) -> str | None:
     return None
 
 
+def _first_present_scalar(values: Mapping[str, Any], keys: Sequence[str]) -> str | None:
+    for key in keys:
+        if key in values:
+            scalar = _safe_scalar(values[key])
+            if scalar is not None:
+                return scalar
+    return None
+
+
 def _safe_scalar(value: object) -> str | None:
     if value is None:
         return None
@@ -458,7 +451,10 @@ def _safe_scalar(value: object) -> str | None:
 
 
 def _clean_text(value: str) -> str:
-    return _INTERNAL_REF_RE.sub("", value).strip()
+    cleaned = _INTERNAL_REF_RE.sub("", value)
+    for pattern in _SENSITIVE_VALUE_PATTERNS:
+        cleaned = pattern.sub("[已遮蔽敏感值]", cleaned)
+    return cleaned.strip()
 
 
 def _branch_label(kind: str | None, branch_id: str | None) -> str:

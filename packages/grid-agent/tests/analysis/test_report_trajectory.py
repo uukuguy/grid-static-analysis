@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from grid_agent.analysis.report_trajectory import TraceStep, render_analysis_trajectory
+from grid_agent.analysis.report_trajectory import (
+    TraceDecision,
+    TraceStep,
+    render_analysis_trajectory,
+)
 
 
 def step(
@@ -129,3 +133,92 @@ def test_unknown_capability_uses_bounded_scalar_summary_and_redacts_internals() 
     assert "must-not-leak" not in text
     assert "result:sha256:" not in text
     assert len(text.splitlines()) <= 3
+
+
+def test_task2_does_not_hide_late_nonconverged_or_failed_milestones() -> None:
+    lines = render_analysis_trajectory(
+        tuple(
+            step(
+                "analysis.powerflow.ac.run",
+                args={"operation": f"powerflow.ac.{sequence}"},
+                result={
+                    "converged": sequence != 8,
+                    "total_active_loss": {"value": sequence, "unit": "MW"},
+                },
+                ok=sequence != 9,
+                sequence=sequence,
+            )
+            for sequence in range(1, 10)
+        )
+    )
+    text = "\n".join(lines)
+    assert text.count("运行交流潮流计算") == 9
+    assert "8 MW" in text and "未收敛" in text
+    assert "9 MW" in text and "返回受限/错误" in text
+    assert "压缩" not in text
+
+
+def test_fallback_sanitizes_sensitive_values_under_innocuous_keys() -> None:
+    lines = render_analysis_trajectory(
+        (
+            step(
+                "analysis.future.operation",
+                args={
+                    "subject": "line-17 Authorization: Bearer sk-secret-value",
+                    "mode": "screen",
+                },
+                result={
+                    "message": (
+                        "failed with Bearer token-abc123 and private key abc; "
+                        "asset:line:sha256:" + "3" * 64
+                    ),
+                    "label": "线路 17 电压正常",
+                },
+            ),
+        ),
+        decisions=(
+            TraceDecision(
+                turn_id="analysis-test-t001",
+                tool_call_id="call-1",
+                intent="inspect Authorization: Bearer hidden-value",
+                decision="继续使用线路 17 电压结果",
+                next_action="avoid token=hidden",
+            ),
+        ),
+    )
+    text = "\n".join(lines)
+    assert "Authorization" not in text
+    assert "Bearer" not in text
+    assert "sk-secret-value" not in text
+    assert "token-abc123" not in text
+    assert "private key abc" not in text
+    assert "asset:line:sha256:" not in text
+    assert "hidden-value" not in text
+    assert "token=hidden" not in text
+    assert "线路 17 电压正常" in text
+    assert "继续使用线路 17 电压结果" in text
+
+
+def test_row_summary_preserves_zero_line_and_bus_ids() -> None:
+    line_lines = render_analysis_trajectory(
+        (
+            step(
+                "model.dataset.query",
+                args={"dataset": "result.res_line"},
+                result={"rows": [{"line": 0, "branch": 17, "loading_percent": 12.5}]},
+            ),
+        )
+    )
+    bus_lines = render_analysis_trajectory(
+        (
+            step(
+                "model.dataset.query",
+                args={"dataset": "result.res_bus"},
+                result={"rows": [{"bus": 0, "bus_id": 18, "vm_pu": 1.01}]},
+            ),
+        )
+    )
+    assert "线路 0：12.5%" in "\n".join(line_lines)
+    assert "线路 17" not in "\n".join(line_lines)
+    assert "母线 0：1.01 p.u." in "\n".join(bus_lines)
+    assert "母线 18" not in "\n".join(bus_lines)
