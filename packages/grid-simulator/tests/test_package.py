@@ -4,7 +4,7 @@ import grid_simulator
 
 
 def test_package_version() -> None:
-    assert grid_simulator.__version__ == "1.0.0"
+    assert grid_simulator.__version__ == "1.0.1"
 
 
 def test_console_target_imports_successfully() -> None:
