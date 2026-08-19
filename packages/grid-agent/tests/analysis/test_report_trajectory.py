@@ -289,3 +289,85 @@ def test_inline_code_values_neutralize_backticks_and_markdown_structure() -> Non
     assert "线路 17：132.51%" in text
     assert "```" not in text
     assert "\n### injected" not in text
+
+
+def test_trajectory_groups_setup_and_equivalent_retries_without_hiding_failures() -> None:
+    steps = (
+        step("model.list", args={}, result={"models": [{"model": "ieee39"}]}, sequence=1),
+        step(
+            "context.open",
+            args={"model": "ieee39"},
+            result={"model": "ieee39", "counts": {"buses": 39, "lines": 35, "transformers": 11}},
+            sequence=2,
+        ),
+        step(
+            "model.dataset.query",
+            args={"dataset": "result.res_line", "fields": ["bad_field"]},
+            result={"code": "unknown_field", "message": "bad_field is not published"},
+            ok=False,
+            sequence=3,
+        ),
+        step(
+            "model.dataset.query",
+            args={"dataset": "result.res_line", "fields": ["loading_percent"], "limit": 5},
+            result={"rows": [{"line": 17, "loading_percent": 132.51}], "row_count": 5},
+            sequence=4,
+        ),
+    )
+    text = "\n".join(render_analysis_trajectory(steps))
+    assert text.count("准备 IEEE-39 仿真环境") == 1
+    assert "2 次调用" in text
+    assert "bad_field is not published" in text
+    assert "改用 loading_percent" in text
+    assert "线路 17：132.51%" in text
+
+
+def test_density_target_compacts_low_information_steps_but_keeps_important_ones() -> None:
+    steps = tuple(
+        step(
+            "model.dataset.describe",
+            args={"dataset": f"dataset-{index}"},
+            result={"field_count": index + 1},
+            sequence=index,
+        )
+        for index in range(1, 9)
+    ) + (
+        step(
+            "analysis.powerflow.ac.run",
+            args={"operation": "powerflow.ac"},
+            result={"converged": False, "message": "Newton-Raphson did not converge"},
+            ok=False,
+            sequence=20,
+        ),
+    )
+    lines = render_analysis_trajectory(steps)
+    text = "\n".join(lines)
+    assert sum(line[:1].isdigit() for line in lines) <= 6
+    assert "其余 3 次数据集结构核对" in text
+    assert "Newton-Raphson did not converge" in text
+
+
+def test_trajectory_attaches_recorded_decision_to_supporting_step() -> None:
+    ranked = step(
+        "result.branches.rank",
+        args={"metric": "loading_percent", "limit": 5},
+        result={"rows": [{"line": 17, "loading_percent": 132.51}]},
+        sequence=4,
+    )
+    decision = TraceDecision(
+        turn_id=ranked.turn_id,
+        tool_call_id=ranked.tool_call_id,
+        intent="识别过载线路",
+        decision="线路 17 超过模型约束 100%",
+        next_action="对线路 17 开展 N-1 校核",
+    )
+    text = "\n".join(render_analysis_trajectory((ranked,), decisions=(decision,)))
+    assert "决策：线路 17 超过模型约束 100%；下一步：对线路 17 开展 N-1 校核" in text
+
+
+def test_trajectory_renders_reuse_without_repeating_original_calculation() -> None:
+    lines = render_analysis_trajectory(
+        (),
+        reuse_notes=("第 5 题交流潮流结果，未重复计算",),
+    )
+    assert lines == ["- 复用：第 5 题交流潮流结果，未重复计算"]

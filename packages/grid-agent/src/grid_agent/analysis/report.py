@@ -40,6 +40,7 @@ def render_analysis_report(
     diagnostics.extend(ledger.diagnostics)
     trace = _read_trace_steps(workspace.trace_path, workspace.events_path)
     diagnostics.extend(trace.diagnostics)
+    decisions, decision_diagnostics = _read_trace_decisions(workspace.events_path)
     trace_pages = _write_turn_trace_pages(context, workspace, trace.steps, diagnostics)
     counts = {status: sum(turn.status == status for turn in context.turns) for status in ("success", "failed")}
     lines = [
@@ -53,7 +54,18 @@ def render_analysis_report(
         *_render_environment(context, environment),
     ]
     for turn in sorted(context.turns, key=lambda item: item.ordinal):
-        lines.extend(_render_narrative_turn(context, turn, workspace, trace.steps, trace_pages, diagnostics))
+        lines.extend(
+            _render_narrative_turn(
+                context,
+                turn,
+                workspace,
+                trace.steps,
+                decisions,
+                trace_pages,
+                diagnostics,
+            )
+        )
+    diagnostics.extend(decision_diagnostics)
     audit = _render_audit_review(context, workspace, diagnostics)
     if audit:
         lines.extend(["", "## 完整性诊断", "", *audit])
@@ -67,14 +79,12 @@ class _TraceRead:
     diagnostics: tuple[str, ...]
 
 
-_NO_TRACE_DECISIONS: tuple[TraceDecision, ...] = ()
-
-
 def _render_narrative_turn(
     context: AnalysisContext,
     turn: TurnRecord,
     workspace: AnalysisWorkspace,
     trace_steps: Sequence[TraceStep],
+    decisions: Sequence[TraceDecision],
     trace_pages: Mapping[str, str],
     diagnostics: list[str],
 ) -> list[str]:
@@ -108,7 +118,7 @@ def _render_narrative_turn(
         "",
         "### 智能体分析轨迹",
         "",
-        *_render_analysis_trajectory_for_turn(context, turn, steps),
+        *_render_analysis_trajectory_for_turn(context, turn, steps, decisions),
         "",
         "### 执行状态与证据",
         "",
@@ -226,22 +236,44 @@ def _render_analysis_trajectory_for_turn(
     context: AnalysisContext,
     turn: TurnRecord,
     steps: Sequence[TraceStep],
+    decisions: Sequence[TraceDecision],
 ) -> list[str]:
     return render_analysis_trajectory(
         steps,
-        decisions=_NO_TRACE_DECISIONS,
+        decisions=_decisions_for_turn(turn.turn_id, steps, decisions),
         reuse_notes=_trajectory_reuse_notes(context, turn),
     )
 
 
 def _trajectory_reuse_notes(context: AnalysisContext, turn: TurnRecord) -> tuple[str, ...]:
+    producer_ordinals = {item.turn_id: item.ordinal for item in context.turns}
     notes: list[str] = []
     for reference in turn.consumed_refs:
         calculation = context.domain_state.calculations.get(reference)
-        if calculation is None:
+        if calculation is None or calculation.producer_turn_id == turn.turn_id:
             continue
-        notes.append(f"{_calculation_label(calculation.kind)}（{_calculation_status_label(calculation.status)}）")
+        producer = producer_ordinals.get(calculation.producer_turn_id)
+        label = _calculation_label(calculation.kind)
+        notes.append(
+            f"第 {producer} 题{label}结果，未重复计算"
+            if producer is not None
+            else f"前序{label}结果，未重复计算"
+        )
     return tuple(dict.fromkeys(notes))
+
+
+def _decisions_for_turn(
+    turn_id: str,
+    steps: Sequence[TraceStep],
+    decisions: Sequence[TraceDecision],
+) -> tuple[TraceDecision, ...]:
+    tool_call_ids = {step.tool_call_id for step in steps if step.tool_call_id is not None}
+    return tuple(
+        decision
+        for decision in decisions
+        if decision.turn_id == turn_id
+        or (decision.tool_call_id is not None and decision.tool_call_id in tool_call_ids)
+    )
 
 
 def _calculation_status_label(status: str) -> str:
@@ -518,6 +550,59 @@ def _read_trace_steps(path: Path, native_events_path: Path) -> _TraceRead:
         ),
         tuple(diagnostics),
     )
+
+
+def _read_trace_decisions(
+    path: Path,
+) -> tuple[tuple[TraceDecision, ...], tuple[str, ...]]:
+    if not path.is_file():
+        return (), ()
+    decisions: list[TraceDecision] = []
+    diagnostics: list[str] = []
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return (), ("原生轨迹不可读，无法投影显式决策",)
+    for line_number, line in enumerate(raw_lines, start=1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            diagnostics.append(f"原生轨迹第 {line_number} 行格式错误")
+            continue
+        if (
+            not isinstance(event, Mapping)
+            or event.get("event_type") != "business.decision.declared"
+        ):
+            continue
+        scope = event.get("scope")
+        payload = event.get("payload")
+        if not isinstance(scope, Mapping) or not isinstance(payload, Mapping):
+            diagnostics.append(f"原生轨迹第 {line_number} 行决策事件不完整")
+            continue
+        intent = payload.get("intent")
+        decision = payload.get("decision")
+        next_action = payload.get("next_action")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (intent, decision, next_action)
+        ):
+            diagnostics.append(f"原生轨迹第 {line_number} 行决策字段无效")
+            continue
+        assert isinstance(intent, str)
+        assert isinstance(decision, str)
+        assert isinstance(next_action, str)
+        turn_id = scope.get("turn_id")
+        tool_call_id = scope.get("tool_call_id")
+        decisions.append(
+            TraceDecision(
+                turn_id=turn_id if isinstance(turn_id, str) else None,
+                tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+                intent=intent,
+                decision=decision,
+                next_action=next_action,
+            )
+        )
+    return tuple(decisions), tuple(diagnostics)
 
 
 def _native_turns_by_call(path: Path) -> dict[str, str]:

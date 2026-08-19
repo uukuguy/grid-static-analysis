@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -36,6 +36,9 @@ class TrajectoryMilestone:
     detail: str
     decision: str | None = None
     important: bool = False
+    step_turn_ids: tuple[str, ...] = ()
+    step_tool_call_ids: tuple[str, ...] = ()
+    step_sequences: tuple[int, ...] = ()
 
 
 _KEY_ARG_NAMES = (
@@ -114,58 +117,12 @@ def build_milestones(
     *,
     decisions: Sequence[TraceDecision] = (),
 ) -> tuple[TrajectoryMilestone, ...]:
-    decision_by_call = {
-        decision.tool_call_id: decision
-        for decision in decisions
-        if decision.tool_call_id is not None
-    }
-    decision_by_turn = {
-        decision.turn_id: decision
-        for decision in decisions
-        if decision.turn_id is not None
-    }
-    milestones = tuple(
-        _attach_decision(_milestone_for_step(step), _decision_for_step(step, decision_by_call, decision_by_turn))
-        for step in sorted(steps, key=lambda item: item.sequence)
-    )
-    return milestones
-
-
-def _decision_for_step(
-    step: TraceStep,
-    decision_by_call: Mapping[str, TraceDecision],
-    decision_by_turn: Mapping[str, TraceDecision],
-) -> TraceDecision | None:
-    if step.tool_call_id is not None and step.tool_call_id in decision_by_call:
-        return decision_by_call[step.tool_call_id]
-    if step.turn_id is not None and step.turn_id in decision_by_turn:
-        return decision_by_turn[step.turn_id]
-    return None
-
-
-def _attach_decision(
-    milestone: TrajectoryMilestone,
-    decision: TraceDecision | None,
-) -> TrajectoryMilestone:
-    if decision is None:
-        return milestone
-    parts = [
-        _clean_text(decision.intent),
-        _clean_text(decision.decision),
-        _clean_text(decision.next_action),
-    ]
-    text = "；".join(part for part in parts if part)
-    if not text:
-        return milestone
-    return TrajectoryMilestone(
-        milestone.title,
-        milestone.capabilities,
-        milestone.status,
-        milestone.duration_seconds,
-        milestone.detail,
-        text,
-        True,
-    )
+    narrated = tuple(_milestone_for_step(step) for step in sorted(steps, key=lambda item: item.sequence))
+    with_setup = _group_adjacent_setup(narrated)
+    with_retries = _group_equivalent_retries(with_setup)
+    with_recovery = _annotate_recovery(with_retries)
+    with_decisions = _attach_decisions(with_recovery, decisions)
+    return _compress_to_density_target(with_decisions, target=6)
 
 
 def _milestone_for_step(step: TraceStep) -> TrajectoryMilestone:
@@ -177,7 +134,327 @@ def _milestone_for_step(step: TraceStep) -> TrajectoryMilestone:
         duration_seconds=step.duration_seconds,
         detail=detail,
         important=important or not step.ok,
+        step_turn_ids=(step.turn_id,) if step.turn_id is not None else (),
+        step_tool_call_ids=(step.tool_call_id,) if step.tool_call_id is not None else (),
+        step_sequences=(step.sequence,),
     )
+
+
+def _group_adjacent_setup(
+    milestones: Sequence[TrajectoryMilestone],
+) -> tuple[TrajectoryMilestone, ...]:
+    grouped: list[TrajectoryMilestone] = []
+    index = 0
+    while index < len(milestones):
+        current = milestones[index]
+        if not _is_setup_milestone(current):
+            grouped.append(current)
+            index += 1
+            continue
+        group = [current]
+        index += 1
+        while index < len(milestones) and _is_setup_milestone(milestones[index]):
+            group.append(milestones[index])
+            index += 1
+        grouped.append(_combine_setup_group(group))
+    return tuple(grouped)
+
+
+def _is_setup_milestone(milestone: TrajectoryMilestone) -> bool:
+    setup_capabilities = {
+        "model.list",
+        "grid_guide_open",
+        "guide.open",
+        "context.open",
+        "context.get",
+        "environment.describe",
+    }
+    return (
+        not milestone.important
+        and milestone.decision is None
+        and all(capability in setup_capabilities for capability in milestone.capabilities)
+    )
+
+
+def _combine_setup_group(group: Sequence[TrajectoryMilestone]) -> TrajectoryMilestone:
+    model = next(
+        (
+            _setup_model_label(milestone.detail)
+            for milestone in group
+            if _setup_model_label(milestone.detail) is not None
+        ),
+        None,
+    )
+    title = f"准备 {model} 仿真环境" if model is not None else "准备仿真环境"
+    details: list[str] = [f"{len(group)} 次调用"]
+    count_summary = next(
+        (
+            _setup_count_summary(milestone.detail)
+            for milestone in group
+            if _setup_count_summary(milestone.detail) is not None
+        ),
+        None,
+    )
+    if count_summary:
+        details.append(count_summary)
+    capabilities = tuple(dict.fromkeys(capability for milestone in group for capability in milestone.capabilities))
+    return TrajectoryMilestone(
+        title=title,
+        capabilities=capabilities,
+        status=_combined_status(group),
+        duration_seconds=_combined_duration(group),
+        detail="；".join(details),
+        important=False,
+        step_turn_ids=_merge_step_ids(milestone.step_turn_ids for milestone in group),
+        step_tool_call_ids=_merge_step_ids(milestone.step_tool_call_ids for milestone in group),
+        step_sequences=tuple(sequence for milestone in group for sequence in milestone.step_sequences),
+    )
+
+
+def _setup_model_label(detail: str) -> str | None:
+    match = re.search(r"模型=([^；]+)", detail)
+    if match is None:
+        return None
+    value = match.group(1).strip()
+    if value.lower() == "ieee39":
+        return "IEEE-39"
+    return value
+
+
+def _setup_count_summary(detail: str) -> str | None:
+    matches = re.findall(r"(?:buses|bus|母线)=? ?(\d+)|(?:lines|line|线路)=? ?(\d+)|(?:transformers|trafo|变压器)=? ?(\d+)", detail)
+    if not matches:
+        return None
+    labels = ("母线", "线路", "变压器")
+    values: list[str] = []
+    seen: set[str] = set()
+    for groups in matches:
+        for index, value in enumerate(groups):
+            if not value or labels[index] in seen:
+                continue
+            values.append(f"{labels[index]} {value}")
+            seen.add(labels[index])
+    return "，".join(values) if values else None
+
+
+def _group_equivalent_retries(
+    milestones: Sequence[TrajectoryMilestone],
+) -> tuple[TrajectoryMilestone, ...]:
+    grouped: list[TrajectoryMilestone] = []
+    index = 0
+    while index < len(milestones):
+        current = milestones[index]
+        group = [current]
+        index += 1
+        while index < len(milestones) and _retry_signature(milestones[index]) == _retry_signature(current):
+            group.append(milestones[index])
+            index += 1
+        grouped.append(_combine_retry_group(group) if len(group) > 1 else current)
+    return tuple(grouped)
+
+
+def _retry_signature(milestone: TrajectoryMilestone) -> tuple[tuple[str, ...], str, str, str, bool]:
+    return (
+        milestone.capabilities,
+        milestone.title,
+        milestone.status,
+        milestone.detail,
+        milestone.important,
+    )
+
+
+def _combine_retry_group(group: Sequence[TrajectoryMilestone]) -> TrajectoryMilestone:
+    first = group[0]
+    return replace(
+        first,
+        duration_seconds=_combined_duration(group),
+        detail=f"{len(group)} 次等价调用；{first.detail}",
+        step_turn_ids=_merge_step_ids(milestone.step_turn_ids for milestone in group),
+        step_tool_call_ids=_merge_step_ids(milestone.step_tool_call_ids for milestone in group),
+        step_sequences=tuple(sequence for milestone in group for sequence in milestone.step_sequences),
+    )
+
+
+def _annotate_recovery(
+    milestones: Sequence[TrajectoryMilestone],
+) -> tuple[TrajectoryMilestone, ...]:
+    annotated: list[TrajectoryMilestone] = list(milestones)
+    for index in range(1, len(annotated)):
+        previous = annotated[index - 1]
+        current = annotated[index]
+        if not _is_recovery_pair(previous, current):
+            continue
+        changed = _changed_recovery_input(previous, current)
+        if changed is None:
+            continue
+        annotated[index] = replace(
+            current,
+            detail=f"{current.detail}；恢复：改用 {changed}",
+            important=True,
+        )
+    return tuple(annotated)
+
+
+def _is_recovery_pair(
+    previous: TrajectoryMilestone,
+    current: TrajectoryMilestone,
+) -> bool:
+    return (
+        previous.status == "返回受限/错误"
+        and current.status == "完成"
+        and previous.capabilities == current.capabilities
+        and _dataset_from_title(previous.title) == _dataset_from_title(current.title)
+    )
+
+
+def _changed_recovery_input(
+    previous: TrajectoryMilestone,
+    current: TrajectoryMilestone,
+) -> str | None:
+    previous_fields = _fields_from_detail(previous.detail)
+    current_fields = _fields_from_detail(current.detail)
+    if current_fields and current_fields != previous_fields:
+        return current_fields
+    return None
+
+
+def _dataset_from_title(title: str) -> str | None:
+    match = re.search(r"查询 `([^`]+)`", title)
+    return match.group(1) if match is not None else None
+
+
+def _fields_from_detail(detail: str) -> str | None:
+    match = re.search(r"字段 ([^；]+)", detail)
+    return match.group(1).strip() if match is not None else None
+
+
+def _attach_decisions(
+    milestones: Sequence[TrajectoryMilestone],
+    decisions: Sequence[TraceDecision],
+) -> tuple[TrajectoryMilestone, ...]:
+    attached = list(milestones)
+    used: set[int] = set()
+    for decision_index, decision in enumerate(decisions):
+        target_index = _decision_target(attached, decision)
+        if target_index is None or decision_index in used:
+            continue
+        attached[target_index] = _attach_decision(attached[target_index], decision)
+        used.add(decision_index)
+    return tuple(attached)
+
+
+def _decision_target(
+    milestones: Sequence[TrajectoryMilestone],
+    decision: TraceDecision,
+) -> int | None:
+    if decision.tool_call_id is not None:
+        for index, milestone in enumerate(milestones):
+            if decision.tool_call_id in milestone.step_tool_call_ids:
+                return index
+    if decision.turn_id is not None:
+        for index, milestone in enumerate(milestones):
+            if decision.turn_id in milestone.step_turn_ids:
+                return index
+    return None
+
+
+def _attach_decision(
+    milestone: TrajectoryMilestone,
+    decision: TraceDecision,
+) -> TrajectoryMilestone:
+    decision_text = _clean_text(decision.decision)
+    next_action = _clean_text(decision.next_action)
+    text = decision_text
+    if next_action:
+        text = f"{text}；下一步：{next_action}" if text else f"下一步：{next_action}"
+    if not text:
+        return milestone
+    return replace(milestone, decision=text, important=True)
+
+
+def _compress_to_density_target(
+    milestones: Sequence[TrajectoryMilestone],
+    *,
+    target: int,
+) -> tuple[TrajectoryMilestone, ...]:
+    if len(milestones) <= target:
+        return tuple(milestones)
+    protected = [milestone for milestone in milestones if not _is_compressible_low_information(milestone)]
+    if len(protected) >= target:
+        return tuple(protected)
+    keep_low_information = max(0, target - len(protected))
+    kept_low = 0
+    omitted: list[TrajectoryMilestone] = []
+    result: list[TrajectoryMilestone] = []
+    for milestone in milestones:
+        if _is_compressible_low_information(milestone):
+            if kept_low < keep_low_information:
+                result.append(milestone)
+                kept_low += 1
+            else:
+                omitted.append(milestone)
+            continue
+        result.append(milestone)
+    if omitted:
+        summary = _omission_summary(omitted)
+        for index in range(len(result) - 1, -1, -1):
+            if _is_compressible_low_information(result[index]):
+                result[index] = replace(
+                    result[index],
+                    detail=f"{result[index].detail}；{summary}",
+                )
+                break
+    return tuple(result)
+
+
+def _is_compressible_low_information(milestone: TrajectoryMilestone) -> bool:
+    if milestone.important or milestone.decision is not None:
+        return False
+    low_information_capabilities = {
+        "model.list",
+        "grid_guide_open",
+        "guide.open",
+        "context.open",
+        "context.get",
+        "environment.describe",
+        "model.dataset.describe",
+    }
+    if all(capability in low_information_capabilities for capability in milestone.capabilities):
+        return True
+    return milestone.title in {"准备仿真环境"} or milestone.title.startswith("准备 ")
+
+
+def _omission_summary(milestones: Sequence[TrajectoryMilestone]) -> str:
+    labels = {_compact_label(milestone) for milestone in milestones}
+    label = labels.pop() if len(labels) == 1 else "低信息核对"
+    return f"其余 {len(milestones)} 次{label}"
+
+
+def _compact_label(milestone: TrajectoryMilestone) -> str:
+    if "model.dataset.describe" in milestone.capabilities:
+        return "数据集结构核对"
+    if _is_setup_milestone(milestone):
+        return "环境准备"
+    return "低信息核对"
+
+
+def _combined_status(milestones: Sequence[TrajectoryMilestone]) -> str:
+    if any(milestone.status == "返回受限/错误" for milestone in milestones):
+        return "返回受限/错误"
+    if any(milestone.status == "未收敛" for milestone in milestones):
+        return "未收敛"
+    if any(milestone.status == "部分完成" for milestone in milestones):
+        return "部分完成"
+    return "完成"
+
+
+def _combined_duration(milestones: Sequence[TrajectoryMilestone]) -> float | None:
+    durations = [milestone.duration_seconds for milestone in milestones if milestone.duration_seconds is not None]
+    return sum(durations) if durations else None
+
+
+def _merge_step_ids(values: Iterable[Sequence[str]]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item for group in values for item in group))
 
 
 def _step_status(step: TraceStep) -> str:
@@ -215,7 +492,7 @@ def _describe_step(step: TraceStep) -> tuple[str, str, bool]:
         "model.list": "确认可用的已注册网络模型",
         "context.get": "读取已打开的仿真环境上下文",
         "model.element.get": "定位问题涉及的网络元件",
-        "model.dataset.describe": "核对可查询的数据集与字段",
+        "model.dataset.describe": "核对数据集结构",
         "model.constraints.describe": "读取活动模型内定义的约束",
         "topology.components.get": "核查网络拓扑连通性",
         "evidence.get": "读取已持久化的仿真证据",
@@ -232,6 +509,15 @@ def _describe_context_open(step: TraceStep) -> tuple[str, str, bool]:
         parts.append(f"模型={_safe_scalar(model)}")
     if source is not None:
         parts.append(f"来源={_safe_scalar(source)}")
+    counts = step.result.get("counts")
+    if isinstance(counts, Mapping):
+        count_parts = []
+        for key, label in (("buses", "母线"), ("bus", "母线"), ("lines", "线路"), ("line", "线路"), ("transformers", "变压器"), ("trafo", "变压器")):
+            value = _safe_scalar(counts.get(key))
+            if value is not None and not any(item.startswith(label) for item in count_parts):
+                count_parts.append(f"{label} {value}")
+        if count_parts:
+            parts.append("，".join(count_parts))
     return (
         "打开只读网络仿真环境上下文",
         "；".join(parts) if parts else _fallback_detail(step),
@@ -260,6 +546,9 @@ def _describe_powerflow(step: TraceStep) -> tuple[str, str, bool]:
         parts.append("收敛")
     elif step.result.get("converged") is False:
         parts.append("未收敛")
+    message = _safe_scalar(step.result.get("message"))
+    if message is not None:
+        parts.append(message)
     loss = step.result.get("total_active_loss")
     if isinstance(loss, Mapping):
         value = _safe_scalar(loss.get("value"))
@@ -273,6 +562,9 @@ def _describe_dataset_query(step: TraceStep) -> tuple[str, str, bool]:
     dataset = _safe_scalar(step.args.get("dataset")) or _safe_scalar(step.result.get("dataset"))
     title = f"查询 {_inline_code(dataset)}" if dataset else "查询网络模型数据"
     parts: list[str] = []
+    fields = _fields_summary(step.args.get("fields"))
+    if fields:
+        parts.append(f"字段 {fields}")
     order = _order_by_summary(step.args.get("order_by"))
     if order:
         parts.append(order)
@@ -285,6 +577,9 @@ def _describe_dataset_query(step: TraceStep) -> tuple[str, str, bool]:
     row_count = _safe_scalar(step.result.get("row_count"))
     if row_count is not None and row_summary is None:
         parts.append(f"返回 {row_count} 行")
+    message = _safe_scalar(step.result.get("message"))
+    if message is not None:
+        parts.append(message)
     return title, "；".join(parts) if parts else _fallback_detail(step), True
 
 
@@ -396,6 +691,14 @@ def _order_by_summary(value: object) -> str | None:
         if field is not None:
             parts.append(f"{field} {direction}".rstrip())
     return "、".join(parts) if parts else None
+
+
+def _fields_summary(value: object) -> str | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return None
+    parts = [_safe_scalar(item) for item in value[:4]]
+    visible = [item for item in parts if item is not None]
+    return "、".join(visible) if visible else None
 
 
 def _direction_label(value: str | None) -> str:

@@ -8,7 +8,11 @@ import pytest
 
 from grid_agent.analysis.models import AnalysisContext, AnalysisContextEvent, ContextEventDraft
 from grid_agent.analysis.reducer import initial_context, reduce_context
-from grid_agent.analysis.report import render_analysis_report, write_analysis_report_checkpoint
+from grid_agent.analysis.report import (
+    _read_trace_decisions,
+    render_analysis_report,
+    write_analysis_report_checkpoint,
+)
 from grid_agent.analysis.workspace import AnalysisWorkspace
 
 
@@ -177,6 +181,87 @@ def test_report_keeps_historical_submit_events_readable(
         result={"ok": True},
     )
     assert "提交本题回答（`grid_submit_answer`，完成，0.25 秒）" in report
+
+
+def test_report_attaches_optional_native_decision_events(report_fixture: ReportFixture) -> None:
+    with report_fixture.workspace.events_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "event_type": "business.decision.declared",
+                    "scope": {
+                        "turn_id": f"{report_fixture.workspace.analysis_id}-t001",
+                        "tool_call_id": "rank-call",
+                    },
+                    "payload": {
+                        "intent": "识别过载线路",
+                        "decision": "线路 11 超过模型约束 100%",
+                        "next_action": "对线路 11 开展 N-1 校核",
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+
+    first_turn = report.split("## 1.", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+    assert "决策：线路 11 超过模型约束 100%；下一步：对线路 11 开展 N-1 校核" in first_turn
+
+
+def test_read_trace_decisions_tolerates_malformed_and_incomplete_events(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            (
+                "{not-json}",
+                json.dumps(
+                    {
+                        "event_type": "business.decision.declared",
+                        "scope": {"turn_id": "turn-1", "tool_call_id": "call-1"},
+                        "payload": {"intent": "检查", "decision": "保留", "next_action": "继续"},
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "event_type": "business.decision.declared",
+                        "scope": {"turn_id": "turn-1"},
+                        "payload": {"intent": "", "decision": "缺失", "next_action": "跳过"},
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "event_type": "business.decision.declared",
+                        "scope": {},
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    decisions, diagnostics = _read_trace_decisions(path)
+
+    assert len(decisions) == 1
+    assert decisions[0].turn_id == "turn-1"
+    assert decisions[0].tool_call_id == "call-1"
+    assert decisions[0].decision == "保留"
+    assert diagnostics == (
+        "原生轨迹第 1 行格式错误",
+        "原生轨迹第 3 行决策字段无效",
+        "原生轨迹第 4 行决策事件不完整",
+    )
 
 
 def test_report_shows_global_evidence_referenced_by_the_turn(report_fixture: ReportFixture) -> None:
