@@ -19,6 +19,12 @@ from grid_agent.analysis.models import (
     LimitationRecord,
     TurnRecord,
 )
+from grid_agent.analysis.report_trajectory import (
+    TraceDecision,
+    TraceStep,
+    build_milestones,
+    render_analysis_trajectory,
+)
 from grid_agent.analysis.workspace import AnalysisWorkspace
 
 
@@ -56,42 +62,19 @@ def render_analysis_report(
 
 
 @dataclass(frozen=True, slots=True)
-class _TraceStep:
-    sequence: int
-    turn_id: str | None
-    tool_call_id: str | None
-    capability: str
-    args: Mapping[str, Any]
-    result: Mapping[str, Any]
-    ok: bool
-    duration_seconds: float | None
-
-
-@dataclass(frozen=True, slots=True)
 class _TraceRead:
-    steps: tuple[_TraceStep, ...]
+    steps: tuple[TraceStep, ...]
     diagnostics: tuple[str, ...]
 
 
-_READER_MAX_DEPTH = 6
-_READER_MAX_MAPPING_ITEMS = 50
-_READER_MAX_SEQUENCE_ITEMS = 20
-_SECRET_FIELD_TOKENS = {
-    "authorization",
-    "credential",
-    "credentials",
-    "passwd",
-    "password",
-    "secret",
-    "token",
-}
+_NO_TRACE_DECISIONS: tuple[TraceDecision, ...] = ()
 
 
 def _render_narrative_turn(
     context: AnalysisContext,
     turn: TurnRecord,
     workspace: AnalysisWorkspace,
-    trace_steps: Sequence[_TraceStep],
+    trace_steps: Sequence[TraceStep],
     trace_pages: Mapping[str, str],
     diagnostics: list[str],
 ) -> list[str]:
@@ -125,7 +108,7 @@ def _render_narrative_turn(
         "",
         "### 智能体分析轨迹",
         "",
-        *_render_trace_steps(steps),
+        *_render_analysis_trajectory_for_turn(context, turn, steps),
         "",
         "### 执行状态与证据",
         "",
@@ -141,7 +124,7 @@ def _render_narrative_turn(
 def _render_turn_context(
     context: AnalysisContext,
     turn: TurnRecord,
-    steps: Sequence[_TraceStep],
+    steps: Sequence[TraceStep],
     workspace: AnalysisWorkspace,
     diagnostics: list[str],
 ) -> list[str]:
@@ -239,124 +222,40 @@ def _scenario_label(kind: str) -> str:
     return {"single_branch_outage": "单支路停运"}.get(kind, kind)
 
 
-def _render_trace_steps(steps: Sequence[_TraceStep]) -> list[str]:
-    if not steps:
-        return ["未观察到与本题关联的领域工具调用。"]
-    lines: list[str] = []
-    for ordinal, step in enumerate(steps, start=1):
-        state = "完成" if step.ok else "返回受限/错误"
-        duration = f"，{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else ""
-        lines.append(f"{ordinal}. {_trace_step_summary(step)}（`{step.capability}`，{state}{duration}）")
-    return lines
+def _render_analysis_trajectory_for_turn(
+    context: AnalysisContext,
+    turn: TurnRecord,
+    steps: Sequence[TraceStep],
+) -> list[str]:
+    return render_analysis_trajectory(
+        steps,
+        decisions=_NO_TRACE_DECISIONS,
+        reuse_notes=_trajectory_reuse_notes(context, turn),
+    )
 
 
-def _render_tool_results(steps: Sequence[_TraceStep]) -> list[str]:
-    if not steps:
-        return ["未观察到与本题关联的领域工具调用。"]
-    lines: list[str] = []
-    for ordinal, step in enumerate(steps, start=1):
-        state = "完成" if step.ok else "返回受限/错误"
-        duration = f"，{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else ""
-        projected = _reader_result_value(step.result)
-        lines.append(f"{ordinal}. {_trace_step_summary(step)}（`{step.capability}`，{state}{duration}）")
-        lines.extend(
-            [
-                f"   - 能力：`{step.capability}`",
-                f"   - 状态：{state}",
-                f"   - 耗时：{step.duration_seconds:.2f} 秒" if step.duration_seconds is not None else "   - 耗时：未记录",
-            ]
-        )
-        if isinstance(projected, Mapping) and not projected:
-            lines.append("   - 结果为空。")
+def _trajectory_reuse_notes(context: AnalysisContext, turn: TurnRecord) -> tuple[str, ...]:
+    notes: list[str] = []
+    for reference in turn.consumed_refs:
+        calculation = context.domain_state.calculations.get(reference)
+        if calculation is None:
             continue
-        lines.extend(
-            [
-                "   - 结果：",
-                "",
-                "```json",
-                _reader_json(projected),
-                "```",
-            ]
-        )
-    return lines
+        notes.append(f"{_calculation_label(calculation.kind)}（{_calculation_status_label(calculation.status)}）")
+    return tuple(dict.fromkeys(notes))
 
 
-def _reader_result_value(value: Any, *, depth: int = 0) -> Any:
-    if depth >= _READER_MAX_DEPTH:
-        return "[nested value omitted]"
-    if isinstance(value, Mapping):
-        projected_mapping: dict[str, Any] = {}
-        visible = [
-            (str(key), item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-            if not _is_internal_or_secret_field(str(key))
-        ]
-        for key, item in visible[:_READER_MAX_MAPPING_ITEMS]:
-            projected_mapping[key] = _reader_result_value(item, depth=depth + 1)
-        if len(visible) > _READER_MAX_MAPPING_ITEMS:
-            projected_mapping["_omitted_fields"] = len(visible) - _READER_MAX_MAPPING_ITEMS
-        return projected_mapping
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        projected_sequence = [
-            _reader_result_value(item, depth=depth + 1)
-            for item in value[:_READER_MAX_SEQUENCE_ITEMS]
-        ]
-        if len(value) > _READER_MAX_SEQUENCE_ITEMS:
-            projected_sequence.append({"_omitted_items": len(value) - _READER_MAX_SEQUENCE_ITEMS})
-        return projected_sequence
-    return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
-
-
-def _is_internal_or_secret_field(key: str) -> bool:
-    lowered = key.lower()
-    if lowered.endswith("_ref") or lowered.endswith("_refs"):
-        return True
-    tokens = _field_name_tokens(key)
-    if any(token in _SECRET_FIELD_TOKENS for token in tokens):
-        return True
-    pairs = set(zip(tokens, tokens[1:], strict=False))
-    if ("api", "key") in pairs or ("private", "key") in pairs:
-        return True
-    compact = "".join(tokens)
-    return compact.endswith("apikey") or compact.endswith("privatekey")
-
-
-def _field_name_tokens(key: str) -> tuple[str, ...]:
-    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key)
-    return tuple(token for token in re.split(r"[^A-Za-z0-9]+", separated.lower()) if token)
-
-
-def _reader_json(value: Any) -> str:
-    return _redact_internal_refs(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
-
-
-def _trace_step_summary(step: _TraceStep) -> str:
-    if step.capability == "context.open":
-        model = step.result.get("model")
-        return f"打开只读网络仿真环境上下文：{model}" if isinstance(model, str) else "打开只读网络仿真环境上下文"
-    if step.capability == "analysis.powerflow.ac.run" and step.result.get("converged") is True:
-        loss = step.result.get("total_active_loss")
-        if isinstance(loss, Mapping) and isinstance(loss.get("value"), (int, float)):
-            return f"运行交流潮流计算：收敛，有功网损 {loss['value']:.4f} {loss.get('unit', 'MW')}"
-        return "运行交流潮流计算：潮流收敛"
-    if step.capability == "analysis.contingency.n_minus_one.run":
-        count = step.result.get("scenario_count")
-        return f"执行单支路 N-1 静态安全校核：完成 {count} 个场景" if isinstance(count, int) else "执行单支路 N-1 静态安全校核"
+def _calculation_status_label(status: str) -> str:
     return {
-        "environment.describe": "核对仿真器协议和已发布能力",
-        "model.list": "确认可用的已注册网络模型",
-        "context.get": "读取已打开的仿真环境上下文",
-        "model.element.get": "定位问题涉及的网络元件",
-        "model.dataset.describe": "核对可查询的数据集与字段",
-        "model.dataset.query": "查询网络模型数据",
-        "model.constraints.describe": "读取活动模型内定义的约束",
-        "topology.branch.endpoints.get": "核查支路两端母线",
-        "topology.components.get": "核查网络拓扑连通性",
-        "result.branches.rank": "按支路运行指标筛选和排序",
-        "evidence.get": "读取已持久化的仿真证据",
-        "grid_guide_open": "读取已发布的领域操作指南",
-        "grid_submit_answer": "提交本题回答",
-    }.get(step.capability, "调用已发布的领域能力")
+        "converged": "已收敛",
+        "succeeded": "已完成",
+        "partial": "部分完成",
+        "failed": "失败",
+    }.get(status, status)
+
+
+def _trace_step_summary(step: TraceStep) -> str:
+    milestones = build_milestones((step,))
+    return milestones[0].title if milestones else "调用已发布的领域能力"
 
 
 def _render_turn_evidence(
@@ -395,7 +294,7 @@ def _evidence_title(capability: str | None, summary: Mapping[str, Any]) -> str:
 def _write_turn_trace_pages(
     context: AnalysisContext,
     workspace: AnalysisWorkspace,
-    trace_steps: Sequence[_TraceStep],
+    trace_steps: Sequence[TraceStep],
     diagnostics: list[str],
 ) -> dict[str, str]:
     paths: dict[str, str] = {}
@@ -427,7 +326,7 @@ def _write_turn_trace_pages(
 
 def _render_turn_trace_page(
     turn: TurnRecord,
-    steps: Sequence[_TraceStep],
+    steps: Sequence[TraceStep],
     limitations: Sequence[LimitationRecord],
     workspace: AnalysisWorkspace,
     path: Path,
@@ -535,7 +434,7 @@ def _render_audit_review(context: AnalysisContext, workspace: AnalysisWorkspace,
     return lines
 
 
-def _steps_for_turn(context: AnalysisContext, turn_id: str, trace_steps: Sequence[_TraceStep]) -> tuple[_TraceStep, ...]:
+def _steps_for_turn(context: AnalysisContext, turn_id: str, trace_steps: Sequence[TraceStep]) -> tuple[TraceStep, ...]:
     call_ids: set[str] = set()
     sequences: set[int] = set()
     for observation in context.observations.values():
@@ -560,7 +459,7 @@ def _read_trace_steps(path: Path, native_events_path: Path) -> _TraceRead:
         return _TraceRead((), ("调用轨迹不可用：trace/events.jsonl 缺失",))
     turns_by_call = _native_turns_by_call(native_events_path)
     starts: dict[str, tuple[int, datetime]] = {}
-    steps: list[_TraceStep] = []
+    steps: list[TraceStep] = []
     diagnostics: list[str] = []
     try:
         raw_lines = path.read_text(encoding="utf-8").splitlines()
@@ -590,7 +489,7 @@ def _read_trace_steps(path: Path, native_events_path: Path) -> _TraceRead:
                 pass
             normalized_call_id = call_id if isinstance(call_id, str) else None
             steps.append(
-                _TraceStep(
+                TraceStep(
                     int(event.get("sequence", 0)),
                     turns_by_call.get(normalized_call_id) if normalized_call_id is not None else None,
                     normalized_call_id,

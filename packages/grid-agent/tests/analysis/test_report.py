@@ -54,7 +54,13 @@ def test_report_uses_per_question_narrative_and_real_trace_steps(report_fixture:
     assert report.index("### 回答") < report.index("### 仿真环境上下文")
     assert report.index("### 仿真环境上下文") < report.index("### 智能体分析轨迹")
     assert report.index("### 智能体分析轨迹") < report.index("### 执行状态与证据")
-    assert "按支路运行指标筛选和排序（`result.branches.rank`，完成，1.50 秒）" in report
+    assert "核查线路 11 两端母线" in report
+    assert "母线 6 → 母线 11" in report
+    assert "交流潮流" in report and "收敛" in report and "43.6275 MW" in report
+    assert "查询 `network.branches`" in report
+    assert "线路 11：132.51%" in report
+    assert "执行单支路 N-1 静态安全校核" in report
+    assert "35 个场景" in report and "132.51%" in report
     assert "### 执行状态与证据" in report
     assert "```json" not in report.split("### 执行状态与证据", maxsplit=1)[0]
     assert "result:sha256:" not in report
@@ -144,7 +150,7 @@ def test_failed_turn_keeps_answer_first_context_and_successful_trajectory(
     assert failed_turn.index("### 仿真环境上下文") < failed_turn.index(
         "### 智能体分析轨迹"
     )
-    assert "核查支路两端母线" in failed_turn
+    assert "核查线路 11 两端母线" in failed_turn
     assert "状态：未完成" in failed_turn
 
 
