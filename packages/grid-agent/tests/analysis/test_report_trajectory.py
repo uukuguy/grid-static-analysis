@@ -365,6 +365,103 @@ def test_trajectory_attaches_recorded_decision_to_supporting_step() -> None:
     assert "决策：线路 17 超过模型约束 100%；下一步：对线路 17 开展 N-1 校核" in text
 
 
+def test_trajectory_does_not_attach_decision_by_turn_when_call_is_unmatched() -> None:
+    powerflow = step(
+        "analysis.powerflow.ac.run",
+        args={"operation": "powerflow.ac"},
+        result={"converged": True},
+        sequence=1,
+    )
+    decision = TraceDecision(
+        turn_id=powerflow.turn_id,
+        tool_call_id="grid-record-decision-call",
+        intent="说明下一步",
+        decision="不应挂到潮流步骤",
+        next_action="继续",
+    )
+
+    text = "\n".join(render_analysis_trajectory((powerflow,), decisions=(decision,)))
+
+    assert "不应挂到潮流步骤" not in text
+    assert "决策：" not in text
+
+
+def test_trajectory_attaches_decision_by_explicit_support_ref() -> None:
+    supported = step(
+        "analysis.powerflow.ac.run",
+        args={"operation": "powerflow.ac"},
+        result={"converged": True, "result_ref": "result:sha256:" + "a" * 64},
+        sequence=1,
+    )
+    decision = TraceDecision(
+        turn_id=supported.turn_id,
+        tool_call_id="grid-record-decision-call",
+        intent="判断潮流结果",
+        decision="潮流结果可作为后续排序依据",
+        next_action="查询支路负载率",
+        support_refs=("result:sha256:" + "a" * 64,),
+    )
+
+    text = "\n".join(render_analysis_trajectory((supported,), decisions=(decision,)))
+
+    assert "决策：潮流结果可作为后续排序依据；下一步：查询支路负载率" in text
+
+
+def test_trajectory_keeps_multiple_decisions_for_same_support_in_event_order() -> None:
+    ranked = step(
+        "result.branches.rank",
+        args={"metric": "loading_percent", "limit": 5},
+        result={"rows": [{"line": 17, "loading_percent": 132.51}]},
+        sequence=1,
+    )
+    first = TraceDecision(
+        turn_id=ranked.turn_id,
+        tool_call_id=ranked.tool_call_id,
+        intent="识别过载线路",
+        decision="线路 17 超过 100%",
+        next_action="检查约束来源",
+    )
+    second = TraceDecision(
+        turn_id=ranked.turn_id,
+        tool_call_id=ranked.tool_call_id,
+        intent="确认后续校核",
+        decision="线路 17 是首要 N-1 对象",
+        next_action="执行单支路停运校核",
+    )
+
+    text = "\n".join(render_analysis_trajectory((ranked,), decisions=(first, second)))
+
+    assert (
+        "决策：线路 17 超过 100%；下一步：检查约束来源；"
+        "线路 17 是首要 N-1 对象；下一步：执行单支路停运校核"
+    ) in text
+    assert text.index("线路 17 超过 100%") < text.index("线路 17 是首要 N-1 对象")
+
+
+def test_trajectory_keeps_semantically_different_queries_separate_and_visible() -> None:
+    steps = (
+        step(
+            "model.dataset.query",
+            args={"dataset": "network.branches", "filters": {"line": 1}},
+            result={"row_count": 1},
+            sequence=1,
+        ),
+        step(
+            "model.dataset.query",
+            args={"dataset": "network.branches", "filters": {"line": 2}},
+            result={"row_count": 1},
+            sequence=2,
+        ),
+    )
+
+    text = "\n".join(render_analysis_trajectory(steps))
+
+    assert "等价调用" not in text
+    assert text.count("查询 `network.branches`") == 2
+    assert "filters=line=1" in text
+    assert "filters=line=2" in text
+
+
 def test_trajectory_renders_reuse_without_repeating_original_calculation() -> None:
     lines = render_analysis_trajectory(
         (),

@@ -25,6 +25,7 @@ class TraceDecision:
     intent: str
     decision: str
     next_action: str
+    support_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,11 +40,16 @@ class TrajectoryMilestone:
     step_turn_ids: tuple[str, ...] = ()
     step_tool_call_ids: tuple[str, ...] = ()
     step_sequences: tuple[int, ...] = ()
+    support_refs: tuple[str, ...] = ()
+    semantic_signature: str | None = None
 
 
 _KEY_ARG_NAMES = (
     "model",
     "operation",
+    "model_id",
+    "scenario",
+    "scenario_id",
     "subject",
     "mode",
     "branch_kind",
@@ -59,6 +65,9 @@ _KEY_ARG_NAMES = (
     "quantities",
     "outage_kind",
     "limit",
+    "cursor",
+    "page",
+    "offset",
 )
 _SECRET_TOKENS = {
     "authorization",
@@ -137,6 +146,8 @@ def _milestone_for_step(step: TraceStep) -> TrajectoryMilestone:
         step_turn_ids=(step.turn_id,) if step.turn_id is not None else (),
         step_tool_call_ids=(step.tool_call_id,) if step.tool_call_id is not None else (),
         step_sequences=(step.sequence,),
+        support_refs=_refs_from_result(step.result),
+        semantic_signature=_semantic_signature(step),
     )
 
 
@@ -208,6 +219,8 @@ def _combine_setup_group(group: Sequence[TrajectoryMilestone]) -> TrajectoryMile
         step_turn_ids=_merge_step_ids(milestone.step_turn_ids for milestone in group),
         step_tool_call_ids=_merge_step_ids(milestone.step_tool_call_ids for milestone in group),
         step_sequences=tuple(sequence for milestone in group for sequence in milestone.step_sequences),
+        support_refs=_merge_step_ids(milestone.support_refs for milestone in group),
+        semantic_signature="setup:" + "|".join(milestone.semantic_signature or "" for milestone in group),
     )
 
 
@@ -258,7 +271,7 @@ def _retry_signature(milestone: TrajectoryMilestone) -> tuple[tuple[str, ...], s
         milestone.capabilities,
         milestone.title,
         milestone.status,
-        milestone.detail,
+        milestone.semantic_signature or milestone.detail,
         milestone.important,
     )
 
@@ -272,6 +285,7 @@ def _combine_retry_group(group: Sequence[TrajectoryMilestone]) -> TrajectoryMile
         step_turn_ids=_merge_step_ids(milestone.step_turn_ids for milestone in group),
         step_tool_call_ids=_merge_step_ids(milestone.step_tool_call_ids for milestone in group),
         step_sequences=tuple(sequence for milestone in group for sequence in milestone.step_sequences),
+        support_refs=_merge_step_ids(milestone.support_refs for milestone in group),
     )
 
 
@@ -351,9 +365,10 @@ def _decision_target(
         for index, milestone in enumerate(milestones):
             if decision.tool_call_id in milestone.step_tool_call_ids:
                 return index
-    if decision.turn_id is not None:
+    if decision.support_refs:
+        support_refs = set(decision.support_refs)
         for index, milestone in enumerate(milestones):
-            if decision.turn_id in milestone.step_turn_ids:
+            if support_refs.intersection(milestone.support_refs):
                 return index
     return None
 
@@ -369,7 +384,8 @@ def _attach_decision(
         text = f"{text}；下一步：{next_action}" if text else f"下一步：{next_action}"
     if not text:
         return milestone
-    return replace(milestone, decision=text, important=True)
+    combined = f"{milestone.decision}；{text}" if milestone.decision else text
+    return replace(milestone, decision=combined, important=True)
 
 
 def _compress_to_density_target(
@@ -562,6 +578,10 @@ def _describe_dataset_query(step: TraceStep) -> tuple[str, str, bool]:
     dataset = _safe_scalar(step.args.get("dataset")) or _safe_scalar(step.result.get("dataset"))
     title = f"查询 {_inline_code(dataset)}" if dataset else "查询网络模型数据"
     parts: list[str] = []
+    for key in ("model", "model_id", "scenario", "scenario_id", "operation", "filters", "group_by", "aggregation", "comparison"):
+        summary = _material_arg_summary(key, step.args.get(key))
+        if summary:
+            parts.append(summary)
     fields = _fields_summary(step.args.get("fields"))
     if fields:
         parts.append(f"字段 {fields}")
@@ -650,6 +670,57 @@ def _fallback_detail(step: TraceStep) -> str:
     return "；".join(parts) if parts else "输入和结果详见本题详细执行轨迹。"
 
 
+def _semantic_signature(step: TraceStep) -> str:
+    args = {
+        key: _signature_value(step.args[key])
+        for key in _KEY_ARG_NAMES
+        if key in step.args and not _is_internal_or_secret_field(key)
+    }
+    result_shape = {
+        key: _signature_value(step.result[key])
+        for key in ("status", "code", "converged", "row_count", "field_count", "scenario_count", "converged_scenarios")
+        if key in step.result and not _is_internal_or_secret_field(key)
+    }
+    rows = step.result.get("rows")
+    if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes, bytearray)):
+        result_shape["rows"] = f"{len(rows)} rows"
+    return f"{step.capability}|ok={step.ok}|args={args}|result={result_shape}"
+
+
+def _signature_value(value: object) -> object:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return _clean_text(str(value)) if isinstance(value, str) else value
+    if isinstance(value, Mapping):
+        return tuple(
+            (str(key), _signature_value(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if not _is_internal_or_secret_field(str(key))
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_signature_value(item) for item in value)
+    return _clean_text(str(value))
+
+
+def _refs_from_result(result: Mapping[str, Any]) -> tuple[str, ...]:
+    refs: list[str] = []
+
+    def collect(value: object, *, key: str | None = None) -> None:
+        if isinstance(value, str):
+            if (key is not None and (key.endswith("_ref") or key.endswith("_refs"))) or _INTERNAL_REF_RE.search(value):
+                refs.append(value)
+            return
+        if isinstance(value, Mapping):
+            for nested_key, nested_value in value.items():
+                collect(nested_value, key=str(nested_key))
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for item in value:
+                collect(item, key=key)
+
+    collect(result)
+    return tuple(dict.fromkeys(refs))
+
+
 def _scalar_items(
     values: Mapping[str, Any],
     keys: Sequence[str],
@@ -667,6 +738,35 @@ def _scalar_items(
         if len(items) >= limit:
             break
     return items
+
+
+def _material_arg_summary(key: str, value: object) -> str | None:
+    formatted = _format_material_value(value)
+    if formatted is None:
+        return None
+    return f"{_clean_label(key)}={formatted}"
+
+
+def _format_material_value(value: object) -> str | None:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return _safe_scalar(value)
+    if isinstance(value, Mapping):
+        parts: list[str] = []
+        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))[:4]:
+            if _is_internal_or_secret_field(str(key)):
+                continue
+            formatted = _format_material_value(item)
+            if formatted is not None:
+                parts.append(f"{_clean_label(str(key))}={formatted}")
+        return ",".join(parts) if parts else None
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        visible: list[str] = []
+        for item in value[:4]:
+            formatted = _format_material_value(item)
+            if formatted is not None:
+                visible.append(formatted)
+        return "、".join(visible) if visible else None
+    return _clean_text(str(value))
 
 
 def _format_value(value: Any) -> str | None:

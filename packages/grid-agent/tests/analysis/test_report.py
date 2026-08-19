@@ -184,6 +184,19 @@ def test_report_keeps_historical_submit_events_readable(
 
 
 def test_report_attaches_optional_native_decision_events(report_fixture: ReportFixture) -> None:
+    supported_ref = "result:sha256:" + "7" * 64
+    _append_trace_call(
+        report_fixture.workspace,
+        sequence=42,
+        call_id="supported-rank-call",
+        capability="result.branches.rank",
+        args={"result_ref": supported_ref, "metric": "loading_percent", "limit": 5},
+        result={
+            "result_ref": supported_ref,
+            "rows": [{"line": 11, "loading_percent": 132.51}],
+        },
+        turn_id=f"{report_fixture.workspace.analysis_id}-t001",
+    )
     with report_fixture.workspace.events_path.open("a", encoding="utf-8") as stream:
         stream.write(
             json.dumps(
@@ -191,8 +204,9 @@ def test_report_attaches_optional_native_decision_events(report_fixture: ReportF
                     "event_type": "business.decision.declared",
                     "scope": {
                         "turn_id": f"{report_fixture.workspace.analysis_id}-t001",
-                        "tool_call_id": "rank-call",
+                        "tool_call_id": "grid-record-decision-call",
                     },
+                    "refs": {"consumed": [supported_ref]},
                     "payload": {
                         "intent": "识别过载线路",
                         "decision": "线路 11 超过模型约束 100%",
@@ -214,6 +228,41 @@ def test_report_attaches_optional_native_decision_events(report_fixture: ReportF
     assert "决策：线路 11 超过模型约束 100%；下一步：对线路 11 开展 N-1 校核" in first_turn
 
 
+def test_report_omits_unmatched_decision_tool_event_with_diagnostic(
+    report_fixture: ReportFixture,
+) -> None:
+    with report_fixture.workspace.events_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "event_type": "business.decision.declared",
+                    "scope": {
+                        "turn_id": f"{report_fixture.workspace.analysis_id}-t001",
+                        "tool_call_id": "grid-record-decision-call",
+                    },
+                    "refs": {"consumed": ["result:sha256:" + "8" * 64]},
+                    "payload": {
+                        "intent": "说明下一步",
+                        "decision": "缺少支持的决策不得附着",
+                        "next_action": "继续",
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    report = render_analysis_report(
+        context=report_fixture.context,
+        workspace=report_fixture.workspace,
+        environment=report_fixture.environment,
+    )
+
+    first_turn = report.split("## 1.", maxsplit=1)[1].split("## 2.", maxsplit=1)[0]
+    assert "缺少支持的决策不得附着" not in first_turn
+    assert "显式决策缺少可验证支持，已从紧凑轨迹省略" in report
+
+
 def test_read_trace_decisions_tolerates_malformed_and_incomplete_events(
     tmp_path: Path,
 ) -> None:
@@ -226,6 +275,7 @@ def test_read_trace_decisions_tolerates_malformed_and_incomplete_events(
                     {
                         "event_type": "business.decision.declared",
                         "scope": {"turn_id": "turn-1", "tool_call_id": "call-1"},
+                        "refs": {"consumed": ["result:sha256:" + "a" * 64]},
                         "payload": {"intent": "检查", "decision": "保留", "next_action": "继续"},
                     },
                     ensure_ascii=False,
@@ -256,6 +306,7 @@ def test_read_trace_decisions_tolerates_malformed_and_incomplete_events(
     assert len(decisions) == 1
     assert decisions[0].turn_id == "turn-1"
     assert decisions[0].tool_call_id == "call-1"
+    assert decisions[0].support_refs == ("result:sha256:" + "a" * 64,)
     assert decisions[0].decision == "保留"
     assert diagnostics == (
         "原生轨迹第 1 行格式错误",

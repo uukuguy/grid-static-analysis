@@ -118,7 +118,7 @@ def _render_narrative_turn(
         "",
         "### 智能体分析轨迹",
         "",
-        *_render_analysis_trajectory_for_turn(context, turn, steps, decisions),
+        *_render_analysis_trajectory_for_turn(context, turn, steps, decisions, diagnostics),
         "",
         "### 执行状态与证据",
         "",
@@ -237,10 +237,16 @@ def _render_analysis_trajectory_for_turn(
     turn: TurnRecord,
     steps: Sequence[TraceStep],
     decisions: Sequence[TraceDecision],
+    diagnostics: list[str] | None = None,
 ) -> list[str]:
     return render_analysis_trajectory(
         steps,
-        decisions=_decisions_for_turn(turn.turn_id, steps, decisions),
+        decisions=_decisions_for_turn(
+            turn,
+            steps,
+            decisions,
+            diagnostics=diagnostics,
+        ),
         reuse_notes=_trajectory_reuse_notes(context, turn),
     )
 
@@ -263,17 +269,52 @@ def _trajectory_reuse_notes(context: AnalysisContext, turn: TurnRecord) -> tuple
 
 
 def _decisions_for_turn(
-    turn_id: str,
+    turn: TurnRecord,
     steps: Sequence[TraceStep],
     decisions: Sequence[TraceDecision],
+    *,
+    diagnostics: list[str] | None = None,
 ) -> tuple[TraceDecision, ...]:
     tool_call_ids = {step.tool_call_id for step in steps if step.tool_call_id is not None}
-    return tuple(
-        decision
-        for decision in decisions
-        if decision.turn_id == turn_id
-        or (decision.tool_call_id is not None and decision.tool_call_id in tool_call_ids)
-    )
+    step_support_refs = set().union(*(_step_result_refs(step) for step in steps)) if steps else set()
+    accepted: list[TraceDecision] = []
+    for decision in decisions:
+        direct_match = decision.tool_call_id is not None and decision.tool_call_id in tool_call_ids
+        support_match = bool(decision.support_refs and step_support_refs.intersection(decision.support_refs))
+        in_turn = decision.turn_id == turn.turn_id
+        if direct_match or support_match:
+            if in_turn or support_match:
+                accepted.append(decision)
+            continue
+        if in_turn and diagnostics is not None:
+            diagnostics.append(f"回合 {turn.ordinal} 显式决策缺少可验证支持，已从紧凑轨迹省略")
+    return tuple(accepted)
+
+
+def _step_result_refs(step: TraceStep) -> set[str]:
+    refs: set[str] = set()
+
+    def collect(value: object, *, key: str | None = None) -> None:
+        if isinstance(value, str):
+            if key is not None and (key.endswith("_ref") or key.endswith("_refs")):
+                refs.add(value)
+            elif re.search(
+                r"\b(?:context|revision|result|evidence|observation|constraint):sha256:[0-9a-f]{32,64}\b"
+                r"|\basset:[^\s:]+:sha256:[0-9a-f]{32,64}\b",
+                value,
+            ):
+                refs.add(value)
+            return
+        if isinstance(value, Mapping):
+            for nested_key, nested_value in value.items():
+                collect(nested_value, key=str(nested_key))
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for item in value:
+                collect(item, key=key)
+
+    collect(step.result)
+    return refs
 
 
 def _calculation_status_label(status: str) -> str:
@@ -600,9 +641,20 @@ def _read_trace_decisions(
                 intent=intent,
                 decision=decision,
                 next_action=next_action,
+                support_refs=_event_consumed_refs(event),
             )
         )
     return tuple(decisions), tuple(diagnostics)
+
+
+def _event_consumed_refs(event: Mapping[str, Any]) -> tuple[str, ...]:
+    refs = event.get("refs")
+    if not isinstance(refs, Mapping):
+        return ()
+    consumed = refs.get("consumed")
+    if not isinstance(consumed, Sequence) or isinstance(consumed, (str, bytes, bytearray)):
+        return ()
+    return tuple(dict.fromkeys(item for item in consumed if isinstance(item, str)))
 
 
 def _native_turns_by_call(path: Path) -> dict[str, str]:
