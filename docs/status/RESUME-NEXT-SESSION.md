@@ -1,42 +1,35 @@
 # Live Session Checkpoint
 
-> Updated: 2026-08-18 21:10 CST. **Session remains active — not a final handoff.**
+> Updated: 2026-08-19 20:20 CST. **Session remains active — not a final handoff.**
 
 ## TL;DR
 
-- 用户确认当前完整静态分析版本可以进入正式发布，目标 tag 为 `v1.0.0`。
-- 根项目、Agent、Simulator、Pi 工具与 Workbench 的版本元数据已从 `0.2.0` 更新为 `1.0.0`。
-- 完整发布门禁已通过；release commit 与 annotated tag 尚未创建。
+- `main` contains the complete `grid-static-analysis` v1.0.1 implementation and release documentation.
+- The release includes loopback proxy bypass for local OpenAI-compatible services, normalized Responses tool-call identities, and compact answer-first analysis reports.
+- Previously operator-local reports, test scripts, the user manual, and validation questions are being placed under Git control for the formal release.
 
-## Durable release evidence
+## Durable verification baseline
 
-- `make doctor`: passed; `gridctl` resolved from the pinned simulator environment.
-- `make test`: Agent 572 passed, Simulator 164 passed, Pi tools 34 passed.
-- `make test-e2e`: 17 passed.
-- `make validate`: offline task-required、scripted static-analysis-core、scripted static-analysis-full 全部通过。
-- Capability matrix: 24/24 published, partial=0, missing=0, `release_ready=True`.
-- Focused Workbench suite: 120 passed.
-- 上游 FastAPI、pandapower、pandas/NumPy 弃用警告仍存在，但没有测试失败。
+- The final release-assets gate passed: Agent 588, Simulator 164, Pi tools 29, and Workbench 120.
+- `git diff --check`, Python compilation, JSONL parsing, and release-document credential-pattern scans passed.
+- Provider validation remains optional and may require billed credentials.
 
-## In-flight release contents
+## Release contents added at this checkpoint
 
-- `docs/architecture/pandapower-capability-composition.md` — 当前能力覆盖和 LLM 工具组合边界说明。
-- `pyproject.toml` — root release version.
-- `packages/grid-agent/` — package、runtime version and lock metadata.
-- `packages/grid-simulator/` — package、runtime version、lock metadata and version assertion.
-- `packages/pi-grid-tools/package*.json` — package version metadata.
-- `packages/trajectory-workbench/package*.json` — package version metadata.
-- `docs/status/JOURNAL.md` — 架构文档与发布门禁事件。
-- 本次不纳入既有未跟踪 PDF、ZIP、测试脚本目录和 `validation/questions/test.md.txt`。
+- `docs/reports/` — task and test-result reports.
+- `docs/test_script/` — evaluation scripts and JSONL fixtures.
+- `docs/用户手册 (2).pdf` — supplied Chinese user manual.
+- `validation/questions/test.md.txt` — simulator-backed validation questions.
+- `docs/TASK.md` and `validation/questions/task.md.txt` — aligned `pandapower runpp` spelling and line 17 wording.
 
 ## Immediate next actions
 
-1. 检查 release diff，确认只有上述发布文件进入提交。
-2. 创建 `release: grid-static-analysis v1.0.0` commit。
-3. 在该提交上创建 annotated tag `v1.0.0`，但未经明确授权不推送远端。
+1. Commit the verified release assets on `main`.
+2. Recreate the unpushed annotated `v1.0.1` tag on the resulting commit.
+3. Push `main` and `v1.0.1` to `origin`, then confirm the remote refs.
 
-## Ruled-out paths
+## Boundaries
 
-- 不在仍声明 `0.2.0` 的旧提交上创建 `v1.0.0` tag。
-- 不把历史 `v0.2` trajectory compatibility 名称或 `grid-capability/1.0` 协议版本改成产品版本。
-- 不把未跟踪报告、压缩包、用户手册或临时测试资料加入 release commit。
+- Do not commit ignored runtime data under `runs/`, `.grid-agent/`, or a user's existing `var/` directory.
+- Do not expose credentials, generic filesystem tools, shell access, or raw pandapower objects to the model.
+- Do not move or force-update a published release tag; rebuilding `v1.0.1` here is allowed only because its prior object has not been pushed.
