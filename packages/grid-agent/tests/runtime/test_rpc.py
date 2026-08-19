@@ -589,6 +589,10 @@ def test_rpc_waits_for_pi_auto_retry_after_transient_provider_error(tmp_path: Pa
 def test_rpc_polls_model_request_commits_while_pi_is_blocked(
     tmp_path: Path,
 ) -> None:
+    raw_tool_call_id = "call_provider|fc_item"
+    expected_tool_call_id = "pi-call-" + hashlib.sha256(
+        raw_tool_call_id.encode("utf-8")
+    ).hexdigest()
     workspace = AnalysisWorkspace.create(tmp_path / "native", "analysis-test")
     artifacts = ImmutableArtifactRegistry(workspace.root_path)
     recorder = RunEventRecorder(
@@ -632,9 +636,9 @@ def test_rpc_polls_model_request_commits_while_pi_is_blocked(
         "commit_request(documents[0])\n"
         "emit({'type':'response','command':'prompt','success':True})\n"
         "commit_request(documents[1])\n"
-        "emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'toolCall','id':'call-1','name':'grid_context_open','arguments':{}}],'stopReason':'toolUse'}})\n"
-        "emit({'type':'tool_execution_start','toolCallId':'call-1','toolName':'grid_context_open','args':{}})\n"
-        "emit({'type':'tool_execution_end','toolCallId':'call-1','toolName':'grid_context_open','isError':False,'result':{'details':{'event':'tool_result','capability':'context.open','ok':True,'result':{},'evidence_refs':[]}}})\n"
+        f"emit({{'type':'message_end','message':{{'role':'assistant','content':[{{'type':'toolCall','id':{raw_tool_call_id!r},'name':'grid_context_open','arguments':{{}}}}],'stopReason':'toolUse'}}}})\n"
+        f"emit({{'type':'tool_execution_start','toolCallId':{raw_tool_call_id!r},'toolName':'grid_context_open','args':{{}}}})\n"
+        f"emit({{'type':'tool_execution_end','toolCallId':{raw_tool_call_id!r},'toolName':'grid_context_open','isError':False,'result':{{'details':{{'event':'tool_result','capability':'context.open','ok':True,'result':{{}},'evidence_refs':[]}}}}}})\n"
         "emit({'type':'response','command':'prompt','success':True})\n"
         "emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'answer'}],'stopReason':'stop'}})\n"
         "emit({'type':'text_delta','text':'answer'})\n"
@@ -670,6 +674,16 @@ def test_rpc_polls_model_request_commits_while_pi_is_blocked(
     assert {event.scope.request_id for event in tool_events} == {
         "analysis-test-t001-r001"
     }
+    assert [event.scope.tool_call_id for event in tool_events] == [
+        expected_tool_call_id,
+        expected_tool_call_id,
+    ]
+    assert (
+        workspace.root_path
+        / "tool-results"
+        / "analysis-test-t001"
+        / f"{expected_tool_call_id}.json"
+    ).is_file()
     assert [event.event_type for event in recorded] == [
         "model.request.started",
         "model.request.started",

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -32,6 +34,7 @@ CAPTURE_FATAL_EXIT_CODE = 86
 CAPTURE_FATAL_MARKER = "trajectory model request commit failed"
 _CAPTURE_POLL_SECONDS = 0.025
 _STDERR_CAPTURE_LIMIT = 64 * 1024
+_SAFE_TOOL_CALL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 
 
 class RpcWorkspace(Protocol):
@@ -442,7 +445,12 @@ def _consume_tool_pair(event: dict[str, Any], pending_tool_calls: dict[str, dict
 
 
 def _event_tool_call_id(event: dict[str, Any]) -> str | None:
-    return _string_value(event, "toolCallId") or _string_value(event, "tool_call_id")
+    raw = _string_value(event, "toolCallId") or _string_value(
+        event, "tool_call_id"
+    )
+    if raw is None or _SAFE_TOOL_CALL_ID.fullmatch(raw):
+        return raw
+    return "pi-call-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _event_tool_name(event: dict[str, Any]) -> str | None:
